@@ -1,6 +1,6 @@
 import os, time, queue, threading
 
-SWIM_LOG_PATH = os.environ["SWIM_LOG_PATH"]
+SWIM_LOG_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Other-Code/jumpstart-latest/log"
 MESSAGES_LOG_PATH = SWIM_LOG_PATH + "/" + "messages.log"
 
 def follow(path: str, poll=0.2):
@@ -30,24 +30,50 @@ def follow(path: str, poll=0.2):
             pass
 
 def reader_thread(q: queue.Queue):
+    """Read lines and assemble complete XML documents"""
+    current_doc = []
+
     for line in follow(MESSAGES_LOG_PATH):
-        q.put(line)  # blocks if full => no drops
+        line = line.strip()
+        
+        # Start of new XML document
+        if line.startswith("<?xml"):
+            # If we have a previous document, send it to the queue
+            if current_doc:
+                q.put("\n".join(current_doc))
+            current_doc = [line]
+        else:
+            # Continue building current document
+            current_doc.append(line)
+            
+            # Check if document is complete (ends with closing tag)
+            if line.endswith("</ns5:MessageCollection>"):
+                q.put("\n".join(current_doc))
+                current_doc = []
 
 def worker_thread(q: queue.Queue):
     while True:
-        line = q.get()
+        xml_doc = q.get()
         try:
             # do your slow processing here
-            process(line)
+            process(xml_doc)
         finally:
             q.task_done()
 
-def process(line: str):
+from read_messages import parse_message
+def process(xml_doc: str):
     # placeholder
-    print(line)
+    parse_message(xml_doc)
 
 q = queue.Queue(maxsize=100_000)  # tune for memory
 threading.Thread(target=reader_thread, args=(q,), daemon=True).start()
 threading.Thread(target=worker_thread, args=(q,), daemon=True).start()
 
 q.join()  # optional; keeps main alive if you want
+
+try:
+    while True:
+        print(f"Queue size: {q.qsize()}, Unfinished: {q.unfinished_tasks}")
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("Shutting down...")
