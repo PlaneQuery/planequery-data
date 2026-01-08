@@ -1,6 +1,7 @@
 import os, time, queue, threading
 
-LOG = "./log/messages.log"
+SWIM_LOG_PATH = os.environ["SWIM_LOG_PATH"]
+MESSAGES_LOG_PATH = SWIM_LOG_PATH + "/" + "messages.log"
 
 def follow(path: str, poll=0.2):
     while True:
@@ -29,7 +30,7 @@ def follow(path: str, poll=0.2):
             pass
 
 def reader_thread(q: queue.Queue):
-    for line in follow(LOG):
+    for line in follow(MESSAGES_LOG_PATH):
         q.put(line)  # blocks if full => no drops
 
 def worker_thread(q: queue.Queue):
