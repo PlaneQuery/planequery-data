@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  adsb-updating:
+    build:
+      context: .
+      dockerfile: Dockerfile.adsb_updating
+    container_name: adsb-updating
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+    volumes:
+      - ./output:/app/output
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+networks:
+  default:
+    driver: bridge
