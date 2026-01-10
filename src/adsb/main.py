@@ -57,13 +57,13 @@ def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_op
     start = time.perf_counter()
     now = time.time()
     fallback_until = getattr(process_adsb_message_stream, "_fallback_until", 0.0)
-    data_source = "adsblol"
+    data_source = "adsb.lol"
     if now >= fallback_until:
         try:
-            print("adsblol")
+            print("adsb.lol")
             adsb_messages = process_adsblol_reapi_states()
             process_adsb_message_stream._fallback_until = 0.0
-            data_source = "adsblol"
+            data_source = "adsb.lol"
         except Exception as exc:
             raise exc
             logging.warning("adsblol failed, using opensky for 10 minutes: %s", exc)
@@ -78,13 +78,13 @@ def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_op
 
     # process_takeoff_landing_events(adsb_messages)
     print(len(adsb_messages), "new messages to insert")
-    # insert_adsb_messages(client, adsb_messages)
+    insert_adsb_messages(client, adsb_messages)
     print("Inserted messages")
     end = time.perf_counter()
     print(f"Elapsed process_adsb_message_stream: {_format_duration(end - start)}")
     return data_source
 
-from my_types import reapi_to_row, Adsb_Message_reapi, AdsbMessageRow
+from adsb_messages_types import reapi_to_row, Adsb_Message_reapi, AdsbMessageRow, insert_adsb_messages
 def process_adsblol_reapi_states():
     data = get_adsblol_reapi_request()
     adsb_message_rows: list[AdsbMessageRow] = []
@@ -107,7 +107,7 @@ def process_adsblol_reapi_states():
                 
         time = datetime.fromtimestamp(message_time / 1000)
         adsb_message_row = reapi_to_row(adsb_message_reapi,
-            time=time, source="adsblol")
+            time=time, source="adsb.lol")
         adsb_message_rows.append(adsb_message_row)
         
     return adsb_message_rows
@@ -278,7 +278,7 @@ if __name__ == '__main__':
             send_receive_timeout=120, 
            )
         elapsed = time.perf_counter() - loop_start
-        interval = 30 if data_source == "adsblol" else 60 * 5
+        interval = 30 if data_source == "adsb.lol" else 60 * 5
         sleep_time = interval - elapsed
         print(f"Sleeping for {sleep_time:.2f} seconds before next fetch...")
         if sleep_time > 0:
