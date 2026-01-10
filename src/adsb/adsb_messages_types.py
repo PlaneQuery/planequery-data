@@ -12,6 +12,11 @@ class Adsb_Message_reapi:
     r: Optional[str] = None
     t: Optional[str] = None
 
+    # Metadata
+    desc: Optional[str] = None
+    ownOp: Optional[str] = None
+    year: Optional[str] = None
+
     # Altitude
     alt_baro: Optional[int] = None
     on_ground: bool = False
@@ -83,6 +88,9 @@ class Adsb_Message_reapi:
     messages: Optional[int] = None
     seen: Optional[float] = None
     rssi: Optional[float] = None
+
+    # ACAS Resolution Advisory
+    acas_ra: Optional[dict] = None
 
     @staticmethod
     def from_json(d: dict) -> Adsb_Message_reapi:
@@ -229,19 +237,27 @@ def reapi_to_row(
     if lon_value is None and msg.lastPosition:
         lon_value = msg.lastPosition.get('lon')
 
+    # Handle year conversion safely
+    year_value = year
+    if msg.year:
+        try:
+            year_value = int(msg.year)
+        except (ValueError, TypeError):
+            year_value = year
+
     return AdsbMessageRow(
         # Primary
         time=time,
         icao=msg.hex.strip(),
 
-        # Metadata
+        # Metadata - use message fields if available, fall back to parameters
         r=(msg.r or "").strip(),
         t=(msg.t or "").strip(),
         dbFlags=msg.dbFlags or 0,
         noRegData=noRegData,
-        ownOp=ownOp,
-        year=year,
-        desc=desc,
+        ownOp=msg.ownOp or ownOp,
+        year=year_value,
+        desc=msg.desc or desc,
 
         # Position / motion
         lat=lat_value or 0.0,
