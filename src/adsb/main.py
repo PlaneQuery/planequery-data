@@ -66,6 +66,7 @@ def process_adsb_message_stream(primary_source: str = "adsb.lol") -> str:
             process_adsb_message_stream._fallback_until = 0.0
             data_source = primary_source
         except Exception as exc:
+            raise exc
             logging.warning(f"{primary_source} failed, using {fallback_source} for 10 minutes: %s", exc)
             process_adsb_message_stream._fallback_until = now + 10 * 60
             adsb_messages = process_reapi_states(fallback_source)
@@ -92,7 +93,13 @@ def process_reapi_states(source: str):
     # adsb.lol uses "aircraft", adsb.fi uses "ac"
     messages_key = "aircraft" if source == "adsb.lol" else "ac"
     messages = data[messages_key]
-    now = int(data["now"] * 1000)
+    
+    # Handle different timestamp formats: adsb.lol uses seconds, adsb.fi uses milliseconds
+    now_raw = data["now"]
+    if is_epoch_utc_milliseconds(now_raw):
+        now = int(now_raw)  # Already in milliseconds
+    else:
+        now = int(now_raw * 1000)  # Convert from seconds to milliseconds
     
     print(len(messages), f"messages received from {source}")
     for message in messages:
@@ -109,8 +116,9 @@ def process_reapi_states(source: str):
                 
         time = datetime.fromtimestamp(message_time / 1000)
         db_source = "adsb.lol" if source == "adsb.lol" else "other"
+        print(f"db_source: {db_source}")
         adsb_message_row = reapi_to_row(adsb_message_reapi,
-            time=time, source=db_source)
+            time=time, data_source=db_source)
         adsb_message_rows.append(adsb_message_row)
         
     return adsb_message_rows
