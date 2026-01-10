@@ -304,3 +304,30 @@ def reapi_to_row(
         # Provenance
         data_source=source,
     )
+
+
+import clickhouse_connect
+from typing import TYPE_CHECKING
+import dataclasses
+
+if TYPE_CHECKING:
+    from clickhouse_connect.driver import Client
+
+
+def insert_adsb_messages(client: 'Client', adsb_messages: List[AdsbMessageRow]) -> None:
+    """
+    Insert ADS-B message rows into the adsb_messages_realtime table.
+    Uses dataclass field order to avoid manually specifying columns.
+    """
+    if not adsb_messages:
+        return
+    
+    # Convert dataclass instances to tuples in field order
+    rows = []
+    for msg in adsb_messages:
+        # Use dataclasses.astuple to get values in field definition order
+        row_values = dataclasses.astuple(msg)
+        rows.append(row_values)
+    
+    # Insert all rows at once - ClickHouse will match by column order
+    client.insert('adsb_messages_realtime', rows)
