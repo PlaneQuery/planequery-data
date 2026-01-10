@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   adsb-updating:
     build:
@@ -7,8 +5,8 @@ services:
       dockerfile: Dockerfile.adsb_updating
     container_name: adsb-updating
     restart: unless-stopped
-    environment:
-      - ENVIRONMENT=production
+    env_file:
+      - .env
     volumes:
       - ./output:/app/output
     networks:
