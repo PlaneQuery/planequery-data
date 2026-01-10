@@ -207,7 +207,7 @@ def reapi_to_row(
     msg: Adsb_Message_reapi,
     *,
     time: datetime,
-    source: str,
+    data_source: str,
     flags: int = 0,
     noRegData: bool = False,
     ownOp: str = "",
@@ -252,7 +252,7 @@ def reapi_to_row(
         track_degrees=track_value,
         flags=flags,
         vertical_rate=msg.baro_rate,
-        source=source,
+        source="",
         geometric_altitude=msg.alt_geom,
         geometric_vertical_rate=msg.geom_rate,
         indicated_airspeed=msg.ias,
@@ -302,7 +302,7 @@ def reapi_to_row(
         aircraft_nav_heading=msg.nav_heading,
 
         # Provenance
-        data_source=source,
+        data_source=data_source,
     )
 
 
