@@ -2,11 +2,11 @@ from datetime import datetime, timedelta, timezone
 import sys
 import os
 import requests
+import argparse
 
 import time
 import logging
 import clickhouse_connect
-logging.basicConfig(level=logging.DEBUG)
 environment = os.getenv('ENVIRONMENT', 'development')
 
 client = clickhouse_connect.get_client(
@@ -53,28 +53,27 @@ json_output_path = "output/adsb_updating/adsb.lol"
 os.makedirs(os.path.dirname(json_output_path), exist_ok=True)
 os.makedirs(json_output_path, exist_ok=True)  # Ensure leaf directory exists
 
-def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_opensky: bool = True) -> str:
+def process_adsb_message_stream(primary_source: str = "adsb.lol") -> str:
     start = time.perf_counter()
     now = time.time()
     fallback_until = getattr(process_adsb_message_stream, "_fallback_until", 0.0)
-    data_source = "adsb.lol"
+    fallback_source = "adsb.fi" if primary_source == "adsb.lol" else "adsb.lol"
+    
     if now >= fallback_until:
         try:
-            print("adsb.lol")
-            adsb_messages = process_adsblol_reapi_states()
+            print(f"Using primary source: {primary_source}")
+            adsb_messages = process_reapi_states(primary_source)
             process_adsb_message_stream._fallback_until = 0.0
-            data_source = "adsb.lol"
+            data_source = primary_source
         except Exception as exc:
-            raise exc
-            logging.warning("adsblol failed, using opensky for 10 minutes: %s", exc)
+            logging.warning(f"{primary_source} failed, using {fallback_source} for 10 minutes: %s", exc)
             process_adsb_message_stream._fallback_until = now + 10 * 60
-            adsb_messages = process_opensky_all_states()
-            data_source = "opensky"
+            adsb_messages = process_reapi_states(fallback_source)
+            data_source = fallback_source
     else:
-        return
-        print("adsblol fallback active, using opensky")
-        adsb_messages = process_opensky_all_states()
-        data_source = "opensky"
+        print(f"Primary source fallback active, using {fallback_source}")
+        adsb_messages = process_reapi_states(fallback_source)
+        data_source = fallback_source
 
     # process_takeoff_landing_events(adsb_messages)
     print(len(adsb_messages), "new messages to insert")
@@ -85,13 +84,17 @@ def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_op
     return data_source
 
 from adsb_messages_types import reapi_to_row, Adsb_Message_reapi, AdsbMessageRow, insert_adsb_messages
-def process_adsblol_reapi_states():
-    data = get_adsblol_reapi_request()
+def process_reapi_states(source: str):
+    """Generic function to process ADS-B data from either adsb.lol or adsb.fi"""
+    data = get_reapi_request(source)
     adsb_message_rows: list[AdsbMessageRow] = []
-    # Assume API returns {"ac": [...]} as in example
-    messages = data["aircraft"]
+    
+    # adsb.lol uses "aircraft", adsb.fi uses "ac"
+    messages_key = "aircraft" if source == "adsb.lol" else "ac"
+    messages = data[messages_key]
     now = int(data["now"] * 1000)
-    print(len(messages), "messages received from adsb.lol")
+    
+    print(len(messages), f"messages received from {source}")
     for message in messages:
         print(message)
         adsb_message_reapi = Adsb_Message_reapi.from_json(message)
@@ -101,20 +104,26 @@ def process_adsblol_reapi_states():
         message_time = now - seen_pos
         icao: str = message["hex"]
         last_message_time = get_last_message_time(icao)
-        if message_time <= last_message_time: # I think broken should be inverse on last_message_time = 0.
-                # This message is older or same as the last processed message for this ICAO
-                continue
+        if message_time <= last_message_time:
+            continue
                 
         time = datetime.fromtimestamp(message_time / 1000)
+        db_source = "adsb.lol" if source == "adsb.lol" else "other"
         adsb_message_row = reapi_to_row(adsb_message_reapi,
-            time=time, source="adsb.lol")
+            time=time, source=db_source)
         adsb_message_rows.append(adsb_message_row)
         
     return adsb_message_rows
-def process_pia_planes():
-    pass
-def get_adsblol_reapi_request():
-    url = "https://re-api.adsb.lol?all"
+
+def get_reapi_request(source: str):
+    """Generic function to fetch ADS-B data from either adsb.lol or adsb.fi"""
+    if source == "adsb.lol":
+        url = "https://re-api.adsb.lol?all"
+    elif source == "adsb.fi":
+        url = "https://opendata.adsb.fi/api/v2/snapshot"
+    else:
+        raise ValueError(f"Unknown source: {source}")
+    
     attempts = 2
     delay = 1.0
     last_err = None
@@ -122,8 +131,7 @@ def get_adsblol_reapi_request():
         try:
             resp = requests.get(url, timeout=60)
             if resp.status_code == 429:
-                logging.error("Rate limited by adsb.lol API on attempt %d/%d", attempt, attempts)
-                # get Retry-After:
+                logging.error("Rate limited by %s API on attempt %d/%d", source, attempt, attempts)
                 retry_after = resp.headers.get("Retry-After")
                 if retry_after is not None:
                     retry_after = int(retry_after)
@@ -136,95 +144,12 @@ def get_adsblol_reapi_request():
             return resp.json()
         except Exception as e:
             last_err = e
-            logging.warning("get_adsblol_reapi_request attempt %d/%d failed: %s", attempt, attempts, e)
+            logging.warning("get_reapi_request for %s attempt %d/%d failed: %s", source, attempt, attempts, e)
             if attempt < attempts:
                 time.sleep(delay)
                 delay *= 2
     raise RuntimeError(f"Failed to fetch {url} after {attempts} attempts") from last_err
 
-def get_opensky_all_states_request():
-    username = os.environ.get('OPENSKY_USERNAME')
-    password = os.environ.get('OPENSKY_PASSWORD')
-    url = "https://opensky-network.org/api/states/all"
-
-    attempts = 2
-    delay = 120.0
-    last_err = None
-    for attempt in range(1, attempts + 1):
-        try:
-            if username and password:
-                resp = requests.get(url, auth=(username, password), timeout=10)
-            else:
-                resp = requests.get(url, timeout=60)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            last_err = e
-            logging.warning("get_opensky_all_states_request attempt %d/%d failed: %s", attempt, attempts, e)
-            if attempt < attempts:
-                time.sleep(delay)
-                delay *= 2
-    raise RuntimeError(f"Failed to fetch {url} after {attempts} attempts") from last_err
-
-def process_opensky_all_states():
-    adsb_messages: list[Adsb_Message] = []
-    data = get_opensky_all_states_request()
-    # https://openskynetwork.github.io/opensky-api/rest.html#all-state-vectors
-    states = data.get("states", [])
-    print(len(states), "messages received from OpenSky")
-    for state in states:
-        # state is a list with fixed indices
-        # 0: icao24, 1: callsign, 2: origin_country, 3: time_position, 4: last_contact
-        # 5: longitude, 6: latitude, 7: baro_altitude, 8: on_ground
-        # 9: velocity, 10: true_track, 11: vertical_rate
-        # 12: sensors, 13: geo_altitude, 14: squawk, 15: spi, 16: position_source
-        icao24 = state[0]
-        callsign = state[1]
-        origin_country = state[2]
-        time_position = state[3] # seconds since epoch
-        last_contact = state[4]
-        longitude = state[5]
-        latitude = state[6]
-        baro_altitude = state[7]
-        on_ground = state[8]
-        velocity = state[9]
-        true_track = state[10]
-        vertical_rate = state[11]
-        sensors = state[12]
-        geo_altitude = state[13]
-        squawk = state[14]
-        spi = state[15]
-        position_source = state[16]
-        if time_position is None or latitude is None or longitude is None:
-            continue
-        last_message_time = get_last_message_time(icao24)
-        time_position_ms = int(time_position * 1000)
-        assert(is_epoch_utc_milliseconds(time_position_ms))
-        if time_position_ms <= last_message_time:
-                # This message is older or same as the last processed message for this ICAO
-                print("continue here", icao24, time_position_ms)
-                continue
-        print("insertion", icao24, time_position_ms)
-        adsb_message = Adsb_Message(
-            time=datetime.fromtimestamp(time_position, tz=timezone.utc),
-            icao24=icao24,
-            lat=latitude,
-            lon=longitude,
-            on_ground=on_ground,
-            alt_baro=int(baro_altitude) if baro_altitude is not None else None,
-            baro_rate=int(vertical_rate) if vertical_rate is not None else None,
-            gs=float(velocity) if velocity is not None else None,
-            track=float(true_track) if true_track is not None else None,
-            alt_geom=int(geo_altitude) if geo_altitude is not None else None,
-            geom_rate=None,
-            squawk=squawk,
-            dbFlags=None,
-            category=None
-        )
-        adsb_messages.append(adsb_message)
-        last_message_time_by_icao[icao24] = time_position_ms
-
-    return adsb_messages
 def get_last_message_time(icao: str) -> int:
     if icao in last_message_time_by_icao:
         return last_message_time_by_icao[icao]
@@ -257,16 +182,22 @@ def _format_duration(seconds: float) -> str:
     return f"{int(hours)}:{int(minutes):02d}:{int(sec):02d} (hh:mm:ss)"
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='ADS-B message processor')
+    parser.add_argument('--primary-source', choices=['adsb.lol', 'adsb.fi'], 
+                        default='adsb.lol', help='Primary ADS-B data source to try first')
+    args = parser.parse_args()
+    
     # python -m src.adsb_updating.main
     logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
     print(f"Starting adsb_updating in {environment} environment")
+    print(f"Primary source: {args.primary_source}")
     logging.info("Logging at Info level")
     # get_last_message_time_for_icaos()
     interval = 60*2  # 2 minute
     while True:
         loop_start = time.perf_counter()
         try:
-            data_source = process_adsb_message_stream()
+            data_source = process_adsb_message_stream(args.primary_source)
         except Exception as e:
             logging.error("Error in process_adsb_message_stream: %s", e)
             client = clickhouse_connect.get_client(
@@ -278,7 +209,7 @@ if __name__ == '__main__':
             send_receive_timeout=120, 
            )
         elapsed = time.perf_counter() - loop_start
-        interval = 30 if data_source == "adsb.lol" else 60 * 5
+        interval = 30 if data_source == "adsb.lol" else 60 * 2
         sleep_time = interval - elapsed
         print(f"Sleeping for {sleep_time:.2f} seconds before next fetch...")
         if sleep_time > 0:
