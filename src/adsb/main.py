@@ -65,11 +65,13 @@ def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_op
             process_adsb_message_stream._fallback_until = 0.0
             data_source = "adsblol"
         except Exception as exc:
+            raise exc
             logging.warning("adsblol failed, using opensky for 10 minutes: %s", exc)
             process_adsb_message_stream._fallback_until = now + 10 * 60
             adsb_messages = process_opensky_all_states()
             data_source = "opensky"
     else:
+        return
         print("adsblol fallback active, using opensky")
         adsb_messages = process_opensky_all_states()
         data_source = "opensky"
@@ -82,17 +84,20 @@ def process_adsb_message_stream(save_readsb_to_all_to_json: bool = False, use_op
     print(f"Elapsed process_adsb_message_stream: {_format_duration(end - start)}")
     return data_source
 
+from my_types import reapi_to_row, Adsb_Message_reapi, AdsbMessageRow
 def process_adsblol_reapi_states():
     data = get_adsblol_reapi_request()
-    # adsb_messages: list[Adsb_Message] = []
-
+    adsb_message_rows: list[AdsbMessageRow] = []
     # Assume API returns {"ac": [...]} as in example
     messages = data["aircraft"]
     now = int(data["now"] * 1000)
     print(len(messages), "messages received from adsb.lol")
     for message in messages:
-        if "seen_pos" not in message:
-            continue
+        print(message)
+        adsb_message_reapi = Adsb_Message_reapi.from_json(message)
+        if Adsb_Message_reapi.seen_pos is None:
+            seen_pos = 0.0
+
         seen_pos = int(message["seen_pos"] * 1000)
         message_time = now - seen_pos
         icao: str = message["hex"]
@@ -100,14 +105,13 @@ def process_adsblol_reapi_states():
         if message_time <= last_message_time: # I think broken should be inverse on last_message_time = 0.
                 # This message is older or same as the last processed message for this ICAO
                 continue
-        from my_types import Adsb_Message_reapi
-        message_obj = Adsb_Message_reapi.from_json(message)
-        print(message_obj)
-        # print(message)
-        # print(type(message))
+                
+        time = datetime.fromtimestamp(message_time / 1000)
+        adsb_message_row = reapi_to_row(adsb_message_reapi,
+            time=time, source="adsblol")
+        adsb_message_rows.append(adsb_message_row)
         
-    # return adsb_messages
-
+    return adsb_message_rows
 def process_pia_planes():
     pass
 def get_adsblol_reapi_request():
