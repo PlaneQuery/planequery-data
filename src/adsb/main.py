@@ -95,10 +95,9 @@ def process_adsblol_reapi_states():
     for message in messages:
         print(message)
         adsb_message_reapi = Adsb_Message_reapi.from_json(message)
-        if Adsb_Message_reapi.seen_pos is None:
-            seen_pos = 0.0
-
-        seen_pos = int(message["seen_pos"] * 1000)
+        if adsb_message_reapi.seen_pos is None:
+            continue
+        seen_pos = adsb_message_reapi.seen_pos * 1000
         message_time = now - seen_pos
         icao: str = message["hex"]
         last_message_time = get_last_message_time(icao)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 @dataclass
 class Adsb_Message_reapi:
@@ -20,10 +20,20 @@ class Adsb_Message_reapi:
     # Kinematics
     gs: Optional[float] = None
     track: Optional[float] = None
+    calc_track: Optional[float] = None
     baro_rate: Optional[int] = None
     geom_rate: Optional[int] = None
     true_heading: Optional[float] = None
-    mag_heading: Optional[float] = None  # Add this line
+    mag_heading: Optional[float] = None
+    ias: Optional[int] = None
+    tas: Optional[int] = None
+    mach: Optional[float] = None
+    track_rate: Optional[float] = None
+    roll: Optional[float] = None
+    wd: Optional[int] = None
+    ws: Optional[int] = None
+    oat: Optional[int] = None
+    tat: Optional[int] = None
 
     # Transponder / status
     squawk: Optional[str] = None
@@ -33,12 +43,19 @@ class Adsb_Message_reapi:
     # Navigation
     nav_qnh: Optional[float] = None
     nav_altitude_mcp: Optional[int] = None
+    nav_altitude_fms: Optional[int] = None
     nav_heading: Optional[float] = None
     nav_modes: Optional[List[str]] = None
 
     # Position
     lat: Optional[float] = None
     lon: Optional[float] = None
+    gpsOkBefore: Optional[float] = None
+    gpsOkLat: Optional[float] = None
+    gpsOkLon: Optional[float] = None
+    rr_lat: Optional[float] = None
+    rr_lon: Optional[float] = None
+    lastPosition: Optional[dict] = None
 
     # Integrity / accuracy
     nic: Optional[int] = None
@@ -200,15 +217,26 @@ def reapi_to_row(
     """
     Convert a reapi ADS-B message into a ClickHouse adsb_messages row.
     """
+    
+    # Use calc_track as fallback for track
+    track_value = msg.track or msg.calc_track
+    
+    # Handle missing lat/lon by using lastPosition if available
+    lat_value = msg.lat
+    lon_value = msg.lon
+    if lat_value is None and msg.lastPosition:
+        lat_value = msg.lastPosition.get('lat')
+    if lon_value is None and msg.lastPosition:
+        lon_value = msg.lastPosition.get('lon')
 
     return AdsbMessageRow(
         # Primary
         time=time,
-        icao=msg.hex,
+        icao=msg.hex.strip(),
 
         # Metadata
-        r=msg.r or "",
-        t=msg.t or "",
+        r=(msg.r or "").strip(),
+        t=(msg.t or "").strip(),
         dbFlags=msg.dbFlags or 0,
         noRegData=noRegData,
         ownOp=ownOp,
@@ -216,22 +244,22 @@ def reapi_to_row(
         desc=desc,
 
         # Position / motion
-        lat=msg.lat or 0.0,
-        lon=msg.lon or 0.0,
+        lat=lat_value or 0.0,
+        lon=lon_value or 0.0,
         alt_baro=msg.alt_baro,
         on_ground=msg.on_ground,
         ground_speed=msg.gs,
-        track_degrees=msg.track,
+        track_degrees=track_value,
         flags=flags,
         vertical_rate=msg.baro_rate,
         source=source,
         geometric_altitude=msg.alt_geom,
         geometric_vertical_rate=msg.geom_rate,
-        indicated_airspeed=None,
-        roll_angle=None,
+        indicated_airspeed=msg.ias,
+        roll_angle=msg.roll,
 
         # Aircraft integrity / accuracy
-        aircraft_alert=None,
+        aircraft_alert=msg.alert,
         aircraft_alt_geom=msg.alt_geom,
         aircraft_gva=msg.gva,
         aircraft_nac_p=msg.nac_p,
@@ -243,34 +271,34 @@ def reapi_to_row(
         aircraft_sil=msg.sil,
         aircraft_sil_type=msg.sil_type or "",
         aircraft_spi=msg.spi,
-        aircraft_track=msg.track,
+        aircraft_track=track_value,
         aircraft_type=msg.t or "",
         aircraft_version=msg.version,
 
         # Aircraft identity
         aircraft_category=msg.category or "",
         aircraft_emergency=msg.emergency or "",
-        aircraft_flight=msg.flight or "",
+        aircraft_flight=(msg.flight or "").strip(),
         aircraft_squawk=msg.squawk or "",
 
         # Navigation
         aircraft_baro_rate=msg.baro_rate,
-        aircraft_nav_altitude_fms=None,
+        aircraft_nav_altitude_fms=msg.nav_altitude_fms,
         aircraft_nav_altitude_mcp=msg.nav_altitude_mcp,
         aircraft_nav_modes=list(msg.nav_modes or []),
         aircraft_nav_qnh=msg.nav_qnh,
         aircraft_geom_rate=msg.geom_rate,
-        aircraft_ias=None,
-        aircraft_mach=None,
-        aircraft_mag_heading=None,
-        aircraft_oat=None,
-        aircraft_roll=None,
-        aircraft_tas=None,
-        aircraft_tat=None,
+        aircraft_ias=msg.ias,
+        aircraft_mach=msg.mach,
+        aircraft_mag_heading=msg.mag_heading,
+        aircraft_oat=msg.oat,
+        aircraft_roll=msg.roll,
+        aircraft_tas=msg.tas,
+        aircraft_tat=msg.tat,
         aircraft_true_heading=msg.true_heading,
-        aircraft_wd=None,
-        aircraft_ws=None,
-        aircraft_track_rate=None,
+        aircraft_wd=msg.wd,
+        aircraft_ws=msg.ws,
+        aircraft_track_rate=msg.track_rate,
         aircraft_nav_heading=msg.nav_heading,
 
         # Provenance
