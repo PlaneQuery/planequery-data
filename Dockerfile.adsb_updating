@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ src/
+
+# Copy environment file
+COPY .env .env
+
+# Set environment variables from .env file
+ENV PYTHONPATH=/app
+ENV ENVIRONMENT=production
+
+# Expose any ports if needed (optional, remove if not applicable)
+# EXPOSE 8000
+
+# Run the ADS-B main script
+CMD ["python", "src/adsb/main.py"]
