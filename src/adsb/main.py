@@ -66,7 +66,6 @@ def process_adsb_message_stream(primary_source: str = "adsb.lol") -> str:
             process_adsb_message_stream._fallback_until = 0.0
             data_source = primary_source
         except Exception as exc:
-            raise exc
             logging.warning(f"{primary_source} failed, using {fallback_source} for 10 minutes: %s", exc)
             process_adsb_message_stream._fallback_until = now + 10 * 60
             adsb_messages = process_reapi_states(fallback_source)
