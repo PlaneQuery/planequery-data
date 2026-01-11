@@ -1,4 +1,4 @@
-CREATE TABLE adsb_messages_realtime_test
+CREATE TABLE adsb_messages_realtime
 (
     time DateTime64(3),
     icao String,
