@@ -115,7 +115,6 @@ def process_reapi_states(source: str):
                 
         time = datetime.fromtimestamp(message_time / 1000)
         db_source = "adsb.lol" if source == "adsb.lol" else "other"
-        print(f"db_source: {db_source}")
         adsb_message_row = reapi_to_row(adsb_message_reapi,
             time=time, data_source=db_source)
         adsb_message_rows.append(adsb_message_row)
