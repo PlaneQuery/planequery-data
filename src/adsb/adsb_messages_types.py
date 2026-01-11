@@ -344,4 +344,4 @@ def insert_adsb_messages(client: 'Client', adsb_messages: List[AdsbMessageRow]) 
         rows.append(row_values)
     
     # Insert all rows at once - ClickHouse will match by column order
-    client.insert('adsb_messages_realtime_test', rows)
+    client.insert('adsb_messages_realtime', rows)
