@@ -128,7 +128,7 @@ NavMode = Literal[
 ]
 
 DataSource = Literal[
-    '', 'adsb.lol', 'other', 'airplanes.live'
+    '', 'adsb.lol', 'other'
 ]
 
 
