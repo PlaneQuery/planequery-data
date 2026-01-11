@@ -154,15 +154,15 @@ class AdsbMessageRow:
     lon: float
     alt_baro: Optional[int]
     on_ground: bool
-    ground_speed: Optional[float]
-    track_degrees: Optional[float]
+    gs: Optional[float]
+    track: Optional[float]
     flags: int
-    vertical_rate: Optional[int]
+    baro_rate: Optional[int]
     source: str
-    geometric_altitude: Optional[int]
-    geometric_vertical_rate: Optional[int]
-    indicated_airspeed: Optional[int]
-    roll_angle: Optional[float]
+    alt_geom: Optional[int]
+    geom_rate: Optional[int]
+    ias: Optional[int]
+    roll: Optional[float]
 
     # Aircraft integrity / accuracy
     alert: Optional[int]
@@ -176,7 +176,6 @@ class AdsbMessageRow:
     sil: Optional[int]
     sil_type: str
     spi: Optional[int]
-    track: Optional[float]
     type: str
     version: Optional[int]
 
@@ -187,17 +186,13 @@ class AdsbMessageRow:
     squawk: str
 
     # Navigation
-    baro_rate: Optional[int]
     nav_altitude_fms: Optional[int]
     nav_altitude_mcp: Optional[int]
     nav_modes: List[NavMode]
     nav_qnh: Optional[float]
-    geom_rate: Optional[int]
-    ias: Optional[int]
     mach: Optional[float]
     mag_heading: Optional[float]
     oat: Optional[int]
-    roll: Optional[float]
     tas: Optional[int]
     tat: Optional[int]
     true_heading: Optional[float]
@@ -263,15 +258,15 @@ def reapi_to_row(
         lon=lon_value or 0.0,
         alt_baro=msg.alt_baro,
         on_ground=msg.on_ground,
-        ground_speed=msg.gs,
-        track_degrees=track_value,
+        gs=msg.gs,
+        track=track_value,
         flags=flags,
-        vertical_rate=msg.baro_rate,
+        baro_rate=msg.baro_rate,
         source="",
-        geometric_altitude=msg.alt_geom,
-        geometric_vertical_rate=msg.geom_rate,
-        indicated_airspeed=msg.ias,
-        roll_angle=msg.roll,
+        alt_geom=msg.alt_geom,
+        geom_rate=msg.geom_rate,
+        ias=msg.ias,
+        roll=msg.roll,
 
         # Aircraft integrity / accuracy
         alert=msg.alert,
@@ -285,7 +280,6 @@ def reapi_to_row(
         sil=msg.sil,
         sil_type=msg.sil_type or "",
         spi=msg.spi,
-        track=track_value,
         type=msg.t or "",
         version=msg.version,
 
@@ -296,17 +290,13 @@ def reapi_to_row(
         squawk=msg.squawk or "",
 
         # Navigation
-        baro_rate=msg.baro_rate,
         nav_altitude_fms=msg.nav_altitude_fms,
         nav_altitude_mcp=msg.nav_altitude_mcp,
         nav_modes=list(msg.nav_modes or []),
         nav_qnh=msg.nav_qnh,
-        geom_rate=msg.geom_rate,
-        ias=msg.ias,
         mach=msg.mach,
         mag_heading=msg.mag_heading,
         oat=msg.oat,
-        roll=msg.roll,
         tas=msg.tas,
         tat=msg.tat,
         true_heading=msg.true_heading,
@@ -344,4 +334,4 @@ def insert_adsb_messages(client: 'Client', adsb_messages: List[AdsbMessageRow]) 
         rows.append(row_values)
     
     # Insert all rows at once - ClickHouse will match by column order
-    client.insert('adsb_messages_realtime', rows)
+    client.insert('adsb_messages_realtime_test', rows)
