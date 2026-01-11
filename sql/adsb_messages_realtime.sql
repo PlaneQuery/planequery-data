@@ -66,7 +66,7 @@ CREATE TABLE adsb_messages_realtime
     aircraft_ws Nullable(Int64),
     aircraft_track_rate Nullable(Float64),
     aircraft_nav_heading Nullable(Float64),
-    data_source Enum8('', 'adsb.lol', 'other', 'airplanes.live')
+    data_source Enum8('', 'adsb.lol', 'other')
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(time)
 ORDER BY (time, icao)
