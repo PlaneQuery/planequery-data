@@ -165,47 +165,46 @@ class AdsbMessageRow:
     roll_angle: Optional[float]
 
     # Aircraft integrity / accuracy
-    aircraft_alert: Optional[int]
-    aircraft_alt_geom: Optional[int]
-    aircraft_gva: Optional[int]
-    aircraft_nac_p: Optional[int]
-    aircraft_nac_v: Optional[int]
-    aircraft_nic: Optional[int]
-    aircraft_nic_baro: Optional[int]
-    aircraft_rc: Optional[int]
-    aircraft_sda: Optional[int]
-    aircraft_sil: Optional[int]
-    aircraft_sil_type: str
-    aircraft_spi: Optional[int]
-    aircraft_track: Optional[float]
-    aircraft_type: str
-    aircraft_version: Optional[int]
+    alert: Optional[int]
+    gva: Optional[int]
+    nac_p: Optional[int]
+    nac_v: Optional[int]
+    nic: Optional[int]
+    nic_baro: Optional[int]
+    rc: Optional[int]
+    sda: Optional[int]
+    sil: Optional[int]
+    sil_type: str
+    spi: Optional[int]
+    track: Optional[float]
+    type: str
+    version: Optional[int]
 
     # Aircraft identity
-    aircraft_category: AircraftCategory
-    aircraft_emergency: AircraftEmergency
-    aircraft_flight: str
-    aircraft_squawk: str
+    category: AircraftCategory
+    emergency: AircraftEmergency
+    flight: str
+    squawk: str
 
     # Navigation
-    aircraft_baro_rate: Optional[int]
-    aircraft_nav_altitude_fms: Optional[int]
-    aircraft_nav_altitude_mcp: Optional[int]
-    aircraft_nav_modes: List[NavMode]
-    aircraft_nav_qnh: Optional[float]
-    aircraft_geom_rate: Optional[int]
-    aircraft_ias: Optional[int]
-    aircraft_mach: Optional[float]
-    aircraft_mag_heading: Optional[float]
-    aircraft_oat: Optional[int]
-    aircraft_roll: Optional[float]
-    aircraft_tas: Optional[int]
-    aircraft_tat: Optional[int]
-    aircraft_true_heading: Optional[float]
-    aircraft_wd: Optional[int]
-    aircraft_ws: Optional[int]
-    aircraft_track_rate: Optional[float]
-    aircraft_nav_heading: Optional[float]
+    baro_rate: Optional[int]
+    nav_altitude_fms: Optional[int]
+    nav_altitude_mcp: Optional[int]
+    nav_modes: List[NavMode]
+    nav_qnh: Optional[float]
+    geom_rate: Optional[int]
+    ias: Optional[int]
+    mach: Optional[float]
+    mag_heading: Optional[float]
+    oat: Optional[int]
+    roll: Optional[float]
+    tas: Optional[int]
+    tat: Optional[int]
+    true_heading: Optional[float]
+    wd: Optional[int]
+    ws: Optional[int]
+    track_rate: Optional[float]
+    nav_heading: Optional[float]
 
     # Provenance
     data_source: DataSource
@@ -275,47 +274,46 @@ def reapi_to_row(
         roll_angle=msg.roll,
 
         # Aircraft integrity / accuracy
-        aircraft_alert=msg.alert,
-        aircraft_alt_geom=msg.alt_geom,
-        aircraft_gva=msg.gva,
-        aircraft_nac_p=msg.nac_p,
-        aircraft_nac_v=msg.nac_v,
-        aircraft_nic=msg.nic,
-        aircraft_nic_baro=msg.nic_baro,
-        aircraft_rc=msg.rc,
-        aircraft_sda=msg.sda,
-        aircraft_sil=msg.sil,
-        aircraft_sil_type=msg.sil_type or "",
-        aircraft_spi=msg.spi,
-        aircraft_track=track_value,
-        aircraft_type=msg.t or "",
-        aircraft_version=msg.version,
+        alert=msg.alert,
+        gva=msg.gva,
+        nac_p=msg.nac_p,
+        nac_v=msg.nac_v,
+        nic=msg.nic,
+        nic_baro=msg.nic_baro,
+        rc=msg.rc,
+        sda=msg.sda,
+        sil=msg.sil,
+        sil_type=msg.sil_type or "",
+        spi=msg.spi,
+        track=track_value,
+        type=msg.t or "",
+        version=msg.version,
 
         # Aircraft identity
-        aircraft_category=msg.category or "",
-        aircraft_emergency=msg.emergency or "",
-        aircraft_flight=(msg.flight or "").strip(),
-        aircraft_squawk=msg.squawk or "",
+        category=msg.category or "",
+        emergency=msg.emergency or "",
+        flight=(msg.flight or "").strip(),
+        squawk=msg.squawk or "",
 
         # Navigation
-        aircraft_baro_rate=msg.baro_rate,
-        aircraft_nav_altitude_fms=msg.nav_altitude_fms,
-        aircraft_nav_altitude_mcp=msg.nav_altitude_mcp,
-        aircraft_nav_modes=list(msg.nav_modes or []),
-        aircraft_nav_qnh=msg.nav_qnh,
-        aircraft_geom_rate=msg.geom_rate,
-        aircraft_ias=msg.ias,
-        aircraft_mach=msg.mach,
-        aircraft_mag_heading=msg.mag_heading,
-        aircraft_oat=msg.oat,
-        aircraft_roll=msg.roll,
-        aircraft_tas=msg.tas,
-        aircraft_tat=msg.tat,
-        aircraft_true_heading=msg.true_heading,
-        aircraft_wd=msg.wd,
-        aircraft_ws=msg.ws,
-        aircraft_track_rate=msg.track_rate,
-        aircraft_nav_heading=msg.nav_heading,
+        baro_rate=msg.baro_rate,
+        nav_altitude_fms=msg.nav_altitude_fms,
+        nav_altitude_mcp=msg.nav_altitude_mcp,
+        nav_modes=list(msg.nav_modes or []),
+        nav_qnh=msg.nav_qnh,
+        geom_rate=msg.geom_rate,
+        ias=msg.ias,
+        mach=msg.mach,
+        mag_heading=msg.mag_heading,
+        oat=msg.oat,
+        roll=msg.roll,
+        tas=msg.tas,
+        tat=msg.tat,
+        true_heading=msg.true_heading,
+        wd=msg.wd,
+        ws=msg.ws,
+        track_rate=msg.track_rate,
+        nav_heading=msg.nav_heading,
 
         # Provenance
         data_source=data_source,
