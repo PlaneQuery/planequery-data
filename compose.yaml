@@ -6,6 +6,7 @@ services:
     container_name: adsb-updating
     restart: unless-stopped
     env_file:
+      - .env.prod
       - .env
     volumes:
       - ./output:/app/output
