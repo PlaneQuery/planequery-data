@@ -60,6 +60,9 @@ CREATE TABLE adsb_messages_realtime_test
     ws Nullable(Int64),
     track_rate Nullable(Float64),
     nav_heading Nullable(Float64),
+    mlat Array(String),
+    tisb Array(String),
+    rssi Nullable(Float32),
     data_source Enum8('', 'adsb.lol', 'other')
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(time)

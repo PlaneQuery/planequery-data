@@ -201,6 +201,11 @@ class AdsbMessageRow:
     track_rate: Optional[float]
     nav_heading: Optional[float]
 
+    # Signal arrays
+    mlat: List[str]
+    tisb: List[str]
+    rssi: Optional[float]
+
     # Provenance
     data_source: DataSource
 
@@ -304,6 +309,11 @@ def reapi_to_row(
         ws=msg.ws,
         track_rate=msg.track_rate,
         nav_heading=msg.nav_heading,
+
+        # Signal arrays
+        mlat=list(msg.mlat or []),
+        tisb=list(msg.tisb or []),
+        rssi=msg.rssi,
 
         # Provenance
         data_source=data_source,
