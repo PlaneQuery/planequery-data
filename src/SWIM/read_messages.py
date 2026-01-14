@@ -1,6 +1,11 @@
 from lxml import objectify, etree
+import time
+from collections import defaultdict
 
 aircraftIdentifications = []
+per_minute_ids = defaultdict(set)
+last_minute = None
+
 NS = {
     "nas": "http://www.faa.aero/nas/3.0",
     "base": "http://www.fixm.aero/base/3.0",
@@ -8,8 +13,11 @@ NS = {
     "foundation": "http://www.fixm.aero/foundation/3.0",
     "xsi": "http://www.w3.org/2001/XMLSchema-instance",
 }
+
 def parse_message(doc):
-    root = objectify.fromstring(doc.encode("utf-8"))
+    global last_minute
+    
+    root = objectify.fromstring(doc.encode("utf-8")) # TODO: NEED TO DEBUG THIS
 
     # You still typically access by navigation/XPath:
     gufi = root.xpath("string(.//*[local-name()='gufi'])")
@@ -17,6 +25,25 @@ def parse_message(doc):
         ".//*[@xsi:type and contains(@xsi:type, 'NasFlightType')]",
         namespaces=NS
     )[0]
-    aircraftIdentification = flight.flightIdentification.get("aircraftIdentification")
-    aircraftIdentifications.append(aircraftIdentification)
-    print(aircraftIdentification)
+    try:
+        aircraftIdentification = flight.flightIdentification.get("aircraftIdentification")
+        flightStatus = flight.flightStatus.get("fdpsFlightStatus")
+        # Track per minute
+        current_minute = time.strftime("%Y-%m-%d %H:%M")
+        per_minute_ids[current_minute].add(aircraftIdentification)
+        
+        # Print stats when minute changes
+        if last_minute and current_minute != last_minute:
+            print(f"\n--- Minute {last_minute}: {len(per_minute_ids[last_minute])} unique aircraft ---")
+        
+        last_minute = current_minute
+        
+        aircraftIdentifications.append(aircraftIdentification)
+        my_aircraftIdentifications = set(aircraftIdentifications)
+        n_count = sum(1 for id in my_aircraftIdentifications if id.startswith("N"))
+        
+        print(f"Total unique: {len(my_aircraftIdentifications)}, N-registered: {n_count}, Current minute: {len(per_minute_ids[current_minute])}")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        print(doc)
