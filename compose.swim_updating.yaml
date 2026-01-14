@@ -1,0 +1,34 @@
+services:
+  swim-updating:
+    build:
+      context: .
+      dockerfile: Dockerfile.swim_updating
+    container_name: swim-updating
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+      - .env
+    environment:
+      - AWS_CONFIG_FILE=/root/.aws/config
+      - AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials
+    volumes:
+      - jumpstart-logs:/app/jumpstart-latest/log:ro
+      - ./output/swim_updating:/app/output
+      - ~/.aws:/root/.aws:ro
+    networks:
+      - planequery
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+volumes:
+  jumpstart-logs:
+    external: true
+    name: jumpstart-logs
+
+networks:
+  planequery:
+    external: true
+    name: planequery
