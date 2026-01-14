@@ -30,26 +30,27 @@ def follow(path: str, poll=0.2):
             pass
 
 def reader_thread(q: queue.Queue):
-    """Read lines and assemble complete XML documents"""
-    current_doc = []
-
+    """Read and assemble complete XML documents without data loss"""
+    buffer = ""
+    
     for line in follow(MESSAGES_LOG_PATH):
-        line = line.strip()
+        buffer += line  # Keep original spacing/newlines
         
-        # Start of new XML document
-        if line.startswith("<?xml"):
-            # If we have a previous document, send it to the queue
-            if current_doc:
-                q.put("\n".join(current_doc))
-            current_doc = [line]
-        else:
-            # Continue building current document
-            current_doc.append(line)
-            
-            # Check if document is complete (ends with closing tag)
-            if line.endswith("</ns5:MessageCollection>"):
-                q.put("\n".join(current_doc))
-                current_doc = []
+        # Look for complete documents
+        while True:
+            start = buffer.find("<?xml")
+            if start == -1:
+                break
+                
+            end = buffer.find("</ns5:MessageCollection>", start)
+            if end == -1:
+                break
+                
+            # Extract complete document
+            end += len("</ns5:MessageCollection>")
+            doc = buffer[start:end]
+            q.put(doc)
+            buffer = buffer[end:]  # Remove processed document
 
 def worker_thread(q: queue.Queue):
     while True:
@@ -59,9 +60,18 @@ def worker_thread(q: queue.Queue):
         q.task_done()
 
 from read_messages import parse_message
+from s3_watcher import start_s3_uploader
+
 def process(xml_doc: str):
     # placeholder
     parse_message(xml_doc)
+
+# Start S3 uploader to watch for .gz files and upload them
+s3_observer = start_s3_uploader(
+    log_path=SWIM_LOG_PATH,
+    bucket="planequery-swim-logs-prod",
+    prefix="log"
+)
 
 q = queue.Queue(maxsize=100_000)  # tune for memory
 threading.Thread(target=reader_thread, args=(q,), daemon=True).start()
@@ -75,3 +85,5 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("Shutting down...")
+    s3_observer.stop()
+    s3_observer.join()
