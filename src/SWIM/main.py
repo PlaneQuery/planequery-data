@@ -1,7 +1,7 @@
 import os, time, queue, threading
 
-SWIM_LOG_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Other-Code/jumpstart-latest/log"
-MESSAGES_LOG_PATH = SWIM_LOG_PATH + "/" + "messages.log"
+SWIM_LOG_PATH = "/app/jumpstart-latest/log"
+MESSAGES_LOG_PATH = os.path.join(SWIM_LOG_PATH, "messages.log")
 
 def follow(path: str, poll=0.2):
     while True:
