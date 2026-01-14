@@ -37,6 +37,22 @@ class SwimRealtimeStack(Stack):
             )
         )
 
+        # Grant S3 write access to planequery-swim-logs-prod bucket
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "s3:PutObject",
+                    "s3:PutObjectAcl",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                ],
+                resources=[
+                    "arn:aws:s3:::planequery-swim-logs-prod",
+                    "arn:aws:s3:::planequery-swim-logs-prod/*",
+                ],
+            )
+        )
+
         # 4) Ubuntu 24.04 LTS ARM64 AMI for us-east-2
         ubuntu_ami = ec2.MachineImage.generic_linux(
             {
