@@ -54,11 +54,9 @@ def reader_thread(q: queue.Queue):
 def worker_thread(q: queue.Queue):
     while True:
         xml_doc = q.get()
-        try:
-            # do your slow processing here
-            process(xml_doc)
-        finally:
-            q.task_done()
+        # do your slow processing here
+        process(xml_doc)
+        q.task_done()
 
 from read_messages import parse_message
 def process(xml_doc: str):
