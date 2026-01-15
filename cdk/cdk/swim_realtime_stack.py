@@ -68,7 +68,7 @@ class SwimRealtimeStack(Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             security_group=sg,
             role=role,
-            instance_type=ec2.InstanceType("t4g.micro"),
+            instance_type=ec2.InstanceType("t4g.medium"),
             machine_image=ubuntu_ami,
             key_name="planequery-dev",
         )
