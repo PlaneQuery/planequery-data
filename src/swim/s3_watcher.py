@@ -16,6 +16,8 @@ class GzFileHandler(FileSystemEventHandler):
         self.base_path = Path(base_path)
         self.bucket = bucket
         self.prefix = prefix.strip("/")
+        self.pending_files = set()  # Track files we've seen but haven't uploaded
+        self.lock = threading.Lock()
     
     def on_created(self, event):
         if event.is_directory:
@@ -27,11 +29,33 @@ class GzFileHandler(FileSystemEventHandler):
         if not file_path.suffix == ".gz":
             return
         
+        with self.lock:
+            self.pending_files.add(file_path)
+        
         # Wait a moment for the file to be fully written
         self._wait_for_file_complete(file_path)
         
         # Upload to S3
         self._upload_to_s3(file_path)
+        
+        with self.lock:
+            self.pending_files.discard(file_path)
+    
+    def on_deleted(self, event):
+        """Detect if a file was deleted before we uploaded it"""
+        if event.is_directory:
+            return
+        
+        file_path = Path(event.src_path)
+        
+        if not file_path.suffix == ".gz":
+            return
+        
+        with self.lock:
+            if file_path in self.pending_files:
+                print(f"ERROR: File deleted before upload completed: {file_path}")
+                print("FALLING BEHIND - files are being deleted faster than we can upload them")
+                os._exit(1)  # Hard exit
     
     def _wait_for_file_complete(self, file_path: Path, timeout: float = 30.0):
         """Wait for file to stop being written to"""
@@ -50,7 +74,10 @@ class GzFileHandler(FileSystemEventHandler):
                     stable_count = 0
                     last_size = current_size
             except FileNotFoundError:
-                return
+                # File was deleted while we were waiting
+                print(f"ERROR: File deleted during upload wait: {file_path}")
+                print("FALLING BEHIND - files are being deleted faster than we can upload them")
+                os._exit(1)
             time.sleep(0.5)
     
     def _upload_to_s3(self, file_path: Path):
@@ -66,17 +93,22 @@ class GzFileHandler(FileSystemEventHandler):
         
         print(f"Uploading {file_path} -> s3://{self.bucket}/{s3_key}")
         
-        s3_client.upload_file(
-            str(file_path),
-            self.bucket,
-            s3_key,
-            ExtraArgs={
-                "ContentType": "application/gzip",
-                "ContentEncoding": "gzip",
-            }
-        )
-        
-        print(f"Successfully uploaded: s3://{self.bucket}/{s3_key}")
+        try:
+            s3_client.upload_file(
+                str(file_path),
+                self.bucket,
+                s3_key,
+                ExtraArgs={
+                    "ContentType": "application/gzip",
+                    "ContentEncoding": "gzip",
+                }
+            )
+            print(f"Successfully uploaded: s3://{self.bucket}/{s3_key}")
+        except FileNotFoundError:
+            # File was deleted during upload
+            print(f"ERROR: File deleted during S3 upload: {file_path}")
+            print("FALLING BEHIND - files are being deleted faster than we can upload them")
+            os._exit(1)
             
 def start_s3_uploader(log_path, bucket, prefix):
     """Start watching for new .gz files and uploading to S3"""
