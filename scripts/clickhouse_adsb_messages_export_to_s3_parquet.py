@@ -25,7 +25,7 @@ from typing import Iterable, List, Optional, Set, Tuple
 import clickhouse_connect
 
 
-DONE_FILE = Path("export_done.txt")
+DONE_FILE = Path("output/export_done.txt")
 
 def parse_bool(s: str) -> bool:
     return s.strip().lower() in ("1", "true", "yes", "y", "on")
@@ -95,6 +95,7 @@ def export_one_day(
     SELECT *
     FROM {db}.{table}
     WHERE toYYYYMMDD(time) = {p_yyyymmdd}
+    SETTINGS output_format_parquet_compression_method='zstd'
     """
     client.command(q)
 
