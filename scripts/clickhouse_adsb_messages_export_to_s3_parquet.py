@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Export ClickHouse MergeTree daily partitions to S3 in Hive layout:
   s3://BUCKET/PREFIX/year=YYYY/month=MM/day=DD/data.parquet
