@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple
 
+import boto3
 import clickhouse_connect
 
 
@@ -113,8 +114,10 @@ def main(argv: List[str]) -> int:
     s3_bucket = "planequery-datalake-1-dev"
     s3_prefix = "exports/adsb_messages"
 
-    aws_key = os.environ['AWS_ACCESS_KEY_ID']
-    aws_secret = os.environ['AWS_SECRET_ACCESS_KEY']
+    session = boto3.Session()
+    creds = session.get_credentials()
+    aws_key = creds.access_key
+    aws_secret = creds.secret_key
 
     client = clickhouse_connect.get_client(
         host=os.environ['CLICKHOUSE_HOST'],
