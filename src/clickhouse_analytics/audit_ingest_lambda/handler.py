@@ -3,23 +3,7 @@ import clickhouse_connect
 
 INGEST_SQL = """
 INSERT INTO default.audit_query_log
-SELECT
-    event_time,
-    query_id,
-    user,
-    toString(client_address) AS client_address,
-    client_hostname,
-    query,
-    query_duration_ms,
-    read_rows,
-    read_bytes,
-    written_rows,
-    written_bytes,
-    result_rows,
-    result_bytes,
-    memory_usage,
-    exception_code,
-    exception
+SELECT *
 FROM system.query_log
 WHERE type = 'QueryFinish'
   AND event_time > coalesce((SELECT max(event_time) FROM default.audit_query_log), toDateTime(0))
