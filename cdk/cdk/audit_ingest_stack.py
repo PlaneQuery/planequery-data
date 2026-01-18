@@ -32,7 +32,7 @@ class AuditIngestStack(Stack):
         rule = events.Rule(
             self,
             "AuditIngestSchedule",
-            schedule=events.Schedule.rate(Duration.minutes(5)),
+            schedule=events.Schedule.rate(Duration.minutes(10)),
         )
         rule.add_target(targets.LambdaFunction(fn))
 
