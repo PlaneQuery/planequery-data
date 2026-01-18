@@ -5,6 +5,7 @@ import aws_cdk as cdk
 
 from cdk.cdk_stack import CdkStack
 from cdk.swim_realtime_stack import SwimRealtimeStack
+from cdk.audit_ingest_stack import AuditIngestStack
 
 
 app = cdk.App()
@@ -28,6 +29,14 @@ CdkStack(app, "CdkStack",
 SwimRealtimeStack(
     app,
     "SwimRealtimeStack",
+    env=cdk.Environment(
+        account=os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region=os.getenv('CDK_DEFAULT_REGION')
+    ),
+)
+AuditIngestStack(
+    app,
+    "AuditIngestStack",
     env=cdk.Environment(
         account=os.getenv('CDK_DEFAULT_ACCOUNT'),
         region=os.getenv('CDK_DEFAULT_REGION')
