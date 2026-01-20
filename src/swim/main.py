@@ -19,7 +19,7 @@ def print_tree(root="/app", max_depth=3):
             for name in filenames:
                 print(f"{indent}    {name}")
 
-print_tree("/app", max_depth=3)
+# print_tree("/app", max_depth=3)
 if os.environ["ENVIRONMENT"] == "production":
     SWIM_SFDPS_PATH = "/app/sfdps"
     SWIM_TFMS_PATH = "/app/tfms"
