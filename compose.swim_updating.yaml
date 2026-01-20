@@ -12,7 +12,7 @@ services:
       - AWS_CONFIG_FILE=/root/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials
     volumes:
-      - jumpstart-logs:/app/jumpstart-latest/log:ro
+      - jumpstart-logs:/app/jumpstart-latest:ro
       - ./output/swim_updating:/app/output
       - ~/.aws:/root/.aws:ro
     networks:
