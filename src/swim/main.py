@@ -1,7 +1,12 @@
 import os, time, queue, threading
-
-SWIM_LOG_PATH = "/app/jumpstart-latest/log"
-MESSAGES_LOG_PATH = os.path.join(SWIM_LOG_PATH, "messages.log")
+print(os.environ["ENVIRONMENT"])
+if os.environ["ENVIRONMENT"] == "production":
+    SWIM_SFDPS_PATH = "/app/jumpstart-latest/sfdps"
+    SWIM_TFMS_PATH = "/app/jumpstart-latest/tfms"
+else:
+    SWIM_SFDPS_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Code/jumpstart-latest/log"
+    SWIM_TFMS_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Code/jumpstart-latest/tfms_log"
+MESSAGES_LOG_PATH = os.path.join(SWIM_SFDPS_PATH, "messages.log")
 
 def follow(path: str, poll=0.2):
     while True:
@@ -60,18 +65,26 @@ def worker_thread(q: queue.Queue):
         q.task_done()
 
 from read_messages import parse_message
-from s3_watcher import start_s3_uploader
 
 def process(xml_doc: str):
     # placeholder
     parse_message(xml_doc)
 
-# Start S3 uploader to watch for .gz files and upload them
-s3_observer = start_s3_uploader(
-    log_path=SWIM_LOG_PATH,
-    bucket="planequery-swim-logs-prod",
-    prefix="log"
-)
+if os.environ["ENVIRONMENT"] == "production":
+    from s3_watcher import start_s3_uploader
+    print("Running in production mode")
+    # Start S3 uploader to watch for .gz files and upload them (SFDPS)
+    s3_observer_sfdps = start_s3_uploader(
+        log_path=SWIM_SFDPS_PATH,
+        bucket="planequery-swim-logs-prod",
+        prefix="sfdps-logs"
+    )
+    # Start S3 uploader for TFMS logs
+    s3_observer_tfms = start_s3_uploader(
+        log_path=SWIM_TFMS_PATH,
+        bucket="planequery-swim-logs-prod",
+        prefix="tfms-logs"
+    )
 
 q = queue.Queue(maxsize=100_000)  # tune for memory
 threading.Thread(target=reader_thread, args=(q,), daemon=True).start()
@@ -85,5 +98,7 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("Shutting down...")
-    s3_observer.stop()
-    s3_observer.join()
+    s3_observer_sfdps.stop()
+    s3_observer_sfdps.join()
+    s3_observer_tfms.stop()
+    s3_observer_tfms.join()
