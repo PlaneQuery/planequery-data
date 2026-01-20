@@ -12,7 +12,8 @@ services:
       - AWS_CONFIG_FILE=/root/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials
     volumes:
-      - jumpstart-logs:/app/jumpstart-latest:ro
+      - sfdps-logs:/app/sfdps:ro
+      - tfms-logs:/app/tfms:ro
       - ./output/swim_updating:/app/output
       - ~/.aws:/root/.aws:ro
     networks:
@@ -24,9 +25,12 @@ services:
         max-file: "3"
 
 volumes:
-  jumpstart-logs:
+  sfdps-logs:
+    name: sfdps-logs
     external: true
-    name: jumpstart-logs
+  tfms-logs:
+    name: tfms-logs
+    external: true
 
 networks:
   planequery:
