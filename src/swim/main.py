@@ -1,8 +1,28 @@
 import os, time, queue, threading
 print(os.environ["ENVIRONMENT"])
+import os
+
+def print_tree(root="/app", max_depth=3):
+    root = os.path.abspath(root)
+    root_depth = root.count(os.sep)
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        depth = dirpath.count(os.sep) - root_depth
+        if depth > max_depth:
+            dirnames[:] = []  # stop descending
+            continue
+
+        indent = "    " * depth
+        print(f"{indent}{os.path.basename(dirpath)}/")
+
+        if depth < max_depth:
+            for name in filenames:
+                print(f"{indent}    {name}")
+
+print_tree("/app", max_depth=3)
 if os.environ["ENVIRONMENT"] == "production":
-    SWIM_SFDPS_PATH = "/app/jumpstart-latest/sfdps"
-    SWIM_TFMS_PATH = "/app/jumpstart-latest/tfms"
+    SWIM_SFDPS_PATH = "/app/sfdps"
+    SWIM_TFMS_PATH = "/app/tfms"
 else:
     SWIM_SFDPS_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Code/jumpstart-latest/log"
     SWIM_TFMS_PATH = "/Users/jonahgoode/Documents/PlaneQuery/Code/jumpstart-latest/tfms_log"
