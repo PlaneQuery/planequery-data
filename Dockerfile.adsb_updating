@@ -3,9 +3,11 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install only the runtime dependencies needed by src/adsb/main.py.
+RUN pip install --no-cache-dir \
+    polars==1.38.1 \
+    requests==2.32.5 \
+    boto3==1.42.28
 
 # Copy source code
 COPY src/ src/
@@ -18,4 +20,4 @@ ENV ENVIRONMENT=production
 # EXPOSE 8000
 
 # Run the ADS-B main script
-CMD ["python", "src/adsb/main.py"]
+CMD ["python", "src/adsb/main.py", "--write-to-s3"]

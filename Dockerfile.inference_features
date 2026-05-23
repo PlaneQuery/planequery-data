@@ -1,0 +1,25 @@
+# Container image for the inference-feature ECS Fargate job.
+# Reads ADS-B data from the planequery_lake_dev.adsb_messages Iceberg table
+# (via Athena), computes inference features, and writes Parquet to S3.
+FROM python:3.12-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.inference_features.txt ./
+RUN pip install --no-cache-dir -r requirements.inference_features.txt
+
+COPY src/ /app/src/
+# AirportLookup reads OUTPUT_DIR/data/interim/airports.csv at import time.
+COPY data/interim/airports.csv /app/data/interim/airports.csv
+
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
+    OUTPUT_DIR=/app
+
+# The CDK stack overrides the command per-day with the date string, e.g.
+#   ["2025-10-01"]
+ENTRYPOINT ["python", "/app/src/flights_ai_model/features.py", "--features", "inference", "--write-to-s3"]

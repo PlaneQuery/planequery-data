@@ -1,0 +1,46 @@
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      default-jre-headless \
+      python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/venv \
+	PATH=/opt/venv/bin:$PATH \
+	PYSPARK_PYTHON=/opt/venv/bin/python \
+	JAVA_HOME=/usr/lib/jvm/default-java
+
+WORKDIR /app
+
+COPY requirements.inference.txt ./requirements.txt
+RUN python3 -m venv --system-site-packages "$VIRTUAL_ENV" \
+ && python -m pip install --no-cache-dir --upgrade pip \
+ && python -m pip install --no-cache-dir -r requirements.txt
+
+# Pre-fetch Iceberg + AWS JARs into the image so Batch jobs do not need to
+# download them from Maven at startup.
+RUN python - <<'EOF'
+from pyspark.sql import SparkSession
+ICEBERG_PKG = "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.0"
+ICEBERG_AWS = "org.apache.iceberg:iceberg-aws-bundle:1.10.0"
+spark = (SparkSession.builder
+	.master("local[1]")
+	.config("spark.jars.packages", f"{ICEBERG_PKG},{ICEBERG_AWS}")
+	.getOrCreate())
+spark.stop()
+EOF
+
+COPY src/ /app/src/
+# Keep OUTPUT_DIR at /app so the hard-coded MODEL_PATH in inference.py resolves
+# to /app/data/models/... inside the container.
+COPY data/interim/airports.csv /app/data/interim/airports.csv
+COPY data/models/2026-04-21/2026-04-21_20-08_1771d1f_30days_32epochs/model.pth /app/data/models/2026-04-21/2026-04-21_20-08_1771d1f_30days_32epochs/model.pth
+
+ENV PYTHONPATH=/app/src \
+	PYTHONUNBUFFERED=1 \
+	OUTPUT_DIR=/app
+
+# The launcher script overrides this command with a requested date range.
+CMD ["python", "/app/src/data_engineering/flights/flights_from_model.py", "--help"]

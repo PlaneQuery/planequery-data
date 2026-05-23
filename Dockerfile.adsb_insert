@@ -1,0 +1,47 @@
+# Container image for the ADS-B historical ingest job that runs on ECS Fargate.
+# Downloads adsb.lol traces for a given day, converts to Parquet, and appends
+# into the planequery_lake_dev.adsb_messages Iceberg table.
+FROM python:3.12-slim
+
+# tar/cat/find are needed by download_adsb_to_parquet.py for split-archive
+# extraction. Java (default-jre-headless) is required by PySpark.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tar findutils ca-certificates \
+      default-jre-headless \
+ && rm -rf /var/lib/apt/lists/*
+
+# PySpark downloads Iceberg JARs from Maven on first run; cache them in the
+# image by pre-fetching via a no-op SparkSession build.
+ENV PYSPARK_PYTHON=python3 \
+    JAVA_HOME=/usr/lib/jvm/default-java
+
+WORKDIR /app
+
+COPY requirements.adsb_insert.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-fetch Iceberg + AWS JARs into the Spark local ivy cache so tasks don't
+# hit Maven at runtime. The no-op Python snippet triggers the jar download.
+RUN python - <<'EOF'
+from pyspark.sql import SparkSession
+ICEBERG_PKG = "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.0"
+ICEBERG_AWS = "org.apache.iceberg:iceberg-aws-bundle:1.10.0"
+spark = (SparkSession.builder
+    .master("local[1]")
+    .config("spark.jars.packages", f"{ICEBERG_PKG},{ICEBERG_AWS}")
+    .getOrCreate())
+spark.stop()
+EOF
+
+COPY src/ /app/src/
+
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
+    OUTPUT_DIR=/app
+
+RUN mkdir -p /data
+
+# The CDK stack overrides the command per-day to a single date argument, e.g.
+#   ["2025-10-01"] or ["2025-10-01", "2025-10-02"]
+ENTRYPOINT ["python", "/app/src/data_engineering/adsb/download_adsb_to_parquet.py", "--ingest-to-iceberg", "--write-to-s3"]

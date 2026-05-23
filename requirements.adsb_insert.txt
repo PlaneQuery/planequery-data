@@ -1,0 +1,4 @@
+orjson==3.11.4
+pyarrow==22.0.0
+pyspark==4.1.1
+boto3==1.42.28

@@ -1,5 +1,5 @@
 #Custom
-data/interim
+data
 .DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -220,3 +220,8 @@ __marimo__/
 
 *_misc.ipynb
 takeoff-landing-ai-model/data
+models
+notebooks/**/*_tmp.ipynb
+nohup*.out
+
+tmp/

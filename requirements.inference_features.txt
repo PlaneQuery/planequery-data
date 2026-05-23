@@ -1,0 +1,9 @@
+polars==1.38.1
+boto3==1.42.28
+awswrangler==3.16.0
+orjson==3.11.7
+timezonefinder==8.2.1
+scikit-learn==1.8.0
+lxml==6.0.2
+pandas==2.3.3
+scipy==1.17.0
