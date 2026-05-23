@@ -1,0 +1,44 @@
+{
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./tests",
+        "-p",
+        "test_*.py",
+        "-t",
+        "."
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true,
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.analysis.exclude": [
+        "**/__pycache__",
+        "**/.git",
+        "**/.hg",
+        "**/.svn",
+        "**/node_modules",
+        "**/.mypy_cache",
+        "**/.pytest_cache",
+        "**/.ruff_cache",
+        "**/.tox",
+        "**/.nox",
+        "**/.venv",
+        "**/venv",
+        "**/env",
+        "**/.env",
+        "**/dist",
+        "**/build",
+        "**/.*",              // ← this is the one Pylance is warning about
+
+        // your custom excludes
+        "data/**",
+        "models/**",
+        "logs/**",
+        "**/*.parquet",
+        "cdk/.venv/**",
+        "cdk/cdk.out/**",
+        "cdk/node_modules/**"
+    ],
+  "python.analysis.typeCheckingMode": "basic"
+
+}

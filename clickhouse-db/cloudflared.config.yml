@@ -1,7 +1,0 @@
-tunnel: planequery-db
-credentials-file: /etc/cloudflared/f87396bb-ace0-4b09-9050-18ee19210771.json
-
-ingress:
-  - hostname: db-dev.planequery.com
-    service: http://127.0.0.1:8123
-  - service: http_status:404

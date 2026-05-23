@@ -8,8 +8,10 @@ services:
     env_file:
       - .env.prod
       - .env
+    environment:
+      OUTPUT_DIR: /app
     volumes:
-      - ./output:/app/output
+      - ./data:/app/data
     networks:
       - default
     logging:

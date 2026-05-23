@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 
@@ -96,9 +96,10 @@ class Adsb_Message_reapi:
     def from_json(d: dict) -> Adsb_Message_reapi:
         alt_baro_val = d.get("alt_baro")
         on_ground = alt_baro_val == "ground"
+        field_names = {field.name for field in fields(Adsb_Message_reapi)}
 
         return Adsb_Message_reapi(
-            **{k: v for k, v in d.items() if k not in {"alt_baro"}},
+            **{k: v for k, v in d.items() if k not in {"alt_baro"} and k in field_names},
             alt_baro=None if on_ground else alt_baro_val,
             on_ground=on_ground,
         )
@@ -128,7 +129,7 @@ NavMode = Literal[
 ]
 
 DataSource = Literal[
-    '', 'adsb.lol', 'other'
+    '', 'adsb.lol', 'adsb.fi', 'other'
 ]
 
 
@@ -222,7 +223,7 @@ def reapi_to_row(
     desc: str = "",
 ) -> AdsbMessageRow:
     """
-    Convert a reapi ADS-B message into a ClickHouse adsb_messages row.
+    Convert a reapi ADS-B message into an ADS-B message row.
     """
     
     # Use calc_track as fallback for track
@@ -320,7 +321,6 @@ def reapi_to_row(
     )
 
 
-import clickhouse_connect
 from typing import TYPE_CHECKING
 import dataclasses
 
