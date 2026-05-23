@@ -38,6 +38,17 @@ class Flight:
     pia: bool = False
     ladd: bool = False
     military: bool = False
+    interesting: bool = False
+    aircraft_type: str = ""
+    owner: str = ""
+    aircraft_description: str = ""
+    category: str = ""
+
+def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
+    return [
+        Flight(**row)
+        for row in df.select(list(FLIGHT_POLARS_SCHEMA.keys())).iter_rows(named=True)
+    ]
 
 FLIGHT_NUMBER_REGEX = r"^[A-Z]{3}\d{1,4}[A-Z]?$"
 def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
