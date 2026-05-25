@@ -5,7 +5,6 @@ import aws_cdk as cdk
 
 from cdk.cdk_stack import CdkStack
 from cdk.swim_realtime_stack import SwimRealtimeStack
-from cdk.audit_ingest_stack import AuditIngestStack
 from cdk.planequery_adsb_realtime_stack import PlanequeryAdsbRealtimeStack
 from cdk.planequery_datalake_stack import PlanequeryDatalakeStack
 from cdk.planequery_datalake_adsb_insert_stack import PlanequeryDatalakeAdsbInsertStack
@@ -34,14 +33,6 @@ CdkStack(app, "CdkStack",
 SwimRealtimeStack(
     app,
     "SwimRealtimeStack",
-    env=cdk.Environment(
-        account=os.getenv('CDK_DEFAULT_ACCOUNT'),
-        region=os.getenv('CDK_DEFAULT_REGION')
-    ),
-)
-AuditIngestStack(
-    app,
-    "AuditIngestStack",
     env=cdk.Environment(
         account=os.getenv('CDK_DEFAULT_ACCOUNT'),
         region=os.getenv('CDK_DEFAULT_REGION')

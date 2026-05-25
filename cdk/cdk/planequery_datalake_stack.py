@@ -34,6 +34,9 @@ _LEGACY_GLUE_TABLE_OPTIMIZER_ROLE_LOGICAL_IDS = {
 _LEGACY_ROLE_DEFAULT_POLICY_LOGICAL_IDS = {
     "prod": "PlaneQueryPremiumProvisionerRoleDefaultPolicyA0A1B93D",
 }
+_PLANEQUERY_PROD_WEBSITE_IAM_USER_ARN = (
+    "arn:aws:iam::223281837468:user/planequery-prod-website"
+)
 _CROSS_ENVIRONMENT_LAKE_READ_BUCKETS = {
     # The prod Glue catalog can point at Iceberg tables migrated from dev while
     # preserving their existing metadata/data locations.
@@ -226,6 +229,10 @@ class PlanequeryDatalakeStack(Stack):
         planequery_api_athena_trusted_principals = [
             iam.ArnPrincipal(vercel_api_athena_assumer_user.user_arn)
         ]
+        if environment_name == "prod":
+            planequery_api_athena_trusted_principals.append(
+                iam.ArnPrincipal(_PLANEQUERY_PROD_WEBSITE_IAM_USER_ARN)
+            )
         environment_specific_trusted_principal_env = (
             f"PLANEQUERY_{environment_name.upper()}_API_ATHENA_TRUSTED_PRINCIPAL_ARN"
         )
@@ -508,11 +515,19 @@ class PlanequeryDatalakeStack(Stack):
                 _LEGACY_MANAGED_POLICY_LOGICAL_IDS[environment_name]
             )
 
+        premium_provisioner_trusted_principals = [
+            iam.ArnPrincipal(vercel_api_athena_assumer_user.user_arn)
+        ]
+        if environment_name == "prod":
+            premium_provisioner_trusted_principals.append(
+                iam.ArnPrincipal(_PLANEQUERY_PROD_WEBSITE_IAM_USER_ARN)
+            )
+
         premium_provisioner_role = iam.Role(
             self,
             resource_id("PremiumProvisionerRole"),
             role_name=premium_provisioner_role_name,
-            assumed_by=iam.ArnPrincipal(vercel_api_athena_assumer_user.user_arn),
+            assumed_by=iam.CompositePrincipal(*premium_provisioner_trusted_principals),
             description=(
                 f"Role used by PlaneQuery {environment_name} API to create "
                 "isolated premium Athena customers."
