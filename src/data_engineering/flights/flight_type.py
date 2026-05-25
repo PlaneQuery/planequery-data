@@ -43,6 +43,7 @@ class Flight:
     owner: str = ""
     aircraft_description: str = ""
     category: str = ""
+    flight_id: str = ""
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     return [
