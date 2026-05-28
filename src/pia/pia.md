@@ -22,6 +22,7 @@ I need to create a test graph.
 - Aritifical 
 - Make an easy network example
 - Make a hard network example 
+- Deal with possible future flights that took off from same airport. I could massively remove
 # Dev
 Use little to no AI. This is novel and hard problem. Stay compeltly focused on this problem. Should be 1 week. 
 
