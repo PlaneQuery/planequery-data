@@ -33,3 +33,5 @@ flights_2 = flights_0
 #     TestFlight(icao="0", takeoff_time=initial_time + timedelta(hours=10), landing_time=initial_time+timedelta(hours=12), takeoff_airport_ident="D", landing_airport_ident="Q"),
 #     TestFlight(icao="pia_1", takeoff_time=initial_time + timedelta(hours=10), landing_time=initial_time+timedelta(hours=12), takeoff_airport_ident)
 # ]
+
+flights_2_category_test= flights_0

@@ -138,8 +138,7 @@ def main(flights = flights_real_0):
     output_path = Path("tmp/pia_graph_0.png")
     G, mapping_dict = process_graph(G)
     print(f"{len(pia_flights)} pia nodes. {len(mapping_dict)} pia nodes identifed.")
-    source_nodes = [node for node in G.nodes if G.in_degree(node) == 0]
-    sink_nodes = [node for node in G.nodes if G.out_degree(node) == 0]
+    return
     output_path = Path("tmp/pia_graph_1.png")
     visualize_graph(G, output_path)
     print(f"\nWrote visualization to {output_path}")
