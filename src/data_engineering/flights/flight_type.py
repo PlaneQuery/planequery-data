@@ -43,7 +43,24 @@ class Flight:
     owner: str = ""
     aircraft_description: str = ""
     category: str = ""
-    flight_id: str = ""
+
+    @property
+    def flight_id(self) -> str:
+        return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
+
+@dataclass
+class TestFlight():
+    icao: str
+    takeoff_time: datetime
+    landing_time: datetime
+    takeoff_airport_ident: str
+    landing_airport_ident: str
+    @property
+    def flight_id(self) -> str:
+        return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
+    @property
+    def pia(self) -> bool:
+        return self.icao.startswith("pia")
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     return [
