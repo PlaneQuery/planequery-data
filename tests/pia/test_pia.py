@@ -14,7 +14,6 @@ from pia.evaluation.pia_graph_0 import flights_0, test_mapping_dict_0
 class TestPIA(unittest.TestCase):
     def test_flights_0_mapping(self):
         graph = build_graph(flights_0)
-        with contextlib.redirect_stdout(io.StringIO()):
-            _, mapping_dict = process_graph(graph)
+        _, mapping_dict = process_graph(graph)
 
         self.assertEqual(test_mapping_dict_0, mapping_dict)
