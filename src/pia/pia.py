@@ -4,6 +4,14 @@ import networkx as nx
 
 from data_engineering.flights.flight_type import Flight, TestFlight
 
+def _get_pia_nodes(g: nx.DiGraph):
+    pia_nodes = [
+        node
+        for node, attrs in g.nodes(data=True)
+        if attrs["flight"].pia
+    ]
+    return pia_nodes
+
 def build_graph(flights: list[TestFlight]) -> nx.DiGraph:
     G = nx.DiGraph()
     for flight in flights:
@@ -37,6 +45,24 @@ def remove_nodes_without_pia_path(g: nx.DiGraph) -> set[str]:
     g.remove_nodes_from(nodes_to_remove)
     return nodes_to_remove
 
+def remove_pia_unconnected_nodes(g: nx.DiGraph):
+    pia_nodes = _get_pia_nodes(g)
+    for node in pia_nodes:
+        if g.in_degree[node] ==0 and g.out_degree == 0:
+            raise Exception(f"{node} has 0 degrees")
+
+def create_icao_pia_occurance_map(g: nx.DiGraph):
+    icao_occurance_map = dict()
+    for node in list(g.nodes):
+        if g.nodes[node]["flight"].pia:
+            predecessors = list(g.predecessors(node))
+            successors = list(g.successors(node)) 
+            for node in predecessors + successors:
+                flight = g.nodes[node]["flight"]
+                if flight.pia == False:
+                    icao = flight.icao
+                    icao_occurance_map[icao] = icao_occurance_map.get(icao, 0) + 1
+    return icao_occurance_map
 def match_nodes_with_category(g: nx.DiGraph):
     for node in list(g.nodes):
         flight: TestFlight = g.nodes[node]["flight"]
@@ -55,10 +81,14 @@ def match_nodes_with_category(g: nx.DiGraph):
                     g.remove_edge(node, node_s)
 def process_graph(g: nx.DiGraph):
     nodes_to_remove = remove_nodes_without_pia_path(g)
+    remove_pia_unconnected_nodes(g)
     print(f"Removed {len(nodes_to_remove)} nodes")
     mapping_dict = identify_pia_nodes(g)
     print(f"Matched {len(mapping_dict.keys())}")
     match_nodes_with_category(g)
+    icao_occurance_map = create_icao_pia_occurance_map(g)
+    for icao in mapping_dict.values():
+        icao_occurance_map[icao] = icao_occurance_map.get(icao, 0) + 10
     new_mapping_dict = identify_pia_nodes(g)
     print(f"Matched {len(new_mapping_dict.keys())}")
     mapping_dict = mapping_dict | new_mapping_dict
