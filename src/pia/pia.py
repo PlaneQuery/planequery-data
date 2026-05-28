@@ -12,7 +12,8 @@ def build_graph(flights: list[TestFlight]) -> nx.DiGraph:
     for flight_i, flight_j in combinations(flights, 2):
         is_connected = (
             flight_i.landing_airport_ident == flight_j.takeoff_airport_ident
-            and flight_i.landing_time <= flight_j.takeoff_time
+            and flight_i.landing_time < flight_j.takeoff_time
+            and ((flight_i.icao ==flight_j.icao) or flight_j.pia == True or flight_i.pia == True)
         )
         if is_connected:
             G.add_edge(flight_i.flight_id, flight_j.flight_id)
