@@ -38,9 +38,13 @@ def remove_nodes_without_pia_path(g: nx.DiGraph) -> set[str]:
     return nodes_to_remove
 
 def process_graph(g: nx.DiGraph):
-    mapping_dict: dict[str, str] = dict() # map a node to an icao
     nodes_to_remove = remove_nodes_without_pia_path(g)
     print(f"Removed {len(nodes_to_remove)} nodes")
+    mapping_dict = identify_pia_nodes(g)
+    return g, mapping_dict
+
+def identify_pia_nodes(g):
+    mapping_dict: dict[str, str] = dict()
     for node in list(g.nodes):
         flight: TestFlight = g.nodes[node]["flight"]
         pia = flight.pia
@@ -53,14 +57,11 @@ def process_graph(g: nx.DiGraph):
                 successor = successors[0]
                 sucessor_flight: TestFlight = g.nodes[successor]["flight"]
                 sucessor_icao = sucessor_flight.icao
-                print(sucessor_icao)
                 mapping_dict[node] = sucessor_icao
                 for predecessor in predecessors:
                     predecssor_flight = g.nodes[predecessor]["flight"]
                     predecessor_icao = predecssor_flight.icao
                     if predecessor_icao == sucessor_icao:
-                        print(predecessor_icao)
-                        print(sucessor_icao)
                         g.remove_node(predecessor)
                 g.remove_node(node)
-    return g, mapping_dict
+    return mapping_dict
