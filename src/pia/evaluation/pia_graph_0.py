@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from itertools import combinations
 import os
 from pathlib import Path
 
@@ -13,6 +12,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 
 from data_engineering.flights.flight_type import TestFlight
+from pia.pia import build_graph, process_graph
 
 initial_time = datetime(2026,1,1,1)
 # I probably want initial state in future. 
@@ -35,22 +35,6 @@ complete_flight_path_3 = [
 ]
 
 flights = start + complete_flight_path_1 + complete_flight_path_2 + complete_flight_path_3
-print(flights)
-
-def build_graph() -> nx.DiGraph:
-    G = nx.DiGraph()
-    for flight in flights:
-        G.add_node(flight.flight_id, flight=flight)
-
-    for flight_i, flight_j in combinations(flights, 2):
-        is_connected = (
-            flight_i.landing_airport_ident == flight_j.takeoff_airport_ident
-            and flight_i.landing_time <= flight_j.takeoff_time
-        )
-        if is_connected:
-            G.add_edge(flight_i.flight_id, flight_j.flight_id)
-
-    return G
 
 
 def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
@@ -167,28 +151,14 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
 
-
+test_mapping_dict = {'pia_0_2026-01-01_05-00': '0', 'pia_1_2026-01-01_05-00': '1'}
 def main():
-    G = build_graph()
-
-    print("Nodes:")
-    for node in G.nodes(data=True):
-        print(node)
-
-    print("\nEdges:")
-    for edge in G.edges():
-        print(edge)
-
+    G = build_graph(flights)
+    G, mapping_dict = process_graph(G)
+    print(mapping_dict == test_mapping_dict)
+    
     source_nodes = [node for node in G.nodes if G.in_degree(node) == 0]
     sink_nodes = [node for node in G.nodes if G.out_degree(node) == 0]
-    print("\nSource nodes:")
-    for node in source_nodes:
-        print(node)
-
-    print("\nSink nodes:")
-    for node in sink_nodes:
-        print(node)
-
     output_path = Path("output/pia_graph_0.png")
     visualize_graph(G, output_path)
     print(f"\nWrote visualization to {output_path}")
