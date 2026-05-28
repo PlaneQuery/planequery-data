@@ -20,8 +20,27 @@ def build_graph(flights: list[TestFlight]) -> nx.DiGraph:
 
     return G
 
+def nodes_without_pia_path(g: nx.DiGraph) -> set[str]:
+    pia_nodes = [
+        node
+        for node, attrs in g.nodes(data=True)
+        if attrs["flight"].pia
+    ]
+    nodes_with_pia_path = set(pia_nodes)
+    for pia_node in pia_nodes:
+        nodes_with_pia_path.update(nx.ancestors(g, pia_node))
+        nodes_with_pia_path.update(nx.descendants(g, pia_node))
+    return set(g.nodes) - nodes_with_pia_path
+
+def remove_nodes_without_pia_path(g: nx.DiGraph) -> set[str]:
+    nodes_to_remove = nodes_without_pia_path(g)
+    g.remove_nodes_from(nodes_to_remove)
+    return nodes_to_remove
+
 def process_graph(g: nx.DiGraph):
     mapping_dict: dict[str, str] = dict() # map a node to an icao
+    nodes_to_remove = remove_nodes_without_pia_path(g)
+    print(f"Removed {len(nodes_to_remove)} nodes")
     for node in list(g.nodes):
         flight: TestFlight = g.nodes[node]["flight"]
         pia = flight.pia
