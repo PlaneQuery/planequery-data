@@ -130,13 +130,13 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
     plt.close(fig)
 
 from pia.evaluation.pia_graph_0 import flights_0, test_mapping_dict_0
-def main():
-    G = build_graph(flights_0)
+from pia.evaluation.real_flights import flights_real_0
+def main(flights = flights_real_0):
+    pia_flights = [flight for flight in flights if flight.pia]
+    G = build_graph(flights)
     output_path = Path("tmp/pia_graph_0.png")
-    visualize_graph(G, output_path)
     G, mapping_dict = process_graph(G)
-    print(mapping_dict == test_mapping_dict_0)
-    
+    print(f"{len(pia_flights)} pia nodes. {len(mapping_dict)} pia nodes identifed.")
     source_nodes = [node for node in G.nodes if G.in_degree(node) == 0]
     sink_nodes = [node for node in G.nodes if G.out_degree(node) == 0]
     output_path = Path("tmp/pia_graph_1.png")
