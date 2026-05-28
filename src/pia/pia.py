@@ -37,10 +37,31 @@ def remove_nodes_without_pia_path(g: nx.DiGraph) -> set[str]:
     g.remove_nodes_from(nodes_to_remove)
     return nodes_to_remove
 
+def match_nodes_with_category(g: nx.DiGraph):
+    for node in list(g.nodes):
+        flight: TestFlight = g.nodes[node]["flight"]
+        pia = flight.pia
+        category = flight.category
+        if pia and category != "":
+            predecessors = list(g.predecessors(node))
+            successors = list(g.successors(node)) 
+            for node_p in predecessors:
+                node_category = g.nodes[node_p]["flight"].category
+                if node_category != category:
+                    g.remove_edge(node_p, node)
+            for node_s in successors:
+                node_category = g.nodes[node_s]["flight"].category
+                if node_category != category:
+                    g.remove_edge(node, node_s)
 def process_graph(g: nx.DiGraph):
     nodes_to_remove = remove_nodes_without_pia_path(g)
     print(f"Removed {len(nodes_to_remove)} nodes")
     mapping_dict = identify_pia_nodes(g)
+    print(f"Matched {len(mapping_dict.keys())}")
+    match_nodes_with_category(g)
+    new_mapping_dict = identify_pia_nodes(g)
+    print(f"Matched {len(new_mapping_dict.keys())}")
+    mapping_dict = mapping_dict | new_mapping_dict
     return g, mapping_dict
 
 def identify_pia_nodes(g):
