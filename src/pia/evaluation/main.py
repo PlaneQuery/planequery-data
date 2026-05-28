@@ -132,6 +132,7 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
 from pia.evaluation.pia_graph_0 import flights_0, test_mapping_dict_0
 from pia.evaluation.real_flights import flights_real_0
 def main(flights = flights_real_0):
+    print(f"{len(flights)} nodes")
     pia_flights = [flight for flight in flights if flight.pia]
     G = build_graph(flights)
     output_path = Path("tmp/pia_graph_0.png")

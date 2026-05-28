@@ -54,6 +54,7 @@ class TestFlight():
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    category: str = ""
     @property
     def flight_id(self) -> str:
         return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
