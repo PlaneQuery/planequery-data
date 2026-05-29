@@ -94,6 +94,22 @@ def process_graph(g: nx.DiGraph):
     mapping_dict = mapping_dict | new_mapping_dict
     return g, mapping_dict
 
+# I can save the mapping till the end
+#maybe dynamic programming
+def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if the real icao later took off from the airport. Then it's like 90% + it was this. This combines with teh time score so real icao + 30 days unlikely. real icao + 6 hours super likely it took this edge.
+    # for now treat score like probablitiy adds up to 1 all edges. 
+    # score 0.0 (impossible) -> #1.0
+    # things to factor in 
+    # if there's more possible edges than it's more ambigious which one it used so therefore that edge score should matter less
+    for u in g.nodes:
+        flight = g.nodes[u]["flight"] # maybe for now just do score of the divided by number. I cany simplify by when I pick best path I only need to recalculate for the nodes that were involved
+        successors = list(g.successors(u))
+        for v in successors:
+            flight_s: Flight = g.nodes[v]["flight"]
+            time_gap = flight_s.takeoff_time - flight.landing_time
+            # time_gap_score(time_gap)
+    pass
+
 def identify_pia_nodes(g):
     mapping_dict: dict[str, str] = dict()
     for node in list(g.nodes):
@@ -116,3 +132,42 @@ def identify_pia_nodes(g):
                         g.remove_node(predecessor)
                 g.remove_node(node)
     return mapping_dict
+
+import math
+
+def log_normalize_counts(counts: dict[str, int]) -> dict[str, float]:
+    max_count = max(counts.values(), default=0)
+
+    if max_count == 0:
+        return {icao: 0.0 for icao in counts}
+
+    return {
+        icao: math.log1p(count) / math.log1p(max_count)
+        for icao, count in counts.items()
+    }
+
+def time_gap_score(landing_time, next_takeoff_time) -> float: # This should be based on average time gap between ladd planes.
+    gap_hours = (next_takeoff_time - landing_time).total_seconds() / 3600
+
+    if gap_hours < 0:
+        return 0.0          # impossible: takeoff before landing
+
+    if gap_hours < 0.5:
+        return 0.05         # under 30 min: very unlikely
+
+    if gap_hours < 1:
+        return 0.25         # 30-60 min: possible but weak
+
+    if gap_hours < 6:
+        return 1.0          # 1-6 hours: strong
+
+    if gap_hours < 24:
+        return 0.7          # same day: reasonable
+
+    if gap_hours < 72:
+        return 0.35         # 1-3 days: weaker
+
+    if gap_hours < 168:
+        return 0.1          # 3-7 days: very weak
+
+    return 0.02             # over 7 days: extremely weak
