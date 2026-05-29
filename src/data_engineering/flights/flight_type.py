@@ -108,7 +108,6 @@ def get_flights_from_iceberg(target_date: date):
         ctas_approach=False,
     )
     df = pl.from_pandas(pdf)
-    print(df.dtypes)
     for col_name in ["takeoff_time", "landing_time"]:
         df = df.with_columns(
             pl.col(col_name)
