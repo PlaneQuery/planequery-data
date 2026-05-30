@@ -17,7 +17,15 @@ def test_flights_match_adsb():
 
     assert flights_match_adsb(df_flights, df_adsb) == True
     # bad one
-    pass
+    #https://globe.adsbexchange.com/?icao=a4ed4f&lat=33.201&lon=-85.831&zoom=6.9&showTrace=2026-03-01&leg=2&timestamp=1772399977
+    icao = "a4ed4f"
+    df = get_flights(target_date)
+    df_flights = df.filter(pl.col("icao") == icao)
+    df = read_icaos_from_adsb(target_date, [icao])
+    df_adsb = df.filter(pl.col("icao") == icao)
+    assert flights_match_adsb(df_flights, df_adsb) == False
+
+    
 
 if __name__ == "__main__":
     test_flights_match_adsb()
