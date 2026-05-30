@@ -58,7 +58,8 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     previous_flight = None
     for flight in flights:
         if previous_flight:
-            assert previous_flight.landing_airport_ident == flight.takeoff_airport_ident
+            if previous_flight.landing_airport_ident != flight.takeoff_airport_ident:
+                return False
             landing_row_idx = closest_time_row_idx(adsb_rows, previous_flight.landing_time, True)
             assert landing_row_idx is not None
         else:
