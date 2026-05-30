@@ -21,19 +21,23 @@ def flight_is_in_united_states_airspace(flight) -> bool:
     )
 
 # We'll start with every X days
-def process_group(df: pl.DataFrame):
-    flights = flights_df_to_flights(df)
-    for flight in flights:
-        # if flight in United States airspace
-        if flight_is_in_united_states_airspace(flight) == False:
-            continue
-        flight.icao = make_pia_icao(flight.flight_id)
-        flight.ladd = False
-        flight.pia = True
-
-    df = flights_to_flights_df(flights)
-    return df
 
 def main(df: pl.DataFrame):
+    gold_mapping = dict()
+    def process_group(df: pl.DataFrame):
+        flights = flights_df_to_flights(df)
+        for flight in flights:
+            # if flight in United States airspace
+            if flight_is_in_united_states_airspace(flight) == False:
+                continue
+            real_icao = flight.icao
+            flight.icao = make_pia_icao(flight.flight_id)
+            flight.ladd = False
+            flight.pia = True
+            gold_mapping[flight.flight_id] = real_icao
+
+        df = flights_to_flights_df(flights)
+        return df
+
     df = df.group_by("icao").map_groups(process_group)
-    return df
+    return df, gold_mapping
