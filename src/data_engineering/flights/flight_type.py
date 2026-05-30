@@ -1,6 +1,6 @@
 import polars as pl
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
 FLIGHT_POLARS_SCHEMA = {
@@ -67,6 +67,10 @@ def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
         Flight(**row)
         for row in df.select(list(FLIGHT_POLARS_SCHEMA.keys())).iter_rows(named=True)
     ]
+
+def flights_to_flights_df(flights: list[Flight]) -> pl.DataFrame:
+    df = pl.DataFrame([asdict(flight) for flight in flights], schema=FLIGHT_POLARS_SCHEMA)
+    return df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
 
 FLIGHT_NUMBER_REGEX = r"^[A-Z]{3}\d{1,4}[A-Z]?$"
 def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
