@@ -6,7 +6,7 @@ from airports.airportLookup import AirportLookup
 import math
 from utils import haversine
 
-MAX_AIRPORT_DISTANCE_KM = 16
+MAX_AIRPORT_DISTANCE_KM = 10
 airport_lookup = AirportLookup()
 @dataclass
 class _AdsbRow:
@@ -64,16 +64,23 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         else:
             landing_row_idx = 0
 
-        takeoff_airport_coords = get_airport_coords(flight.takeoff_airport_ident)
-        assert takeoff_airport_coords is not None
-
         takeoff_row_idx = closest_time_row_idx(adsb_rows, flight.takeoff_time, False)
         assert takeoff_row_idx is not None
 
+        airport_coords = get_airport_coords(flight.takeoff_airport_ident)
+        assert airport_coords is not None
+        if is_near_airport(adsb_rows[takeoff_row_idx], airport_coords) == False:
+            return False
+        if previous_flight:
+            landing_row = adsb_rows[landing_row_idx]
+            if is_near_airport(landing_row, airport_coords) == False:
+                return False
+
+
         in_between_rows = adsb_rows[landing_row_idx:takeoff_row_idx]
         for row in in_between_rows:
-            distance = haversine(row.lat, row.lon, *takeoff_airport_coords)
-            if distance > 10:
+            distance = haversine(row.lat, row.lon, *airport_coords)
+            if distance > MAX_AIRPORT_DISTANCE_KM:
                 return False
 
         previous_flight =  flight
