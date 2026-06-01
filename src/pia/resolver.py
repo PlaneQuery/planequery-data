@@ -82,10 +82,10 @@ def get_canidate_icaos(flights: list[Flight]):
 
 def resolve_pia_mappings(flights: list[Flight]):
     g = build_graph(flights)
+
     # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
-    compute_edge_scores_for_node(g)
+    # compute_edge_scores_for_node(g)
     model = cp_model.CpModel()
-    pia_mapping_dict = {}
     y: dict[tuple[str,str], cp_model.IntVar] = {}
     canidates_icaos_dict = get_canidate_icaos(flights)
 
@@ -98,7 +98,7 @@ def resolve_pia_mappings(flights: list[Flight]):
         model.add(sum(assignment_vars) == 1)
 
 
-
+    print(f"Number of nodes: {len(g.nodes)}")
     
     x: dict[tuple[str, str, str], cp_model.IntVar] = {}
 
@@ -169,6 +169,7 @@ def resolve_pia_mappings(flights: list[Flight]):
         raise RuntimeError("No feasible solution found")
     
 
+    pia_mapping_dict = {}
 
     for flight in flights:
         if flight.pia:
