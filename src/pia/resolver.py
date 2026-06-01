@@ -113,17 +113,69 @@ def resolve_pia_mappings(flights: list[Flight]):
             model.add(var <= y[i,real_icao])
             model.add(var <= y[j,real_icao])
 
+
+    for j in g.nodes:
+        incoming_vars = []
+        outgoing_vars = []
+        for (i2,j2,real_icao), var in x.items():
+            if j2 == j:
+                incoming_vars.append(var)
+            
+            if i2 == j:
+                outgoing_vars.append(var)
+        if incoming_vars:
+            model.add(sum(incoming_vars) <= 1)
+        if outgoing_vars:
+            model.add(sum(outgoing_vars) <= 1)
+    
+    # Optional
+    start_vars: dict[str,cp_model.IntVar] = {}
+    end_vars: dict[str,cp_model.IntVar] = {}
+
+    for flight in flights:
+        fid = flight.flight_id
+        start_var = model.new_bool_var(f"start_{fid}")
+        end_var = model.new_bool_var(f"end_{fid}")
+        start_vars[fid] = start_var
+        end_vars[fid] = end_var
+
+        incoming_vars = [
+            var
+            for (i2, j2, real_icao), var in x.items()
+            if j2 == fid
+        ]
+
+        outgoing_vars = [
+            var
+            for (i2, j2, real_icao), var in x.items()
+            if i2 == fid
+        ]
+
+        model.add(start_var + sum(incoming_vars) == 1)
+        model.add(end_var + sum(outgoing_vars) == 1)
+
+    objective_terms = []
+    START_PENALTY: int = 100
+    END_PENALTY: int = 100
+    for node in g.nodes:
+        objective_terms.append(-START_PENALTY * start_vars[node])
+        objective_terms.append(-END_PENALTY * end_vars[node])
+
+
+    model.maximize(sum(objective_terms))
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError("No feasible solution found")
+    
+
+
     for flight in flights:
         if flight.pia:
             for real_icao in canidates_icaos_dict[flight.flight_id]:
                 if solver.Value(y[(flight.flight_id, real_icao)]) == 1:
                     pia_mapping_dict[flight.flight_id] = real_icao
                     break
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError("No feasible solution found")
     
     return pia_mapping_dict, g
 
