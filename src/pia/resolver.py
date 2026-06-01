@@ -72,12 +72,12 @@ def time_gap_score(time_delta: timedelta) -> float: # This should be based on av
 
 def get_canidate_icaos(flights: list[Flight]):
     candidates = {}
-    real_icaos = {f.icao for f in flights if not f.pia}
+    real_icaos = sorted({f.icao for f in flights if not f.pia})
     for flight in flights:
         if flight.pia:
             candidates[flight.flight_id] = real_icaos
         else:
-            candidates[flight.flight_id] = {flight.icao}
+            candidates[flight.flight_id] = [flight.icao]
     return candidates
 
 def resolve_pia_mappings(flights: list[Flight]):
@@ -105,8 +105,8 @@ def resolve_pia_mappings(flights: list[Flight]):
     for i, j in g.edges: # basically a flight_id
         fi = g.nodes[i]["flight"]
         fj = g.nodes[j]["flight"]
-        shared_candidate_icaos = canidates_icaos_dict[fi.flight_id] & canidates_icaos_dict[fj.flight_id]
-        for real_icao in shared_candidate_icaos:
+        shared_candidate_icaos = set(canidates_icaos_dict[fi.flight_id]) & set(canidates_icaos_dict[fj.flight_id])
+        for real_icao in sorted(shared_candidate_icaos):
             var = model.new_bool_var(f"x_{i}_{j}_{real_icao}")
             x[(i,j,real_icao)] = var
 
