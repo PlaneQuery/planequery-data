@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 from data_engineering.flights.flight_type import TestFlight
-from pia.pia import build_graph, process_graph
 
 initial_time = datetime(2026,1,1,1)
 # I probably want initial state in future. 
