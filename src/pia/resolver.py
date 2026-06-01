@@ -77,7 +77,7 @@ def get_canidate_icaos(flights: list[Flight]):
         if flight.pia:
             candidates[flight.flight_id] = real_icaos
         else:
-            candidates[flight.flight_id] = [flight.icao]
+            candidates[flight.flight_id] = {flight.icao}
     return candidates
 
 def resolve_pia_mappings(flights: list[Flight]):
@@ -98,18 +98,32 @@ def resolve_pia_mappings(flights: list[Flight]):
         model.add(sum(assignment_vars) == 1)
 
 
+
+    
+    x: dict[tuple[str, str, str], cp_model.IntVar] = {}
+
+    for i, j in g.edges: # basically a flight_id
+        fi = g.nodes[i]["flight"]
+        fj = g.nodes[j]["flight"]
+        shared_candidate_icaos = canidates_icaos_dict[fi.flight_id] & canidates_icaos_dict[fj.flight_id]
+        for real_icao in shared_candidate_icaos:
+            var = model.new_bool_var(f"x_{i}_{j}_{real_icao}")
+            x[(i,j,real_icao)] = var
+
+            model.add(var <= y[i,real_icao])
+            model.add(var <= y[j,real_icao])
+
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
-
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError("No feasible solution found")
-    
     for flight in flights:
         if flight.pia:
             for real_icao in canidates_icaos_dict[flight.flight_id]:
                 if solver.Value(y[(flight.flight_id, real_icao)]) == 1:
                     pia_mapping_dict[flight.flight_id] = real_icao
                     break
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError("No feasible solution found")
     
-    return pia_mapping_dict
+    return pia_mapping_dict, g
 
