@@ -2,8 +2,9 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 from data_engineering.flights.flight_type import TestFlight
-from pia.pia import build_graph, process_graph
-
+from pia.resolver import build_graph
+from pia.evaluation.pia_graph_0 import flights_0
+import polars as pl
 
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
@@ -142,6 +143,36 @@ def main(flights = flights_real_0):
     output_path = Path("tmp/pia_graph_1.png")
     visualize_graph(G, output_path)
     print(f"\nWrote visualization to {output_path}")
+
+def evaluation(mapping_dict, gold_dict):
+    comparison_rows = []
+    for flight_id in sorted(set(gold_dict) | set(mapping_dict)):
+        expected_icao = gold_dict.get(flight_id)
+        predicted_icao = mapping_dict.get(flight_id)
+        comparison_rows.append({
+            "flight_id": flight_id,
+            "expected_icao": expected_icao,
+            "predicted_icao": predicted_icao,
+            "correct": expected_icao == predicted_icao,
+            "missing_prediction": expected_icao is not None and predicted_icao is None,
+            "extra_prediction": expected_icao is None and predicted_icao is not None,
+        })
+
+    df_mapping_comparison = pl.DataFrame(comparison_rows)
+
+    expected_count = len(gold_dict)
+    predicted_count = len(mapping_dict)
+    correct_count = df_mapping_comparison.filter(pl.col("correct")).height
+
+    stats = {
+        "expected_mappings": expected_count,
+        "predicted_mappings": predicted_count,
+        "correct_mappings": correct_count,
+        "missing_predictions": df_mapping_comparison.filter(pl.col("missing_prediction")).height,
+        "extra_predictions": df_mapping_comparison.filter(pl.col("extra_prediction")).height,
+        "accuracy": correct_count / expected_count if expected_count else 0,
+    }
+    return stats
 
 if __name__ == "__main__":
     main()

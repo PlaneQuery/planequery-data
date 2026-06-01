@@ -26,7 +26,8 @@ def main(df: pl.DataFrame):
     gold_mapping = dict()
     def process_group(df: pl.DataFrame):
         flights = flights_df_to_flights(df)
-        for flight in flights:
+        for i in range(1, len(flights) - 1):
+            flight = flights[i]
             # if flight in United States airspace
             if flight_is_in_united_states_airspace(flight) == False:
                 continue
