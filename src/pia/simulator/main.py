@@ -22,13 +22,16 @@ def flight_is_in_united_states_airspace(flight) -> bool:
 
 # We'll start with every X days
 
-def main(df: pl.DataFrame):
+def simulate_pia_flights(df: pl.DataFrame):
     gold_mapping = dict()
+    icaos_to_use = df.get_column("icao").unique().sample(n=NUMBER_OF_PIA_PLANES).to_list()
     def process_group(df: pl.DataFrame):
         flights = flights_df_to_flights(df)
         for i in range(1, len(flights) - 1):
             flight = flights[i]
             # if flight in United States airspace
+            if flight.icao not in icaos_to_use:
+                continue
             if flight_is_in_united_states_airspace(flight) == False:
                 continue
             real_icao = flight.icao
