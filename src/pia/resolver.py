@@ -139,7 +139,8 @@ def resolve_pia_mappings(flights: list[Flight]):
         end_var = model.new_bool_var(f"end_{fid}")
         start_vars[fid] = start_var
         end_vars[fid] = end_var
-
+        if flight.pia:
+            model.add(start_var == 0)
         incoming_vars = [
             var
             for (i2, j2, real_icao), var in x.items()
