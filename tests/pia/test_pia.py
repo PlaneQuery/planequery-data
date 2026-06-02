@@ -18,7 +18,9 @@ class TestPIA(unittest.TestCase):
         self.assertEqual(mapping_dict, test_mapping_dict_0)
 
     def test_simulator_flights_0(self):
-        from pia.evaluation.simulator_flights import df_flights_sim, gold_mapping
+        # TODO: What is the random assignment percentage 
+        from pia.evaluation.simulator_flights import get_simulated_flights_0
+        df_flights_sim, gold_mapping = get_simulated_flights_0()
         mapping_dict, graph = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
         correct = 0
         total = 0
