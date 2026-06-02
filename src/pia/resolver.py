@@ -35,6 +35,7 @@ def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if 
     # score 0.0 (impossible) -> #1.0
     # things to factor in 
     # if there's more possible edges than it's more ambigious which one it used so therefore that edge score should matter less
+    # TODO: incorporate if callsign is the same.
     for u in g.nodes:
         flight = g.nodes[u]["flight"] # maybe for now just do score of the divided by number. I cany simplify by when I pick best path I only need to recalculate for the nodes that were involved
         successors = list(g.successors(u))
