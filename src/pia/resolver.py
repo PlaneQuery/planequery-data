@@ -14,7 +14,7 @@ def _get_pia_nodes(g: nx.DiGraph):
     ]
     return pia_nodes
 
-def build_graph(flights: list[Flight]) -> nx.DiGraph:
+def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight in graph node and doing flight by flight_id lookup would be faster
     G = nx.DiGraph()
     for flight in flights:
         G.add_node(flight.flight_id, flight=flight)
@@ -44,6 +44,15 @@ def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if 
             time_gap = flight_s.takeoff_time - flight.landing_time
             # time_gap_score(time_gap)
             g.edges[u,v]["score"] = 1
+
+def edge_score(a: Flight, b:Flight):
+    # check if icao is one that uses pia
+    score = 1000
+    time_gap = b.takeoff_time - a.landing_time
+    score -= int(time_gap.total_seconds() / 60)
+    if not a.pia and not b.pia and a.icao == b.icao:
+        score += 500
+    return score
 
 def time_gap_score(time_delta: timedelta) -> float: # This should be based on average time gap between ladd planes.
     gap_hours = time_delta.total_seconds() / 3600
@@ -83,7 +92,13 @@ def get_canidate_icaos(flights: list[Flight]):
 
 def resolve_pia_mappings(flights: list[Flight]):
     g = build_graph(flights)
+    components = list(nx.weakly_connected_components(g))
 
+    subgraphs = [
+        g.subgraph(component_nodes)
+        for component_nodes in components
+    ]
+    print(f"Number of subgraphs: {len(subgraphs)}")
     # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
     # compute_edge_scores_for_node(g)
     model = cp_model.CpModel()
@@ -157,6 +172,12 @@ def resolve_pia_mappings(flights: list[Flight]):
         model.add(end_var + sum(outgoing_vars) == 1)
 
     objective_terms = []
+
+    for (i,j,real_icao), var in x.items():
+        fi = g.nodes[i]["flight"]
+        fj = g.nodes[j]["flight"]
+        score = edge_score(fi, fj)
+        objective_terms.append(score * var)
     START_PENALTY: int = 100
     END_PENALTY: int = 100
     for node in g.nodes:
