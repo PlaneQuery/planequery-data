@@ -84,7 +84,16 @@ def flights_parquet_path(target_date: date):
     FLIGHTS_OUTPUT_DIR = OUTPUT_DIR / "data" / "flights" / FLIGHTS_VERSION
     flights_path = FLIGHTS_OUTPUT_DIR / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
     return flights_path
-def get_flights(target_date: date):
+
+
+def _date_range(start_date: date, end_date: date):
+    current_date = start_date
+    while current_date < end_date:
+        yield current_date
+        current_date += timedelta(days=1)
+
+
+def _get_flights_for_day(target_date: date):
     path = flights_parquet_path(target_date)
     if path.exists():
         df = pl.read_parquet(path)
@@ -93,6 +102,16 @@ def get_flights(target_date: date):
     os.makedirs(path.parent, exist_ok=True)
     df.write_parquet(path)
     return df
+
+
+def get_flights(start_date: date, end_date: date | None = None):
+    if end_date is None:
+        return _get_flights_for_day(start_date)
+    if end_date <= start_date:
+        return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
+    return pl.concat([_get_flights_for_day(target_date) for target_date in _date_range(start_date, end_date)])
+
+
 def get_flights_from_iceberg(target_date: date):
     import awswrangler as wr
     from data_engineering.utils import ATHENA_DATABASE, ATHENA_WORKGROUP
