@@ -41,10 +41,7 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     ]
 
     def get_airport_coords(ident: str) -> tuple[float, float] | None:
-        airport = airport_lookup.get_Airport_from_airport_icao(ident)
-        if airport is None:
-            return None
-        return airport.coordinates
+        return airport_lookup.get_airport_coordinates(ident)
 
     def is_near_airport(row: _AdsbRow, airport_coords: tuple[float, float]) -> bool:
         distance = haversine(row.lat, row.lon, airport_coords[0], airport_coords[1])
