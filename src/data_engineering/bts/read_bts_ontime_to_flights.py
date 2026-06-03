@@ -25,7 +25,7 @@ def ident_to_timezone_mapping():
     airport_lookup.ident_index
     ident_to_timezone = {}
     for ident, airport in airport_lookup.ident_index.items():
-        tz = tf.timezone_at(lng=airport.coordinates[1], lat=airport.coordinates[0])
+        tz = tf.timezone_at(lng=airport.lon, lat=airport.lat)
         if tz:
             ident_to_timezone[ident] = tz
     lookup = pl.DataFrame({"ident": list(ident_to_timezone.keys()), "timezone": list(ident_to_timezone.values())})

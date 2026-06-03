@@ -35,10 +35,7 @@ def _icao_has_perfect_match(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> 
         return False
 
     def get_airport_coords(ident: str):
-        airport = _airport_lookup.get_Airport_from_airport_icao(ident)
-        if airport is None:
-            return None
-        return airport.coordinates
+        return _airport_lookup.get_airport_coordinates(ident)
 
     takeoff_coords = df_flights["takeoff_airport_ident"].map_elements(get_airport_coords, return_dtype=pl.List(pl.Float64))
     landing_coords = df_flights["landing_airport_ident"].map_elements(get_airport_coords, return_dtype=pl.List(pl.Float64))
@@ -151,4 +148,3 @@ def get_icaos_with_perfect_match(df_flights_full: pl.DataFrame, df_adsb_full: pl
         if _icao_has_perfect_match(df_flights, df_adsb):
             perfect.add(icao)
     return perfect
-

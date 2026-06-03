@@ -47,12 +47,14 @@ class Airport_Types(StrEnum):
 class Airport:
     ident: str
     iata: str
-    coordinates: tuple[float, float]
+    lat: float
+    lon: float
     elevation_ft: int
     type: Airport_Types
     iso_country: str = ""
     iso_region: str = ""
     distance_from_plane_point_in_km: float = 0.0
+
 
 class AirportLookup:
     _instance = None
@@ -88,7 +90,8 @@ class AirportLookup:
                     add_airport = Airport(
                         ident=ident,
                         iata=iata,
-                        coordinates=airport_coord_deg,
+                        lat=latitude_deg,
+                        lon=longitude_deg,
                         elevation_ft=elevation_ft,
                         type=Airport_Types(airport['type']),
                         iso_country=airport["iso_country"],
@@ -139,6 +142,12 @@ class AirportLookup:
 
     def get_Airport_from_airport_icao(self, airport_icao: str) -> Airport | None:
         return self.ident_index.get(airport_icao)
+
+    def get_airport_coordinates(self, airport_ident: str) -> tuple[float, float] | None:
+        airport = self.get_Airport_from_airport_icao(airport_ident)
+        if airport is None:
+            return None
+        return (airport.lat, airport.lon)
 
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_icao(airport_ident)
