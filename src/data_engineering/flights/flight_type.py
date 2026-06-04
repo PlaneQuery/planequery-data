@@ -19,6 +19,10 @@ FLIGHT_POLARS_SCHEMA = {
     "owner": pl.String,
     "aircraft_description": pl.String,
     "category": pl.String,
+    "takeoff_airport_lat": pl.Float64,
+    "takeoff_airport_lon": pl.Float64,
+    "landing_airport_lat": pl.Float64,
+    "landing_airport_lon": pl.Float64,
 }
 
 def add_flight_duration_col(df: pl.DataFrame):
@@ -42,6 +46,10 @@ class Flight:
     owner: str = ""
     aircraft_description: str = ""
     category: str = ""
+    takeoff_airport_lat: float | None = None
+    takeoff_airport_lon: float | None = None
+    landing_airport_lat: float | None = None
+    landing_airport_lon: float | None = None
 
     @property
     def flight_id(self) -> str:
