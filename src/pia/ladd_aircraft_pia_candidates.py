@@ -63,7 +63,7 @@ def get_ladd_pia_candidates(df: pl.DataFrame) -> set[str]:
         total_count = group.height
         if total_count == 0:
             continue
-        if potential_pia_flight_count(group) / total_count > 0.25:
+        if potential_pia_flight_count(group) / total_count > 0.0:
             candidates.add(icao)
     return candidates
 
