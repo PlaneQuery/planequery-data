@@ -71,9 +71,10 @@ class TestFlight():
         return self.icao.startswith("pia")
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
+    df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])
     return [
         Flight(**row)
-        for row in df.select(list(FLIGHT_POLARS_SCHEMA.keys())).iter_rows(named=True)
+        for row in df.iter_rows(named=True)
     ]
 
 def flights_to_flights_df(flights: list[Flight]) -> pl.DataFrame:
