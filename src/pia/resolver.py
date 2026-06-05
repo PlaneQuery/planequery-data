@@ -14,6 +14,27 @@ def _get_pia_nodes(g: nx.DiGraph):
     ]
     return pia_nodes
 
+def _get_real_nodes(g:nx.DiGraph):
+    real_nodes = [
+        node for node,attrs in g.nodes(data=True)
+        if attrs["flight"].pia == False
+    ]
+    return real_nodes
+
+def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
+    g = g.copy()
+    while True:
+        pia_source_nodes = [
+            node
+            for node, attrs in g.nodes(data=True)
+            if attrs["flight"].pia and g.in_degree(node) == 0
+        ]
+        if not pia_source_nodes:
+            return g
+        print(f"{len(pia_source_nodes)} pia source nodes remove")
+        raise Exception("pia source nodes present")
+        g.remove_nodes_from(pia_source_nodes)
+
 def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight in graph node and doing flight by flight_id lookup would be faster
     G = nx.DiGraph()
     for flight in flights:
@@ -29,6 +50,41 @@ def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight
             G.add_edge(flight_i.flight_id, flight_j.flight_id)
 
     return G
+
+def print_graph(g: nx.DiGraph) -> None:
+    print(f"Graph: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges")
+    print("Nodes:")
+    for node in sorted(g.nodes, key=lambda node: g.nodes[node]["flight"].takeoff_time):
+        flight = g.nodes[node]["flight"]
+        tags = []
+        if flight.pia:
+            tags.append("PIA")
+        if flight.ladd:
+            tags.append("LADD")
+        tag_text = ",".join(tags) if tags else "REAL"
+        print(
+            f"  {node} [{tag_text}] "
+            f"{flight.takeoff_time:%Y-%m-%d %H:%M} "
+            f"{flight.takeoff_airport_ident}->{flight.landing_airport_ident} "
+            f"icao={flight.icao}"
+        )
+
+    print("Edges:")
+    for source, target in sorted(
+        g.edges,
+        key=lambda edge: (
+            g.nodes[edge[0]]["flight"].takeoff_time,
+            g.nodes[edge[1]]["flight"].takeoff_time,
+        ),
+    ):
+        source_flight = g.nodes[source]["flight"]
+        target_flight = g.nodes[target]["flight"]
+        gap = target_flight.takeoff_time - source_flight.landing_time
+        print(
+            f"  {source} -> {target} "
+            f"via {source_flight.landing_airport_ident} "
+            f"gap={gap}"
+        )
 
 def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if the real icao later took off from the airport. Then it's like 90% + it was this. This combines with teh time score so real icao + 30 days unlikely. real icao + 6 hours super likely it took this edge.
     # for now treat score like probablitiy adds up to 1 all edges. 
@@ -179,6 +235,7 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print_graph(g)
         raise RuntimeError("No feasible solution found")
     
 
@@ -192,9 +249,8 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
                     break
     
     return pia_mapping_dict, g
-def resolve_pia_mappings(flights: list[Flight], ladd_icao_canidates: set[str] | None = None):
-    if ladd_icao_canidates:
-        flights = [f for f in flights if f.icao in ladd_icao_canidates or f.pia]
+def resolve_pia_mappings(flights: list[Flight]):
+    print(f"Number of flights: {len(flights)}")
     g = build_graph(flights)
     components = list(nx.weakly_connected_components(g))
     subgraphs = [
@@ -207,6 +263,13 @@ def resolve_pia_mappings(flights: list[Flight], ladd_icao_canidates: set[str] | 
     # compute_edge_scores_for_node(g)
     mappings_dict = {}
     for g in subgraphs:
+        # g = remove_pia_source_nodes(g) # should really not be needed. 
+        if not _get_pia_nodes(g):
+            print("no pia nodes, skipping")
+            continue
+        if not _get_real_nodes(g):
+            print("no real nodes, skipping")
+            continue
         subgraph_flights = [g.nodes[node]["flight"] for node in g.nodes]
         mappings, graph  = process_graph(g, subgraph_flights)
         mappings_dict.update(mappings)
