@@ -90,17 +90,7 @@ def get_canidate_icaos(flights: list[Flight]):
             candidates[flight.flight_id] = [flight.icao]
     return candidates
 
-def resolve_pia_mappings(flights: list[Flight]):
-    g = build_graph(flights)
-    components = list(nx.weakly_connected_components(g))
-
-    subgraphs = [
-        g.subgraph(component_nodes)
-        for component_nodes in components
-    ]
-    print(f"Number of subgraphs: {len(subgraphs)}")
-    # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
-    # compute_edge_scores_for_node(g)
+def process_graph(g: nx.DiGraph, flights: list[Flight]):
     model = cp_model.CpModel()
     y: dict[tuple[str,str], cp_model.IntVar] = {}
     canidates_icaos_dict = get_canidate_icaos(flights)
@@ -202,4 +192,22 @@ def resolve_pia_mappings(flights: list[Flight]):
                     break
     
     return pia_mapping_dict, g
+def resolve_pia_mappings(flights: list[Flight], ladd_icao_canidates: set[str] | None = None):
+    if ladd_icao_canidates:
+        flights = [f for f in flights if f.icao in ladd_icao_canidates or f.pia]
+    g = build_graph(flights)
+    components = list(nx.weakly_connected_components(g))
+    subgraphs = [
+        g.subgraph(component_nodes)
+        for component_nodes in components
+    ]
+    print(f"Number of subgraphs: {len(subgraphs)}")
 
+    # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
+    # compute_edge_scores_for_node(g)
+    mappings_dict = {}
+    for g in subgraphs:
+        subgraph_flights = [g.nodes[node]["flight"] for node in g.nodes]
+        mappings, graph  = process_graph(g, subgraph_flights)
+        mappings_dict.update(mappings)
+    return mappings_dict, graph
