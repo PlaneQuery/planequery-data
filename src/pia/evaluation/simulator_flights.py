@@ -8,8 +8,8 @@ from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfe
 
 
 def get_simulated_flights_0():
-    start_date = date(2026, 2, 28)
-    end_date = date(2026, 3, 1)
+    start_date = date(2026, 5, 18)
+    end_date = date(2026, 5, 22)
 
     flight_dfs = []
     target_date = start_date
