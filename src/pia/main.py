@@ -43,8 +43,8 @@ def main(start_date: date, end_date: date):
     print(f"{len(ladd_pia_candidates)} ladd pia candidates")
     df_flights = df_flights.filter(pl.col("icao").is_in(ladd_pia_candidates) | pl.col("pia"))
     df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
-    df_flights_2 = get_flights(end_date, end_date + timedelta(days=10))
-    df_flights = pl.concat([df_flights, df_flights_2])
+    # df_flights_2 = get_flights(end_date, end_date + timedelta(days=10)) # We proboably don't need most of this just pree ladd flight is what's required.
+    # df_flights = pl.concat([df_flights, df_flights_2])
     flights = flights_df_to_flights(df_flights)
     mappings,g = resolve_pia_mappings(flights)
     print(mappings)
