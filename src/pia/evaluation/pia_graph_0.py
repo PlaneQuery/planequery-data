@@ -50,8 +50,8 @@ complete_flight_path_1 =[
     TestFlight(icao="pia_0", takeoff_time=initial_time + timedelta(hours=4), landing_time=initial_time + timedelta(hours=6), takeoff_airport_ident="B", landing_airport_ident="C"),
 ]
 more = [
-    TestFlight(icao="0", takeoff_time=initial_time + timedelta(hours=3), landing_time=initial_time + timedelta(hours=4), takeoff_airport_ident="B", landing_airport_ident="C"),
-    TestFlight(icao="1",takeoff_time=initial_time + timedelta(hours=3), landing_time=initial_time + timedelta(hours=4), takeoff_airport_ident="B", landing_airport_ident="D"),
+    TestFlight(icao="0", takeoff_time=initial_time + timedelta(hours=3) + timedelta(days=20), landing_time=initial_time + timedelta(hours=4) + timedelta(days=20), takeoff_airport_ident="B", landing_airport_ident="C"),
+    TestFlight(icao="1",takeoff_time=initial_time + timedelta(hours=3) + timedelta(days=20), landing_time=initial_time + timedelta(hours=4) + timedelta(days=20), takeoff_airport_ident="B", landing_airport_ident="D"),
 ]
 
 flights_3 = start + complete_flight_path_1 + more
