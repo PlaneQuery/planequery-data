@@ -66,7 +66,8 @@ def print_graph(g: nx.DiGraph) -> None:
             f"  {node} [{tag_text}] "
             f"{flight.takeoff_time:%Y-%m-%d %H:%M} "
             f"{flight.takeoff_airport_ident}->{flight.landing_airport_ident} "
-            f"icao={flight.icao}"
+            f"icao={flight.icao} "
+            f"category={flight.category or 'unknown'}"
         )
 
     print("Edges:")
