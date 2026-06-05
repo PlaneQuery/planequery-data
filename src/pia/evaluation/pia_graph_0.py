@@ -39,3 +39,20 @@ flights_2 = [
 flights_2_category_test= flights_0
 
 # TODO: make something where the ladd plane then lifts off elminating it from a possible pia contender. Since new resolver constraint will mean it has to keep phyiscal nodes. 
+
+# We can do an extreme setup of having like 5 or 6 icaos leave the place let’s do them in time that the edge_score would favor and then see. They can leave like 6 days later 1 icao
+start = [
+    TestFlight(icao="0", takeoff_time=initial_time, landing_time=initial_time + timedelta(hours=2), takeoff_airport_ident="A", landing_airport_ident="B"),
+    TestFlight(icao="1", takeoff_time=initial_time, landing_time=initial_time + timedelta(hours=2), takeoff_airport_ident="A", landing_airport_ident="B"),
+    TestFlight(icao="2", takeoff_time=initial_time, landing_time=initial_time + timedelta(hours=2), takeoff_airport_ident="A", landing_airport_ident="B"),
+]
+complete_flight_path_1 =[
+    TestFlight(icao="pia_0", takeoff_time=initial_time + timedelta(hours=4), landing_time=initial_time + timedelta(hours=6), takeoff_airport_ident="B", landing_airport_ident="C"),
+]
+more = [
+    TestFlight(icao="0", takeoff_time=initial_time + timedelta(hours=3), landing_time=initial_time + timedelta(hours=4), takeoff_airport_ident="B", landing_airport_ident="C"),
+    TestFlight(icao="1",takeoff_time=initial_time + timedelta(hours=3), landing_time=initial_time + timedelta(hours=4), takeoff_airport_ident="B", landing_airport_ident="D"),
+]
+
+flights_3 = start + complete_flight_path_1 + more
+test_mapping_dict_3 = {'pia_0_2026-01-01_05-00': '2'}
