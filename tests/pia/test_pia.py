@@ -11,11 +11,15 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 from data_engineering.flights.flight_type import flights_df_to_flights
 from pia.evaluation.main import visualize_graph
 from pia.resolver import resolve_pia_mappings
-from pia.evaluation.pia_graph_0 import flights_0, test_mapping_dict_0
+from pia.evaluation.pia_graph_0 import flights_0, flights_2, test_mapping_dict_0
 
 class TestPIA(unittest.TestCase):
     def test_flights_0_mapping(self):
         mapping_dict, graph = resolve_pia_mappings(flights_0)
+        self.assertEqual(mapping_dict, test_mapping_dict_0)
+    
+    def test_flights_2_mapping(self):
+        mapping_dict, graph = resolve_pia_mappings(flights_2)
         self.assertEqual(mapping_dict, test_mapping_dict_0)
 
     def test_simulator_flights_0(self):
