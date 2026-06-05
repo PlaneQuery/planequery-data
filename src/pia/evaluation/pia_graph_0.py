@@ -26,7 +26,10 @@ complete_flight_path_3 = [
 flights_0 = start + complete_flight_path_1 + complete_flight_path_2 + complete_flight_path_3
 test_mapping_dict_0 = {'pia_0_2026-01-01_05-00': '0', 'pia_1_2026-01-01_05-00': '1'}
 
-flights_2 = flights_0
+flights_2 = [
+    TestFlight(icao="3", takeoff_time=initial_time, landing_time=initial_time + timedelta(hours=2), takeoff_airport_ident="A", landing_airport_ident="B"),
+    TestFlight(icao="3", takeoff_time=initial_time + timedelta(hours=4), landing_time=initial_time + timedelta(hours=6), takeoff_airport_ident="B", landing_airport_ident="Q")
+] + flights_0
 # for number 2 I can probably just add to already existing flights. 
 # flights_2 = flights + [
 #     TestFlight(icao="0", takeoff_time=initial_time + timedelta(hours=10), landing_time=initial_time+timedelta(hours=12), takeoff_airport_ident="D", landing_airport_ident="Q"),
@@ -34,3 +37,5 @@ flights_2 = flights_0
 # ]
 
 flights_2_category_test= flights_0
+
+# TODO: make something where the ladd plane then lifts off elminating it from a possible pia contender. Since new resolver constraint will mean it has to keep phyiscal nodes. 
