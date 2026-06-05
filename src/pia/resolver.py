@@ -36,6 +36,7 @@ def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
         g.remove_nodes_from(pia_source_nodes)
 
 def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight in graph node and doing flight by flight_id lookup would be faster
+    flights = sorted(flights, key=lambda f: (f.takeoff_time, f.icao))
     G = nx.DiGraph()
     for flight in flights:
         G.add_node(flight.flight_id, flight=flight)
