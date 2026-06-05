@@ -13,13 +13,13 @@ def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: da
     start_datetime = datetime.combine(start_date, time.min)
     flight_key = ["icao", "takeoff_time"]
 
-    flights_in_window = df_flights.filter(pl.col("takeoff_time") >= start_datetime)
+    flights_in_window = df_flights.filter(pl.col("landing_time") >= start_datetime)
     prior_anchor_flights = (
         df_flights
         .filter(
             (pl.col("ladd"))
             & (~pl.col("pia"))
-            & (pl.col("takeoff_time") <= start_datetime)
+            & (pl.col("landing_time") <= start_datetime)
         )
         .sort(["icao", "takeoff_time"], descending=[False, True])
         .unique(subset=["icao"], keep="first")
@@ -31,7 +31,7 @@ def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: da
         .sort(flight_key)
     )
 
-def main(start_date: date, end_date: date):
+def run_pia_algorithm(start_date: date, end_date: date):
     '''
     start_date inclusive
     end_date exclusive
@@ -43,13 +43,15 @@ def main(start_date: date, end_date: date):
     print(f"{len(ladd_pia_candidates)} ladd pia candidates")
     df_flights = df_flights.filter(pl.col("icao").is_in(ladd_pia_candidates) | pl.col("pia"))
     df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
-    # df_flights_2 = get_flights(end_date, end_date + timedelta(days=10)) # We proboably don't need most of this just pree ladd flight is what's required.
-    # df_flights = pl.concat([df_flights, df_flights_2])
+    # df_flights_2 = get_flights(end_date, end_date + timedelta(days=1)) # We proboably don't need most of this just pree ladd flight is what's required.
+    # df_flights_2 = df_flights_2.filter(pl.col("icao").is_in(ladd_pia_candidates) | pl.col("pia"))
+    # df_flights = pl.concat([df_flights, df_flights_2]) # We still have pia source nodes present. 
     flights = flights_df_to_flights(df_flights)
     mappings,g = resolve_pia_mappings(flights)
     print(mappings)
+    return mappings,g
 
 if __name__ == "__main__":
     start_date = date(2025,5,20)
     end_date = date(2025,5,21)
-    main(start_date, end_date)
+    run_pia_algorithm(start_date, end_date)

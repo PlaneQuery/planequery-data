@@ -5,7 +5,7 @@ from data_engineering.flights.flight_type import TestFlight
 from pia.resolver import build_graph
 from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
-
+from data_engineering.utils import OUTPUT_DIR
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
@@ -135,12 +135,13 @@ def main(flights = flights_0):
     print(f"{len(flights)} nodes")
     pia_flights = [flight for flight in flights if flight.pia]
     G = build_graph(flights)
-    output_path = Path("tmp/pia_graph_0.png")
-    G, mapping_dict = process_graph(G)
+    output_path = OUTPUT_DIR / Path("tmp/pia_graph_0.png")
+    # G, mapping_dict = process_graph(G)
+    visualize_graph(G, output_path)
+    print(f"outputed to {output_path}")
     print(f"{len(pia_flights)} pia nodes. {len(mapping_dict)} pia nodes identifed.")
     return
     output_path = Path("tmp/pia_graph_1.png")
-    visualize_graph(G, output_path)
     print(f"\nWrote visualization to {output_path}")
 
 def evaluation(mapping_dict, gold_dict):

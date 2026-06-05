@@ -37,7 +37,6 @@ mapping_dict_0 = {}
 
 df_flights_0 = get_flights(date(2025, 5, 14), end_date=date(2025, 5, 21))
 # df_flights_0 = df_flights_0.filter(pl.col("pia"))
-ladd_pia_canidates_0 = get_ladd_pia_candidates(df_flights_0)
 flights_0 = flights_df_to_flights(df_flights_0)
 for flight in flights_0:
     if flight.icao in elon_pia_icaos:

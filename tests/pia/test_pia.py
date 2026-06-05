@@ -1,4 +1,5 @@
 import contextlib
+from datetime import date
 import io
 import os
 import unittest
@@ -34,9 +35,9 @@ class TestPIA(unittest.TestCase):
     
     def test_real_flights_0(self):
         from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
+        from pia.main import run_pia_algorithm
         print(len(flights_0))
-        mapping_dict, graph = resolve_pia_mappings(flights_0)
-        print(mapping_dict)
+        mapping_dict,g = run_pia_algorithm(date(2025,5,14), date(2025,5,21))
         correct = 0
         total = 0
         for flight_id, real_icao in mapping_dict_0.items():

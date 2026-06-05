@@ -32,7 +32,10 @@ def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
         if not pia_source_nodes:
             return g
         print(f"{len(pia_source_nodes)} pia source nodes remove")
-        raise Exception("pia source nodes present")
+        # for node in pia_source_nodes:
+        #     flight = g.nodes[node]["flight"]
+        #     print(flight.icao, flight.takeoff_time, flight.takeoff_airport_ident)
+        # raise Exception("pia source nodes present")
         g.remove_nodes_from(pia_source_nodes)
 
 def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight in graph node and doing flight by flight_id lookup would be faster
@@ -103,15 +106,38 @@ def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if 
             # time_gap_score(time_gap)
             g.edges[u,v]["score"] = 1
 
-def edge_score(a: Flight, b:Flight):
-    # check if icao is one that uses pia
-    score = 1000
-    time_gap = b.takeoff_time - a.landing_time
-    score -= int(time_gap.total_seconds() / 60)
-    if not a.pia and not b.pia and a.icao == b.icao:
-        score += 500
-    return score
+def edge_score(a: Flight, b: Flight) -> int:
+    score = 0
+    gap = b.takeoff_time - a.landing_time
+    gap_minutes = gap.total_seconds() / 60
 
+    if gap_minutes < 30:
+        score -= 300
+    elif gap_minutes < 6 * 60:
+        score += 1000
+    elif gap_minutes < 24 * 60:
+        score += 700
+    elif gap_minutes < 3 * 24 * 60:
+        score += 250
+    elif gap_minutes < 7 * 24 * 60:
+        score -= 100
+    else:
+        score -= 500
+
+    if a.icao == b.icao:
+        score += 2000
+
+    if a.category and b.category:
+        if a.category == b.category:
+            score += 300
+        else:
+            score -= 300
+
+    if a.callsign and b.callsign and a.callsign == b.callsign:
+        score += 250
+
+    score = max(-2000, min(score, 1000))
+    return score
 def time_gap_score(time_delta: timedelta) -> float: # This should be based on average time gap between ladd planes.
     gap_hours = time_delta.total_seconds() / 3600
 
@@ -138,12 +164,13 @@ def time_gap_score(time_delta: timedelta) -> float: # This should be based on av
 
     return 0.02             # over 7 days: extremely weak
 
+UNRESOLVED_PREFIX = "unresolved_pia:"
 def get_canidate_icaos(flights: list[Flight]):
     candidates = {}
     real_icaos = sorted({f.icao for f in flights if not f.pia})
     for flight in flights:
         if flight.pia:
-            candidates[flight.flight_id] = real_icaos
+            candidates[flight.flight_id] = real_icaos +  [f"{UNRESOLVED_PREFIX}{flight.icao}"]
         else:
             candidates[flight.flight_id] = [flight.icao]
     return candidates
@@ -153,6 +180,7 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
     y: dict[tuple[str,str], cp_model.IntVar] = {}
     canidates_icaos_dict = get_canidate_icaos(flights)
 
+    print(f"Number of nodes: {len(g.nodes)}")
     for flight in flights:
         assignment_vars = []
         for real_icao in canidates_icaos_dict[flight.flight_id]:
@@ -162,8 +190,6 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
         model.add(sum(assignment_vars) == 1)
 
 
-    print(f"Number of nodes: {len(g.nodes)}")
-    
     x: dict[tuple[str, str, str], cp_model.IntVar] = {}
 
     for i, j in g.edges: # basically a flight_id
@@ -202,8 +228,7 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
         end_var = model.new_bool_var(f"end_{fid}")
         start_vars[fid] = start_var
         end_vars[fid] = end_var
-        if flight.pia:
-            model.add(start_var == 0)
+
         incoming_vars = [
             var
             for (i2, j2, real_icao), var in x.items()
@@ -226,8 +251,8 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
         fj = g.nodes[j]["flight"]
         score = edge_score(fi, fj)
         objective_terms.append(score * var)
-    START_PENALTY: int = 100
-    END_PENALTY: int = 100
+    START_PENALTY: int = 300
+    END_PENALTY: int = 300
     for node in g.nodes:
         objective_terms.append(-START_PENALTY * start_vars[node])
         objective_terms.append(-END_PENALTY * end_vars[node])
@@ -245,9 +270,9 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 
     for flight in flights:
         if flight.pia:
-            for real_icao in canidates_icaos_dict[flight.flight_id]:
-                if solver.Value(y[(flight.flight_id, real_icao)]) == 1:
-                    pia_mapping_dict[flight.flight_id] = real_icao
+            for mapped_icao in canidates_icaos_dict[flight.flight_id]:
+                if solver.Value(y[(flight.flight_id, mapped_icao)]) == 1:
+                    pia_mapping_dict[flight.flight_id] = mapped_icao
                     break
     
     return pia_mapping_dict, g
@@ -265,12 +290,7 @@ def resolve_pia_mappings(flights: list[Flight]):
     # compute_edge_scores_for_node(g)
     mappings_dict = {}
     for g in subgraphs:
-        # g = remove_pia_source_nodes(g) # should really not be needed. 
         if not _get_pia_nodes(g):
-            print("no pia nodes, skipping")
-            continue
-        if not _get_real_nodes(g):
-            print("no real nodes, skipping")
             continue
         subgraph_flights = [g.nodes[node]["flight"] for node in g.nodes]
         mappings, graph  = process_graph(g, subgraph_flights)

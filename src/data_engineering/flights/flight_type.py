@@ -1,5 +1,6 @@
 import polars as pl
 import os
+import hashlib
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
@@ -69,6 +70,9 @@ class TestFlight():
     @property
     def pia(self) -> bool:
         return self.icao.startswith("pia")
+    @property
+    def callsign(self) -> str:
+        return hashlib.sha1(self.flight_id.encode()).hexdigest()[:8].upper()
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])
