@@ -4,7 +4,6 @@ from pathlib import Path
 import unittest
 from datetime import datetime
 import polars as pl
-from data_engineering.flights.sfdps_to_flights import get_sfdps_flights
 
 from data_engineering.flights.flight_type import Flight, FLIGHT_POLARS_SCHEMA
 
