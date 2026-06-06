@@ -38,7 +38,9 @@ def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
         # raise Exception("pia source nodes present")
         g.remove_nodes_from(pia_source_nodes)
 
-def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight in graph node and doing flight by flight_id lookup would be faster
+
+MAX_CONNECTION_GAP = timedelta(days=30)
+def build_graph(flights: list[Flight]) -> nx.DiGraph:
     flights = sorted(flights, key=lambda f: (f.takeoff_time, f.icao))
     G = nx.DiGraph()
     for flight in flights:
@@ -48,6 +50,7 @@ def build_graph(flights: list[Flight]) -> nx.DiGraph: # maybe not storing flight
         is_connected = (
             flight_i.landing_airport_ident == flight_j.takeoff_airport_ident
             and flight_i.landing_time < flight_j.takeoff_time
+            and flight_j.takeoff_time - flight_i.landing_time <= MAX_CONNECTION_GAP
             and ((flight_i.icao ==flight_j.icao) or flight_j.pia == True or flight_i.pia == True)
         )
         if is_connected:
@@ -165,12 +168,20 @@ def time_gap_score(time_delta: timedelta) -> float: # This should be based on av
     return 0.02             # over 7 days: extremely weak
 
 UNRESOLVED_PREFIX = "unresolved_pia:"
-def get_canidate_icaos(flights: list[Flight]):
+def get_canidate_icaos(g: nx.DiGraph):
     candidates = {}
-    real_icaos = sorted({f.icao for f in flights if not f.pia})
-    for flight in flights:
+    for node in list(g.nodes):
+        flight: Flight = g.nodes[node]["flight"]
         if flight.pia:
-            candidates[flight.flight_id] = real_icaos +  [f"{UNRESOLVED_PREFIX}{flight.icao}"]
+            descendants = nx.descendants(g,node) # maybe I'll need to make this bounded.
+            ancestors = nx.ancestors(g,node)
+            nodes =  descendants | ancestors
+            real_icaos = set()
+            for node in nodes:
+                f = g.nodes[node]["flight"]
+                if f.pia == False:
+                    real_icaos.add(f.icao)
+            candidates[flight.flight_id] = sorted(list(real_icaos)) +  [f"{UNRESOLVED_PREFIX}{flight.icao}"]
         else:
             candidates[flight.flight_id] = [flight.icao]
     return candidates
@@ -178,8 +189,7 @@ def get_canidate_icaos(flights: list[Flight]):
 def process_graph(g: nx.DiGraph, flights: list[Flight]):
     model = cp_model.CpModel()
     y: dict[tuple[str,str], cp_model.IntVar] = {}
-    canidates_icaos_dict = get_canidate_icaos(flights)
-
+    canidates_icaos_dict = get_canidate_icaos(g)
     print(f"Number of nodes: {len(g.nodes)}")
     for flight in flights:
         assignment_vars = []
@@ -260,6 +270,8 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 
     model.maximize(sum(objective_terms))
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 30
+    print("start Solver")
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print_graph(g)
