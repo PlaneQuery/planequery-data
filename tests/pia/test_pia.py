@@ -39,13 +39,14 @@ class TestPIA(unittest.TestCase):
                 total += 1
                 if mapping_dict[flight_id] == real_icao:
                     correct += 1
+        print(mapping_dict)
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
     
     def test_real_flights_0(self):
         from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
         from pia.main import run_pia_algorithm
         print(len(flights_0))
-        mapping_dict,g = run_pia_algorithm(date(2025,5,14), date(2025,5,21))
+        mapping_dict,g = run_pia_algorithm(date(2025,5,15), date(2025,5,21))
         correct = 0
         total = 0
         for flight_id, real_icao in mapping_dict_0.items():
