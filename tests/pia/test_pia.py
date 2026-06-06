@@ -63,13 +63,24 @@ class TestPIAReal(unittest.TestCase):
         end_date = date(2025,5,21)
         mappings, g = run_pia_algorithm(start_date, end_date)
         check_value = None
-        for key, value in mappings.items():
+        keys = sorted(mappings.keys())
+        for key in keys:
             if key.startswith(a039a2_flights[0].icao):
-                if value is None:
+                print(key, mappings[key])
+        for node in keys:
+             if node.startswith(a039a2_flights[0].icao):
+                incoming = list(g.in_edges(node, data=True))
+                outgoing = list(g.out_edges(node, data=True))
+                all_edges = incoming + outgoing
+                print(node, all_edges)
+
+        for key in keys:
+            if key.startswith(a039a2_flights[0].icao):
+                value = mappings[key]
+                if check_value is None:
                     check_value = value
                 else:
                     self.assertEqual(value, check_value, "multiple icaos used")
-                print(key, value)
 
 
 if __name__ == "__main__":
