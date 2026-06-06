@@ -140,17 +140,17 @@ class AirportLookup:
             results.append(airport)
         return results
 
-    def get_Airport_from_airport_icao(self, airport_icao: str) -> Airport | None:
-        return self.ident_index.get(airport_icao)
+    def get_Airport_from_airport_ident(self, airport_ident: str) -> Airport | None:
+        return self.ident_index.get(airport_ident)
 
     def get_airport_coordinates(self, airport_ident: str) -> tuple[float, float] | None:
-        airport = self.get_Airport_from_airport_icao(airport_ident)
+        airport = self.get_Airport_from_airport_ident(airport_ident)
         if airport is None:
             return None
         return (airport.lat, airport.lon)
 
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
-        airport = self.get_Airport_from_airport_icao(airport_ident)
+        airport = self.get_Airport_from_airport_ident(airport_ident)
         return airport is not None and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
 
 def haversine(lat1, lon1, lat2, lon2):
