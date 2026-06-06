@@ -12,6 +12,8 @@ from data_engineering.flights.flight_type import flights_df_to_flights
 from pia.evaluation.main import visualize_graph
 from pia.resolver import resolve_pia_mappings
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
+from pia.main import run_pia_algorithm
+from pia.evaluation.real_flights_0 import a039a2_flights
 
 class TestPIA(unittest.TestCase):
     def test_flights_0_mapping(self):
@@ -44,7 +46,6 @@ class TestPIA(unittest.TestCase):
     
     def test_real_flights_0(self):
         from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
-        from pia.main import run_pia_algorithm
         print(len(flights_0))
         mapping_dict,g = run_pia_algorithm(date(2025,5,15), date(2025,5,21))
         correct = 0
@@ -55,5 +56,20 @@ class TestPIA(unittest.TestCase):
                 if mapping_dict[flight_id] == real_icao:
                     correct += 1
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
+
+    def test_real_flights_1(self):
+        start_date = date(2025,5,14)
+        end_date = date(2025,5,21)
+        mappings, g = run_pia_algorithm(start_date, end_date)
+        check_value = None
+        for key, value in mappings.items():
+            if key.startswith(a039a2_flights[0].icao):
+                if value is None:
+                    check_value = value
+                else:
+                    self.assertEqual(value, check_value, "multiple icaos used")
+                print(key, value)
+
+
 if __name__ == "__main__":
-    unittest.main(defaultTest="TestPIA.test_real_flights_0")
+    unittest.main(defaultTest="TestPIA.test_real_flights_1")

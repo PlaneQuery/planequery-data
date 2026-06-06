@@ -41,3 +41,57 @@ flights_0 = flights_df_to_flights(df_flights_0)
 for flight in flights_0:
     if flight.icao in elon_pia_icaos:
         mapping_dict_0[flight.flight_id] = "a835af"
+
+# these all must map to 1 icao. I don't know who's yet. 
+a039a2_flights = [
+    Flight(
+        icao="a039a2",
+        callsign="DCM2493",
+        takeoff_time=datetime(2025, 5, 14, 13, 16, 59, 420000),
+        landing_time=datetime(2025, 5, 14, 14, 52, 14, 460000),
+        takeoff_airport_ident="KJWN",
+        landing_airport_ident="KOKC",
+        ladd=False,
+        pia=True,
+    ),
+    Flight(
+        icao="a039a2",
+        callsign="DCM2493",
+        takeoff_time=datetime(2025, 5, 14, 21, 46, 34, 580000),
+        landing_time=datetime(2025, 5, 14, 22, 56, 23, 540000),
+        takeoff_airport_ident="KOKC",
+        landing_airport_ident="KBTR",
+        ladd=False,
+        pia=True,
+    ),
+    Flight(
+        icao="a039a2",
+        callsign="DCM2493",
+        takeoff_time=datetime(2025, 5, 14, 23, 29, 19, 780000),
+        landing_time=datetime(2025, 5, 14, 23, 49, 9, 970000),
+        takeoff_airport_ident="KBTR",
+        landing_airport_ident="KHSA",
+        ladd=False,
+        pia=True,
+    ),
+    Flight(
+        icao="a039a2",
+        callsign="DCM2493",
+        takeoff_time=datetime(2025, 5, 20, 13, 27, 47, 480000),
+        landing_time=datetime(2025, 5, 20, 14, 48, 33, 100000),
+        takeoff_airport_ident="KHSA",
+        landing_airport_ident="KFPR",
+        ladd=False,
+        pia=True,
+    ),
+    Flight(
+        icao="a039a2",
+        callsign="DCM2493",
+        takeoff_time=datetime(2025, 5, 20, 16, 16, 9, 320000),
+        landing_time=datetime(2025, 5, 20, 17, 55, 2, 620000),
+        takeoff_airport_ident="KFPR",
+        landing_airport_ident="5MS5",
+        ladd=False,
+        pia=True,
+    ), # THE LADD flight is after this. 
+]
