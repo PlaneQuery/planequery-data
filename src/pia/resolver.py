@@ -279,15 +279,28 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
     
 
     pia_mapping_dict = {}
+    def construct_results():
+        result_g = nx.DiGraph()
+        for node in g.nodes:
+            result_g.add_node(node, **g.nodes[node])
 
-    for flight in flights:
-        if flight.pia:
-            for mapped_icao in canidates_icaos_dict[flight.flight_id]:
-                if solver.Value(y[(flight.flight_id, mapped_icao)]) == 1:
-                    pia_mapping_dict[flight.flight_id] = mapped_icao
-                    break
-    
-    return pia_mapping_dict, g
+        for flight in flights:
+            if flight.pia:
+                for mapped_icao in canidates_icaos_dict[flight.flight_id]:
+                    if solver.Value(y[(flight.flight_id, mapped_icao)]) == 1:
+                        pia_mapping_dict[flight.flight_id] = mapped_icao
+                        result_g.nodes[flight.flight_id]["mapped_icao"] = mapped_icao
+                        break
+            else:
+                result_g.nodes[flight.flight_id]["mapped_icao"] = flight.icao
+
+        for (i, j, real_icao), var in x.items():
+            if solver.Value(var) == 1:
+                result_g.add_edge(i, j, mapped_icao=real_icao)
+        return result_g
+
+    result_g = construct_results()
+    return pia_mapping_dict, result_g
 def resolve_pia_mappings(flights: list[Flight]):
     print(f"Number of flights: {len(flights)}")
     g = build_graph(flights)
@@ -301,10 +314,12 @@ def resolve_pia_mappings(flights: list[Flight]):
     # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
     # compute_edge_scores_for_node(g)
     mappings_dict = {}
+    result_g = nx.DiGraph()
     for g in subgraphs:
         if not _get_pia_nodes(g):
             continue
         subgraph_flights = [g.nodes[node]["flight"] for node in g.nodes]
-        mappings, graph  = process_graph(g, subgraph_flights)
+        mappings, graph = process_graph(g, subgraph_flights)
         mappings_dict.update(mappings)
-    return mappings_dict, graph
+        result_g = nx.compose(result_g, graph)
+    return mappings_dict, result_g
