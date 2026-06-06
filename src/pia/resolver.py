@@ -38,6 +38,28 @@ def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
         # raise Exception("pia source nodes present")
         g.remove_nodes_from(pia_source_nodes)
 
+def path_between_icao_flights(flights: list[Flight], g: nx.DiGraph):
+    flights_by_icao = dict()
+    flights_by_icao = {}
+    for flight in flights:
+        flights_by_icao.setdefault(flight.icao, []).append(flight)
+
+    for icao in flights_by_icao:
+        flights_by_icao[icao].sort(key=lambda flight: flight.takeoff_time)
+    
+    missing_paths = []
+    for icao, icao_flights in flights_by_icao.items():
+
+        for prev_flight, next_flight in zip(icao_flights, icao_flights[1:]): # TODO: I can make this consider takeoff/landing airports smoosh together. I could compare airport size.
+            if (
+                prev_flight.flight_id not in g
+                or next_flight.flight_id not in g
+                or not nx.has_path(g, prev_flight.flight_id, next_flight.flight_id)
+            ):
+                missing_paths.append((icao, prev_flight, next_flight))
+    return missing_paths
+
+# There should also be path between same icao flights
 
 MAX_CONNECTION_GAP = timedelta(days=30)
 def build_graph(flights: list[Flight]) -> nx.DiGraph:
@@ -304,6 +326,9 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 def resolve_pia_mappings(flights: list[Flight]):
     print(f"Number of flights: {len(flights)}")
     g = build_graph(flights)
+    missing_flights = path_between_icao_flights(flights,g)
+    if missing_flights:
+        print("missing_flights: ", len(missing_flights))
     components = list(nx.weakly_connected_components(g))
     subgraphs = [
         g.subgraph(component_nodes)
