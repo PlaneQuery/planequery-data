@@ -43,7 +43,8 @@ class TestPIA(unittest.TestCase):
                     correct += 1
         print(mapping_dict)
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
-    
+
+class TestPIAReal(unittest.TestCase):
     def test_real_flights_0(self):
         from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
         print(len(flights_0))
