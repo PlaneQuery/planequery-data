@@ -48,7 +48,6 @@ def run_pia_algorithm(start_date: date, end_date: date):
     # df_flights = pl.concat([df_flights, df_flights_2]) # We still have pia source nodes present. 
     flights = flights_df_to_flights(df_flights)
     mappings,g = resolve_pia_mappings(flights)
-    print(mappings)
     return mappings,g
 
 if __name__ == "__main__":
