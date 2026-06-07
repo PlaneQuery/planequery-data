@@ -1,0 +1,10 @@
+/home/goodejonah/planequery-data/logs/planequery-daily.log {
+    size 100M
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0644 goodejonah goodejonah
+}

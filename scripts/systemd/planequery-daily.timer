@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for PlaneQuery daily work every 30 minutes after 02:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 02..23:00:00 UTC
+OnCalendar=*-*-* 02..23:30:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
