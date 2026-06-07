@@ -74,6 +74,8 @@ class AirportLookup:
         self._airports: list[Airport] = []
         self.iata_index: dict[str, Airport] = {} # TODO: Make this readonly.
         self.iata_to_ident_index: dict[str, str] = {}
+        self.gps_code_to_ident_index: dict[str, str] = {}
+        self.local_code_to_ident_index: dict[str, str] = {}
         self.ident_index: dict[str, Airport] = {}
         with open(OUTPUT_DIR / 'data' / 'interim' / 'airports.csv', 'r', encoding='utf-8') as airport_csv:
             airport_csv_reader = csv.DictReader(filter(lambda row: row[0] != '#', airport_csv))
@@ -87,6 +89,8 @@ class AirportLookup:
                     elevation_ft = airport["elevation_ft"]
                     elevation_ft = int(elevation_ft) if elevation_ft else 0
                     iata: str = airport['iata_code'] # can be '' empty
+                    gps_code: str = airport["gps_code"]
+                    local_code: str = airport["local_code"]
                     add_airport = Airport(
                         ident=ident,
                         iata=iata,
@@ -105,6 +109,8 @@ class AirportLookup:
                         self.iata_to_ident_index[iata] = ident
                     if ident:
                         self.ident_index[ident] = add_airport
+                    self._set_code_to_ident(self.gps_code_to_ident_index, gps_code, add_airport)
+                    self._set_code_to_ident(self.local_code_to_ident_index, local_code, add_airport)
             self._ball_tree = BallTree(np.array(self._coordinates_rad), metric='haversine')
             coords_rad = np.array(self._coordinates_rad)  # (N, 2) lat/lon in radians
             xyz = np.column_stack([
@@ -113,6 +119,25 @@ class AirportLookup:
                 np.sin(coords_rad[:, 0]),
             ])
             self._kd_tree = KDTree(xyz)
+
+    def _code_mapping_score(self, airport: Airport) -> tuple[bool, int]:
+        return (
+            airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES,
+            Airport_Size_Ranking[airport.type.name],
+        )
+
+    def _set_code_to_ident(self, index: dict[str, str], code: str, airport: Airport) -> None:
+        if not code:
+            return
+
+        existing_ident = index.get(code)
+        if existing_ident is None:
+            index[code] = airport.ident
+            return
+
+        existing_airport = self.ident_index.get(existing_ident)
+        if existing_airport is None or self._code_mapping_score(airport) > self._code_mapping_score(existing_airport):
+            index[code] = airport.ident
 
     def getClosestAirport(self, latitude, longitude) -> Airport:
         query_point_rad = np.radians((latitude, longitude))
