@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -122,13 +122,13 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     df.write_parquet(flights_output_path)
     return df
 
-def get_bts_flights_for_day(current_date: datetime, use_cache = True) -> pl.DataFrame:
-    path = OUTPUT_DIR / "data" / "flights" / "bts" / "v1" / f"year={current_date.year}" / f"month={current_date.month:02d}" / "bts_flights.parquet"
+def get_bts_flights_for_day(target_date: date, use_cache = True) -> pl.DataFrame: # TODO: raise error if a particular date has no data. 
+    path = OUTPUT_DIR / "data" / "flights" / "bts" / "v1" / f"year={target_date.year}" / f"month={target_date.month:02d}" / "bts_flights.parquet"
     if use_cache == False or not path.exists():
-        create_flights_from_bts(current_date.year, current_date.month)
+        create_flights_from_bts(target_date.year, target_date.month)
     df = pl.read_parquet(path)
     df = df.filter(
-        (pl.col("takeoff_time").dt.date() == current_date.date()) 
+        (pl.col("takeoff_time").dt.date() == target_date) 
         # & (pl.col("landing_time").dt.date() == current_date.date())
     )
     overlaps = (
@@ -138,7 +138,7 @@ def get_bts_flights_for_day(current_date: datetime, use_cache = True) -> pl.Data
     )
     .filter(pl.col("takeoff_time") < pl.col("prev_landing_time"))
     )
-    print(len(overlaps), "overlapping flights found for", current_date.date())
+    print(len(overlaps), "overlapping flights found for", target_date.date())
     if len(overlaps) > 0:
         df = df.filter(~pl.col("icao").is_in(overlaps["icao"].implode()))
     df = df.sort(["icao", "takeoff_time"])
