@@ -1,83 +1,88 @@
 import re
-from datetime import datetime, date, timedelta
-from typing import Iterable, Optional
+from datetime import datetime, date, timedelta, timezone
 
-# Reuse the existing cached downloader from the adsb module
 import urllib.request
-import urllib.error
 import time
-import os
 from data_engineering.utils import OUTPUT_DIR
 ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" /"adsblol"
 PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v5"
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
+LATEST_PROD_ADSB_DATE_CACHE = ADSBLOL_DIR / "LATEST_PROD_ADSB_DATE.txt"
+DEFAULT_LATEST_PROD_ADSB_DATE = date(2026, 6, 4)
+MIN_DAILY_ADSB_ROWS = 1_000
+RELEASE_TAG_RE = re.compile(
+    r"v\d{4}\.\d{2}\.\d{2}-planes-readsb-(?:prod|staging|mlatonly)-\d+(?:tmp)?"
+)
 
 
-def _cache_created_at(cache_path: str) -> float:
-    stat = os.stat(cache_path)
+def _cache_created_at(cache_path) -> float:
+    stat = cache_path.stat()
     return getattr(stat, "st_birthtime", stat.st_ctime)
 
 
 def _cache_is_fresh(cache_path: str) -> bool:
     return time.time() - _cache_created_at(cache_path) <= CACHE_MAX_AGE_SECONDS
-    
-def load_releases_txt(year: str) -> str | None:
+
+
+def _request_text(url: str) -> str:
+    with urllib.request.urlopen(url, timeout=30) as response:
+        return response.read().decode("utf-8")
+
+
+def _extract_release_tags_from_atom(content: str) -> list[str]:
+    return list(dict.fromkeys(RELEASE_TAG_RE.findall(content)))
+
+
+def _release_line_from_tag(year: str, tag: str) -> str:
+    base_url = f"https://github.com/adsblol/globe_history_{year}/releases/download/{tag}/{tag}.tar"
+    if "-mlatonly-" in tag:
+        return base_url
+    return f"{base_url}.aa,{base_url}.ab"
+
+
+def _merge_atom_releases_into_cache(year: str, cache_path: str, content: str) -> str:
+    atom_url = f"https://github.com/adsblol/globe_history_{year}/releases.atom"
+    missing_tags = [
+        tag
+        for tag in _extract_release_tags_from_atom(_request_text(atom_url))
+        if tag not in content
+    ]
+    if not missing_tags:
+        return content
+
+    new_content = "\n".join(_release_line_from_tag(year, tag) for tag in missing_tags)
+    updated_content = f"{new_content}\n{content.rstrip()}\n"
+
+    with cache_path.open("w", encoding="utf-8") as f:
+        f.write(updated_content)
+    print(f"[CACHE] Added {len(missing_tags)} releases from releases.atom to ALL_RELEASES_{year}.txt")
+    return updated_content
+
+
+def load_releases_txt(year: str) -> str:
     """Return the content of ALL_RELEASES.txt for the given year.
 
-    Checks a local cache at {OUTPUT_DIR}/ALL_RELEASES_{year}.txt first.
-    If absent or older than 12 hours, downloads from GitHub and saves to the cache.
+    Refreshes a local cache at {OUTPUT_DIR}/ALL_RELEASES_{year}.txt and
+    augments it with releases.atom entries that are newer than ALL_RELEASES.txt.
     """
-    cache_path = os.path.join(ADSBLOL_DIR, f"ALL_RELEASES_{year}.txt")
+    ADSBLOL_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = ADSBLOL_DIR / f"ALL_RELEASES_{year}.txt"
 
-    if os.path.exists(cache_path) and _cache_is_fresh(cache_path):
+    cache_exists = cache_path.exists()
+    if cache_exists and _cache_is_fresh(cache_path):
         print(f"[CACHE] Using cached ALL_RELEASES_{year}.txt")
-        with open(cache_path, "r", encoding="utf-8") as f:
-            return f.read()
-    elif os.path.exists(cache_path):
-        print(f"[CACHE] Cached ALL_RELEASES_{year}.txt is older than 12 hours; redownloading")
+        with cache_path.open("r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        if cache_exists:
+            print(f"[CACHE] Cached ALL_RELEASES_{year}.txt is older than 12 hours; redownloading")
+        txt_url = f"https://raw.githubusercontent.com/adsblol/globe_history_{year}/refs/heads/main/ALL_RELEASES.txt"
+        content = _request_text(txt_url)
+        with cache_path.open("w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Downloaded and cached ALL_RELEASES_{year}.txt")
 
-    txt_url = f"https://raw.githubusercontent.com/adsblol/globe_history_{year}/refs/heads/main/ALL_RELEASES.txt"
-    max_retries = 10
-    retry_delay = 60 * 5
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(txt_url)
-            with urllib.request.urlopen(req, timeout=30) as response:
-                if response.status == 200:
-                    content = response.read().decode('utf-8')
-                    with open(cache_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                    print(f"Downloaded and cached ALL_RELEASES_{year}.txt")
-                    return content
-                else:
-                    print(f"Failed to fetch ALL_RELEASES.txt (attempt {attempt}/{max_retries}): {response.status}")
-                    if attempt < max_retries:
-                        print(f"Waiting {retry_delay} seconds before retry")
-                        time.sleep(retry_delay)
-                    else:
-                        print(f"Giving up after {max_retries} attempts")
-                        return None
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                print(f"ALL_RELEASES.txt not found for year {year} repo")
-                return None
-            print(f"HTTP error (attempt {attempt}/{max_retries}): {e.code} {e.reason}")
-            if attempt < max_retries:
-                print(f"Waiting {retry_delay} seconds before retry")
-                time.sleep(retry_delay)
-            else:
-                return None
-        except Exception as e:
-            print(f"Request exception (attempt {attempt}/{max_retries}): {e}")
-            if attempt < max_retries:
-                print(f"Waiting {retry_delay} seconds before retry")
-                time.sleep(retry_delay)
-            else:
-                return None
-
-    return None
-
+    return _merge_atom_releases_into_cache(year, cache_path, content)
 
 
 def _extract_prod_version_dates_from_text(content: str) -> set[str]:
@@ -95,7 +100,7 @@ def _extract_prod_version_dates_from_text(content: str) -> set[str]:
     return versions
 
 
-def _parse_version_to_date(v: str) -> Optional[date]:
+def _parse_version_to_date(v: str) -> date | None:
     try:
         return datetime.strptime(v.lstrip("v"), "%Y.%m.%d").date()
     except Exception:
@@ -125,24 +130,66 @@ def get_latest_prod_release_date(latest_date: date) -> list[date]:
     found_dates = list(found_dates)
     found_dates.sort()
     return found_dates
+
+
+def _read_latest_table_date_cache() -> date | None:
+    if not LATEST_PROD_ADSB_DATE_CACHE.exists():
+        return None
+    return datetime.strptime(
+        LATEST_PROD_ADSB_DATE_CACHE.read_text(encoding="utf-8").strip(),
+        "%Y-%m-%d",
+    ).date()
+
+
+def _write_latest_table_date_cache(latest_date: date) -> None:
+    ADSBLOL_DIR.mkdir(parents=True, exist_ok=True)
+    LATEST_PROD_ADSB_DATE_CACHE.write_text(f"{latest_date:%Y-%m-%d}\n", encoding="utf-8")
+
+
+def _prod_adsb_row_count_for_day(spark, day: date) -> int:
+    next_day = day + timedelta(days=1)
+    sql = f"""
+    SELECT COUNT(*) AS row_count
+    FROM glue.planequery_lake_prod.adsb_messages
+    WHERE time >= TIMESTAMP '{day:%Y-%m-%d} 00:00:00'
+      AND time < TIMESTAMP '{next_day:%Y-%m-%d} 00:00:00'
+    """
+    return spark.sql(sql).collect()[0]["row_count"]
+
+
 def latest_table_data_date():
-    sql = '''
-    SELECT max(time) AS latest_time
-    FROM glue.planequery_lake_dev.adsb_messages
-    WHERE time > TIMESTAMP '2026-05-03 00:00:00'
-    '''
     from data_engineering.spark import get_spark_session
     spark = get_spark_session(app_name="check_adsblol_new_release")
     try:
-        val: datetime = spark.sql(sql).collect()[0]["latest_time"]
+        latest_date = _read_latest_table_date_cache()
+        if latest_date is None:
+            latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
+            _write_latest_table_date_cache(latest_date)
+            print("Seeded latest prod ADS-B date cache with", latest_date)
+        elif latest_date < DEFAULT_LATEST_PROD_ADSB_DATE:
+            print(
+                "Cached latest prod ADS-B date is",
+                latest_date,
+                "which is older than default",
+                DEFAULT_LATEST_PROD_ADSB_DATE,
+            )
+            latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
+            _write_latest_table_date_cache(latest_date)
+        else:
+            print("Cached latest prod ADS-B date is", latest_date)
+
+        probe_date = latest_date + timedelta(days=1)
+        while probe_date < datetime.now(timezone.utc).date():
+            row_count = _prod_adsb_row_count_for_day(spark, probe_date)
+            print(f"Rows in prod ADS-B table on {probe_date}: {row_count}")
+            if row_count <= MIN_DAILY_ADSB_ROWS:
+                break
+            latest_date = probe_date
+            _write_latest_table_date_cache(latest_date)
+            probe_date += timedelta(days=1)
     finally:
         spark.stop()
 
-    if val.hour < 1:
-        print("There is a new release with data up to", val)
-        latest_date = date(val.year, val.month, val.day) - timedelta(days=1)
-    else:
-        latest_date = date(val.year, val.month, val.day)
     print("Latest data in prod is from", latest_date)
     return latest_date
 
