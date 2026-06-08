@@ -45,6 +45,7 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
         test_dates = [test_dates]
 
     rows = []
+    adsb_by_date: dict[date, pl.DataFrame] = {}
     for src in test_src:
         get_source_flights = source_flights_reader(src)
         for gold in gold_src:
@@ -53,7 +54,9 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                 df_source = get_source_flights(test_date)
                 df_gold = get_gold_flights(test_date)
                 if not use_all_icaos:
-                    df_adsb = read_adsb(test_date)
+                    if test_date not in adsb_by_date:
+                        adsb_by_date[test_date] = read_adsb(test_date)
+                    df_adsb = adsb_by_date[test_date]
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
                     df_source = df_source.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
                 _, stats = flights_df_comparison(df_source, df_gold)
