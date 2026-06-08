@@ -138,7 +138,7 @@ def get_bts_flights_for_day(target_date: date, use_cache = True) -> pl.DataFrame
     )
     .filter(pl.col("takeoff_time") < pl.col("prev_landing_time"))
     )
-    print(len(overlaps), "overlapping flights found for", target_date.date())
+    print(len(overlaps), "overlapping flights found for", target_date)
     if len(overlaps) > 0:
         df = df.filter(~pl.col("icao").is_in(overlaps["icao"].implode()))
     df = df.sort(["icao", "takeoff_time"])
