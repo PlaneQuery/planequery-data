@@ -38,6 +38,8 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
     if gold_src == "sfdps":
         get_gold_flights = get_sfdps_flights_day # we may need some logic for perfect icao matching. 
         # flights_match_adsb
+    elif gold_src == "bts":
+        get_gold_flights = get_bts_flights_for_day
     # how to deal with takeoff_time and landing_time
     rows = []
     for test_date in test_dates: # actually we may have to do things with matching the takeoff_time and landing_time
@@ -57,4 +59,4 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
 
 
 if __name__ == "__main__":
-    main("adsbx", "sfdps", date(2026,3,1))
+    main("adsbx", "bts", date(2026,3,1))
