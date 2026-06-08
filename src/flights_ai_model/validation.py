@@ -16,7 +16,7 @@ def flights_df_comparison(
     """Compare two flights DataFrames using ICAO and time-proximity matching.
 
     For each ICAO present in both DataFrames, finds pairs of flights where both
-    takeoff_time and landing_time are within 30 minutes of each other.
+    takeoff_time and landing_time are within 30 minutes of each other. # TODO: maybe this can be slightly diffrent.
     Each row can only be matched once (greedy bipartite matching sorted by
     smallest combined time difference first).
 
@@ -33,8 +33,6 @@ def flights_df_comparison(
 
     # Use all rows from both DataFrames as candidates.
     common_icaos = set(df1[left_on].to_list()) & set(df2[right_on].to_list())
-    df1 = df1
-    df2 = df2
 
 
     # Inner join on ICAO, filter to pairs within ±30 min on both times.
