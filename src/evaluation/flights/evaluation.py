@@ -32,6 +32,8 @@ def source_flights_reader(src: str):
         return get_sfdps_flights_day
     if src == "bts":
         return get_bts_flights_for_day
+    if src =="opensky":
+        return read_opensky_flights
     raise ValueError(f"Unknown flight source: {src}")
 
 def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date | list[date], use_all_icaos = False):
