@@ -30,7 +30,7 @@ def closest_time_row_idx(adsb_rows, target_time, lte=True):
 
     return idx
 
-def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
+def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
@@ -39,14 +39,6 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         _AdsbRow(time=row["time"], lat=row["lat"], lon=row["lon"])
         for row in df_adsb.select(["time", "lat", "lon"]).iter_rows(named=True)
     ]
-
-    def get_airport_coords(ident: str) -> tuple[float, float] | None:
-        return airport_lookup.get_airport_coordinates(ident)
-
-    def is_near_airport(row: _AdsbRow, airport_coords: tuple[float, float]) -> bool:
-        distance = haversine(row.lat, row.lon, airport_coords[0], airport_coords[1])
-        return distance <= MAX_AIRPORT_DISTANCE_KM
-
     assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False
 
     # check that takeoff_airport idents match landing airport idents
@@ -64,26 +56,49 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
 
         takeoff_row_idx = closest_time_row_idx(adsb_rows, flight.takeoff_time, False)
         assert takeoff_row_idx is not None
+    
+        airport_lat = adsb_rows[takeoff_row_idx].lat
+        airport_lon = adsb_rows[takeoff_row_idx].lon
 
-        airport_coords = get_airport_coords(flight.takeoff_airport_ident)
-        assert airport_coords is not None
-        if is_near_airport(adsb_rows[takeoff_row_idx], airport_coords) == False:
-            return False
         if previous_flight:
             landing_row = adsb_rows[landing_row_idx]
-            if is_near_airport(landing_row, airport_coords) == False:
-                return False
-
+            airport_lat = landing_row.lat
+            airport_lon = landing_row.lon
 
         in_between_rows = adsb_rows[landing_row_idx:takeoff_row_idx]
         for row in in_between_rows:
-            distance = haversine(row.lat, row.lon, *airport_coords)
+            distance = haversine(row.lat, row.lon, airport_lat, airport_lon)
             if distance > MAX_AIRPORT_DISTANCE_KM:
                 return False
 
         previous_flight =  flight
+
+    last_flight = flights[-1]
+    landing_row_idx = closest_time_row_idx(adsb_rows, last_flight.landing_time, True)
+    if landing_row_idx is None:
+        return False
+
+    landing_row = adsb_rows[landing_row_idx]
+    airport_lat = landing_row.lat
+    airport_lon = landing_row.lon
+
+    for row in adsb_rows[landing_row_idx:]:
+        distance = haversine(row.lat, row.lon, airport_lat, airport_lon)
+        if distance > MAX_AIRPORT_DISTANCE_KM:
+            return False
     return True
     # 1. check that all takeoff_landing airport idents equal each other
+
+def get_matching_icaos_in_flights(df_flights_full: pl.DataFrame, df_adsb_full: pl.DataFrame):
+    
+    icaos = set()
+    for key, df_flights in df_flights_full.group_by("icao"):
+        icao = key[0]
+        df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
+        if flights_match_adsb(df_flights, df_adsb):
+            icaos.add(icao)
+    df = df_flights_full.filter(pl.col("icao").is_in(icaos))
+    return df
 
 
     
