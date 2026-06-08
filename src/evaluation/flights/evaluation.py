@@ -3,8 +3,9 @@ import os
 from datetime import date
 from pathlib import Path
 
+from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from flights.flights_match_adsb import flights_match_adsb
+from flights.flights_match_adsb import flights_match_adsb, get_matching_icaos_in_flights
 
 os.environ.setdefault("OUTPUT_DIR", str(Path.cwd()))
 
@@ -34,7 +35,7 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
     if test_src == "adsbx":
         get_source_flights = get_adsbx_flights_for_day
 
-    if gold_src == "bts":
+    if gold_src == "sfdps":
         get_gold_flights = get_sfdps_flights_day # we may need some logic for perfect icao matching. 
         # flights_match_adsb
     # how to deal with takeoff_time and landing_time
@@ -42,6 +43,8 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
     for test_date in test_dates: # actually we may have to do things with matching the takeoff_time and landing_time
         df_source = get_source_flights(test_date)
         df_gold = get_gold_flights(test_date)
+        df_adsb = read_adsb(test_date)
+        df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
         _, stats = flights_df_comparison(df_source, df_gold)
         rows.append({"test_date": test_date.isoformat(), "test_src": test_src, "gold_src": gold_src, **stats})
         print(f"Stats for {test_src}:{gold_src}: {stats}")
@@ -53,4 +56,4 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
 
 
 if __name__ == "__main__":
-    main("adsbx", "bts", date(2026,3,1))
+    main("adsbx", "sfdps", date(2026,3,1))
