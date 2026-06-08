@@ -25,7 +25,7 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
         self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
-
+    # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
 if __name__ == "__main__":
     unittest.main()
 
