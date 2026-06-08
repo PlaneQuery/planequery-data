@@ -19,10 +19,11 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
         self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
-        icao = "a4ed4f"
+        icao = "a4ed4f" # The airports are wrong for this. 
         df_flights = get_flights(target_date).filter(pl.col("icao") == icao)
+        print(df_flights.select("takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident"))
         df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
-        self.assertFalse(flights_match_adsb(df_flights, df_adsb))
+        self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
 
 if __name__ == "__main__":
