@@ -50,12 +50,14 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
             if previous_flight.landing_airport_ident != flight.takeoff_airport_ident:
                 return False
             landing_row_idx = closest_time_row_idx(adsb_rows, previous_flight.landing_time, True)
-            assert landing_row_idx is not None
+            if landing_row_idx is None:
+                return False
         else:
             landing_row_idx = 0
 
         takeoff_row_idx = closest_time_row_idx(adsb_rows, flight.takeoff_time, False)
-        assert takeoff_row_idx is not None
+        if takeoff_row_idx is None:
+            return False
     
         airport_lat = adsb_rows[takeoff_row_idx].lat
         airport_lon = adsb_rows[takeoff_row_idx].lon
@@ -90,7 +92,7 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     # 1. check that all takeoff_landing airport idents equal each other
 
 def get_matching_icaos_in_flights(df_flights_full: pl.DataFrame, df_adsb_full: pl.DataFrame):
-    
+    # TODO: this could be faster if you only load the icaos you need for df_adsb instead of full thing. 
     icaos = set()
     for key, df_flights in df_flights_full.group_by("icao"):
         icao = key[0]
