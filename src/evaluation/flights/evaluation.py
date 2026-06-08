@@ -1,34 +1,30 @@
 import argparse
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 from flights.flights_match_adsb import flights_match_adsb, get_matching_icaos_in_flights
-
-os.environ.setdefault("OUTPUT_DIR", str(Path.cwd()))
+from utils import current_commit_hash
 
 import polars as pl
-
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
-from data_engineering.flights.flight_type import get_flights
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from flights_ai_model.validation import flights_df_comparison
-
-DEFAULT_TARGET_DATE = date(2026, 3, 1)
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
-
+from data_engineering.utils import OUTPUT_DIR
 
 def read_opensky_flights(target_date: date) -> pl.DataFrame:
     return pl.read_parquet(f"/Volumes/T2-SSD/planequery/data/flights/opensky/v1/{target_date:%Y-%m-%d}.parquet")
 
-
 def default_stats_path(target_date: date) -> Path:
-    return OUTPUT_DIR / "data" / "experiments" / "comparison" / f"{target_date:%Y-%m-%d}_stats.csv"
-
+    run_time = datetime.now().strftime("%H-%M")
+    commit_hash = current_commit_hash()
+    filename = f"{target_date:%Y-%m-%d}_{run_time}_{commit_hash}_flights_evaluation.csv"
+    return OUTPUT_DIR / "data" / "experiments" / "comparison" / filename
 
 def main(test_src: str, gold_src: str, test_dates: date | list[date]):
+    # TODO: we can do like a for zip/combinations of test_src, gold_src. They can be optionally lists. # TODO: add to utils something to get current commit short hash
     if isinstance(test_dates, date):
         test_dates = [test_dates]
     
