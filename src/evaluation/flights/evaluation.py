@@ -45,6 +45,7 @@ def main(test_src: str, gold_src: str, test_dates: date | list[date]):
         df_gold = get_gold_flights(test_date)
         df_adsb = read_adsb(test_date)
         df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
+        df_source = df_source.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
         _, stats = flights_df_comparison(df_source, df_gold)
         rows.append({"test_date": test_date.isoformat(), "test_src": test_src, "gold_src": gold_src, **stats})
         print(f"Stats for {test_src}:{gold_src}: {stats}")
