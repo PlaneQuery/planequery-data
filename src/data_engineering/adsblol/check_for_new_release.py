@@ -146,6 +146,26 @@ def _write_latest_table_date_cache(latest_date: date) -> None:
     LATEST_PROD_ADSB_DATE_CACHE.write_text(f"{latest_date:%Y-%m-%d}\n", encoding="utf-8")
 
 
+def _cached_latest_table_date_or_default() -> date:
+    latest_date = _read_latest_table_date_cache()
+    if latest_date is None:
+        latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
+        _write_latest_table_date_cache(latest_date)
+        print("Seeded latest prod ADS-B date cache with", latest_date)
+    elif latest_date < DEFAULT_LATEST_PROD_ADSB_DATE:
+        print(
+            "Cached latest prod ADS-B date is",
+            latest_date,
+            "which is older than default",
+            DEFAULT_LATEST_PROD_ADSB_DATE,
+        )
+        latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
+        _write_latest_table_date_cache(latest_date)
+    else:
+        print("Cached latest prod ADS-B date is", latest_date)
+    return latest_date
+
+
 def _prod_adsb_row_count_for_day(spark, day: date) -> int:
     next_day = day + timedelta(days=1)
     sql = f"""
@@ -157,28 +177,17 @@ def _prod_adsb_row_count_for_day(spark, day: date) -> int:
     return spark.sql(sql).collect()[0]["row_count"]
 
 
-def latest_table_data_date():
+def latest_table_data_date(latest_date: date | None = None):
+    if latest_date is None:
+        latest_date = _cached_latest_table_date_or_default()
+    probe_date = latest_date + timedelta(days=1)
+    if probe_date >= datetime.now(timezone.utc).date():
+        print("Latest data in prod is from", latest_date)
+        return latest_date
+
     from data_engineering.spark import get_spark_session
     spark = get_spark_session(app_name="check_adsblol_new_release")
     try:
-        latest_date = _read_latest_table_date_cache()
-        if latest_date is None:
-            latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
-            _write_latest_table_date_cache(latest_date)
-            print("Seeded latest prod ADS-B date cache with", latest_date)
-        elif latest_date < DEFAULT_LATEST_PROD_ADSB_DATE:
-            print(
-                "Cached latest prod ADS-B date is",
-                latest_date,
-                "which is older than default",
-                DEFAULT_LATEST_PROD_ADSB_DATE,
-            )
-            latest_date = DEFAULT_LATEST_PROD_ADSB_DATE
-            _write_latest_table_date_cache(latest_date)
-        else:
-            print("Cached latest prod ADS-B date is", latest_date)
-
-        probe_date = latest_date + timedelta(days=1)
         while probe_date < datetime.now(timezone.utc).date():
             row_count = _prod_adsb_row_count_for_day(spark, probe_date)
             print(f"Rows in prod ADS-B table on {probe_date}: {row_count}")
@@ -194,11 +203,17 @@ def latest_table_data_date():
     return latest_date
 
 def get_adsblol_releases_to_process():
-    latest_table_date = latest_table_data_date()
-    release_dates = get_latest_prod_release_date(latest_table_date)
-    return release_dates
+    cached_latest_table_date = _cached_latest_table_date_or_default()
+    release_dates = get_latest_prod_release_date(cached_latest_table_date)
+    if not release_dates:
+        print("No prod adsb.lol releases newer than cached latest prod ADS-B date.")
+        return []
+
+    latest_table_date = latest_table_data_date(cached_latest_table_date)
+    return [day for day in release_dates if day > latest_table_date]
+
+
 if __name__ == "__main__":
-    latest_table_date = latest_table_data_date()
-    latest = get_latest_prod_release_date(latest_table_date)
+    latest = get_adsblol_releases_to_process()
     print(latest)
 # we could return dates that are past. 
