@@ -67,6 +67,19 @@ def source_flights_reader(src: str):
         return read_opensky_flights
     raise ValueError(f"Unknown flight source: {src}")
 
+def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
+    metadata_cols = {"test_date", "test_src", "gold_src", "use_all_icaos", "filter_rotorcraft"}
+    stats_cols = [col for col in df_stats.columns if col not in metadata_cols]
+    df_stats = df_stats.with_columns(pl.col(stats_cols).cast(pl.Float64))
+    df_avg = (
+        df_stats
+        .group_by(["test_src", "gold_src", "use_all_icaos", "filter_rotorcraft"])
+        .agg([pl.col(col).mean().alias(col) for col in stats_cols])
+        .with_columns(pl.lit("average").alias("test_date"))
+        .select(df_stats.columns)
+    )
+    return pl.concat([df_stats, df_avg])
+
 def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date | list[date], use_all_icaos = False, filter_rotorcraft = False):
     if isinstance(test_src, str):
         test_src = [test_src]
@@ -99,7 +112,10 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
 
     stats_output = default_stats_path()
     stats_output.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame(rows).write_csv(stats_output)
+    df_stats = pl.DataFrame(rows)
+    if len(test_dates) > 1:
+        df_stats = add_average_rows(df_stats)
+    df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
 
 
