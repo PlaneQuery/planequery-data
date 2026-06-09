@@ -3,7 +3,7 @@ import math
 import os
 import random
 import subprocess
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -46,7 +46,7 @@ def train(
     lr: float = 1e-3,
     hidden_dim: int = 128,
     num_layers: int = 2,
-    val_date: datetime | None = None,
+    val_date: date | None = None,
 ):
     device = get_device()
     print(f"Using device: {device}")
@@ -132,7 +132,7 @@ def train(
         model.eval()
         # do a brief inference to get actual performance on flights. 
         df_inferernce_flights = inference(df_val_features, model)
-        df_flights_output, stats = flights_df_comparison(df_inferernce_flights, df_gold_flights)
+        df_flights_output, stats = flights_df_comparison(df_inferernce_flights, df_gold_flights) # TODO: I should not be wasting cuda time on evalauation. 
         f1 = stats["f1"]
         recall = stats["recall"]
         precision = stats["precision"]
@@ -171,5 +171,7 @@ if __name__ == "__main__":
         lr=args.lr,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
-        val_date=datetime.strptime(args.val_date, "%Y-%m-%d") if args.val_date else None,
+        val_date=datetime.strptime(args.val_date, "%Y-%m-%d").date() if args.val_date else None,
     )
+
+# python src/flights_ai_model/train.py --start-date 2026-03-02 --num-days 3 --val-date 2026-03-01
