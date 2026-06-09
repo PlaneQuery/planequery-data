@@ -375,8 +375,7 @@ def process_day(
     for p in part_paths:
         p.unlink()
 
-    result = pl.read_parquet(out_path)
-    print(f"[{d}] Wrote {len(result)} rows → {out_path}  ({result.estimated_size('mb'):.1f} MB)")
+    print(f"[{d}] Wrote {out_path}")
 
 
 if __name__ == "__main__":
