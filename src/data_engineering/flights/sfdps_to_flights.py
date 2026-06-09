@@ -227,7 +227,7 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_adsb_map = _adsb_callsign_segments(current_day, callsigns)
     matched_callsigns = set(df_adsb_map["callsign"].unique().to_list())
     missing_callsign_count = len(set(callsigns) - matched_callsigns)
-    print(f"SFDPS callsigns with no ADS-B match: {missing_callsign_count}/{len(callsigns)}")
+    print(f"SFDPS callsigns with no ADS-B match: {missing_callsign_count}/{len(callsigns)}") # These get dropped. I shoudl be investigating. 
     _30min = pl.duration(minutes=30)
 
     df_sfdps_flights_1 = ( # TODO: could fill in registration too from icao. 
