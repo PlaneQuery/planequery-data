@@ -205,3 +205,19 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+'''
+sudo install -m 0644 scripts/systemd/planequery-daily.service /etc/systemd/system/planequery-daily.service
+sudo install -m 0644 scripts/systemd/planequery-daily.timer /etc/systemd/system/planequery-daily.timer
+sudo install -m 0644 scripts/systemd/planequery-daily.logrotate /etc/logrotate.d/planequery-daily
+
+sudo systemd-analyze verify /etc/systemd/system/planequery-daily.service /etc/systemd/system/planequery-daily.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now planequery-daily.timer
+sudo systemctl restart planequery-daily.timer
+'''
+
+'''
+sudo systemctl daemon-reload
+sudo systemctl restart planequery-daily.timer
+'''
