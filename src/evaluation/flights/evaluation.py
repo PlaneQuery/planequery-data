@@ -118,23 +118,54 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
     df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
 
-test_dates = [
+TEST_DATES_2 = [
     date(2026,3,1),
     date(2026,6,1)
+]
+
+TEST_DATES_4 = [
+    date(2026, 3, 1),   # Sunday
+    date(2026, 3, 9),   # Monday
+    date(2026, 4, 1),   # Wednesday
+    date(2026, 4, 11),  # Saturday
+]
+
+TEST_DATES_8 = [
+    date(2026, 3, 1),   # Sunday
+    date(2026, 3, 9),   # Monday
+    date(2026, 3, 18),  # Wednesday
+    date(2026, 3, 28),  # Saturday
+
+    date(2026, 4, 1),   # Wednesday
+    date(2026, 4, 6),   # Monday
+    date(2026, 4, 11),  # Saturday
+    date(2026, 4, 19),  # Sunday
 ]
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-src", nargs="+", default=["adsbx"])
     parser.add_argument("--gold-src", nargs="+", default=["bts"])
-    parser.add_argument("--date", nargs="+", default=[DEFAULT_TARGET_DATE.isoformat()])
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument("--date", nargs="+")
+    test_date_sets = {
+        name: value
+        for name, value in globals().items()
+        if name.startswith("TEST_DATES_")
+    }
+    for name, value in sorted(test_date_sets.items()):
+        date_group.add_argument(f"--{name}", action="store_const", const=value, dest="test_dates")
     parser.add_argument("--use_all_icaos", action="store_true", default=False)
     parser.add_argument("--filter_rotorcraft", action="store_true", default=False)
     args = parser.parse_args()
 
+    test_dates = args.test_dates
+    if test_dates is None:
+        test_dates = [date.fromisoformat(d) for d in (args.date or [DEFAULT_TARGET_DATE.isoformat()])]
+
     main(
         test_src=args.test_src,
         gold_src=args.gold_src,
-        test_dates=[date.fromisoformat(d) for d in args.date],
+        test_dates=test_dates,
         use_all_icaos=args.use_all_icaos,
         filter_rotorcraft=args.filter_rotorcraft,
     )
