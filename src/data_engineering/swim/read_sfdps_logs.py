@@ -4,6 +4,9 @@ from lxml import etree
 import polars as pl
 from data_engineering.swim.load_xml_schema import load_nas_schema
 import gzip
+import argparse
+from datetime import date, timedelta
+from data_engineering.swim.swim_logs_download import download_swim_logs
 
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./")) / "data"
 
@@ -332,7 +335,7 @@ OUTPUT_PARQUET_DIR = OUTPUT_DIR / "intermediate"
 
 
 def process_day(
-    d: "date",
+    d: date,
     raw_dir: Path = RAW_DIR,
     output_dir: Path = OUTPUT_PARQUET_DIR,
 ) -> None:
@@ -340,13 +343,12 @@ def process_day(
     prefix = f"sfdps-logs/year={d.year}/month={d.month:02d}/day={d.day:02d}"
     day_dir = raw_dir / prefix
     if not day_dir.exists():
-        print(f"[{d}] Directory not found, skipping: {day_dir}")
+        download_swim_logs("sfdps", d, d+timedelta(days=1))
         return
 
     gz_files = sorted(p for p in day_dir.iterdir() if p.is_file() and p.suffix in (".gz", ".gzip"))
     if not gz_files:
-        print(f"[{d}] No .gz files found in {day_dir}, skipping.")
-        return
+        raise Exception(f"[{d}] No .gz files found in {day_dir}, skipping.")
 
     print(f"[{d}] Processing {len(gz_files)} file(s)...")
     out_path = output_dir / prefix / f"sfdps-logs_{d.year}_{d.month:02d}_{d.day:02d}.parquet"
@@ -379,9 +381,6 @@ def process_day(
 
 
 if __name__ == "__main__":
-    import argparse
-    from datetime import date, timedelta
-
     parser = argparse.ArgumentParser(description="Process SFDPS logs day by day into parquet.")
     parser.add_argument("start_date", type=date.fromisoformat, help="Start date inclusive (YYYY-MM-DD).")
     parser.add_argument("end_date", type=date.fromisoformat, help="End date exclusive (YYYY-MM-DD).")
