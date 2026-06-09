@@ -118,7 +118,10 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
     df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
 
-
+test_dates = [
+    date(2026,3,1),
+    date(2026,6,1)
+]
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-src", nargs="+", default=["adsbx"])

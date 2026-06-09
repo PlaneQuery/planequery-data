@@ -7,6 +7,8 @@ from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.adsb.read_adsb import scan_adsb
 from data_engineering.openairframes.read import ICAO_INFO_COLUMNS, scan_latest_icao_info_for_join
+from data_engineering.swim.utils import MISSING_SFDPS_DAYS
+from data_engineering.utils import OUTPUT_DIR
 
 def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
     #Maybe have some error if takeoff_time update is major change. 
@@ -258,7 +260,6 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_flights = pl.concat([df_sfdps_flights_0, df_sfdps_flights_1])
     return add_openairframes_icao_info(df_flights)
 
-from data_engineering.utils import OUTPUT_DIR
 def sfdps_flights_parquet_path(target_date: date) -> Path:
     return OUTPUT_DIR/ "data" / "flights" / "sfdps" / "v1" / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
 
@@ -269,12 +270,15 @@ def create_sfdps_flights_day(target_date: date):
     df_flights = sfdps_flights_derive_icao(df_flights, target_date)
     df_flights = df_flights.sort(["icao", "takeoff_time"])
     return df_flights
-def get_sfdps_flights_day(current_day: date, use_cache = True) -> pl.DataFrame:
+
+def get_sfdps_flights_day(target_date: date, use_cache = True) -> pl.DataFrame:
+    if target_date in MISSING_SFDPS_DAYS or target_date < date(2026,1,1):
+        raise Exception(f"trying to load missing data")
     # do caching logic
-    parquet_path = sfdps_flights_parquet_path(current_day)
+    parquet_path = sfdps_flights_parquet_path(target_date)
     if use_cache and parquet_path.exists():
         return pl.read_parquet(parquet_path)
-    df_flights = create_sfdps_flights_day(current_day)
+    df_flights = create_sfdps_flights_day(target_date)
     os.makedirs(parquet_path.parent, exist_ok=True)
     df_flights.write_parquet(parquet_path)
     return df_flights
