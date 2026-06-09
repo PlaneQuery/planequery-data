@@ -11,11 +11,12 @@ from datetime import timedelta
 from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb, exclude_invalid_icaos, read_icaos_from_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import create_flights_from_bts
 from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
+from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import is_ecs, s3_key_exists
 from data_engineering.utils import OUTPUT_DIR, S3_BUCKET
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
 INFERENCE_FEATURES_VERSION = "v2"
-TRAINING_FEATURES_VERSION = "v16"
+TRAINING_FEATURES_VERSION = "v17"
 FEATURES_DIR = OUTPUT_DIR / "data/features"
 TRAINING_FEATURES_DIR = FEATURES_DIR / "training" / TRAINING_FEATURES_VERSION
 INFERENCE_FEATURES_DIR = FEATURES_DIR / "inference" / INFERENCE_FEATURES_VERSION
@@ -134,7 +135,7 @@ def create_training_features_for_day(current_date: date) -> pl.DataFrame:
     if cache_path.exists():
         return pl.read_parquet(cache_path)
     df_adsb = read_adsb(current_date)
-    df_flights = create_flights_from_bts(current_date.year, current_date.month)
+    df_flights = get_sfdps_flights_day(current_date)
     df_flights = df_flights.filter(
         (pl.col("takeoff_time").dt.date() == current_date) &
         (pl.col("landing_time").dt.date() == current_date)
