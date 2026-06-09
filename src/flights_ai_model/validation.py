@@ -1,5 +1,5 @@
 import polars as pl
-from datetime import datetime
+from datetime import date, datetime
 import math
 from data_engineering.adsb.read_adsb import read_adsb
 MATCHED_DURATION = pl.duration(minutes=30)
@@ -178,7 +178,7 @@ def flights_df_comparison(
     }
     return df_all, stats
 
-def process_icao(df_bts_icao: pl.DataFrame, df_adsb_icao: pl.DataFrame) -> bool | None:
+def process_icao(df_bts_icao: pl.DataFrame, df_adsb_icao: pl.DataFrame) -> bool | None: # TODO: Probalby delete? 
     """Returns True if any non-flight row is outside airport area, False if all within, None if insufficient data."""
     if df_adsb_icao.is_empty() or df_bts_icao.is_empty():
         return None
@@ -277,11 +277,11 @@ def haversine(lat1, lon1, lat2, lon2):
 def run_validation(current_date: datetime):
     pass
 
-def get_validation_flights(current_date: datetime, df_adsb: pl.DataFrame): # this takes in current_date so probably not good function. May need run_validation. 
-    if current_date < datetime(2026,1,1):
+def get_validation_flights(current_date: date, df_adsb: pl.DataFrame): # this takes in current_date so probably not good function. May need run_validation. 
+    if current_date < date(2026,1,1):
         df_val_flights = get_bts_flights_for_day(current_date, use_cache=True)
-    elif current_date > datetime(2026,1,20):
-        df_val_flights = get_sfdps_flights_day(current_date.date())
+    elif current_date > date(2026,1,20):
+        df_val_flights = get_sfdps_flights_day(current_date)
     else:
         raise ValueError("No validation data available for this date.")
     icaos = get_icaos_with_perfect_match(df_val_flights, df_adsb)
