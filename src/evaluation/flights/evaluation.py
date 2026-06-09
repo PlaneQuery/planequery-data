@@ -91,8 +91,8 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
                     df_source = df_source.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
                 if filter_rotorcraft:
-                    df_source = df_source.filter(is_helicopter_expr())
-                    df_gold = df_gold.filter(is_helicopter_expr())
+                    df_source = df_source.filter(~is_helicopter_expr())
+                    df_gold = df_gold.filter(~is_helicopter_expr())
                 _, stats = flights_df_comparison(df_source, df_gold)
                 rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, "filter_rotorcraft": filter_rotorcraft, **stats})
                 print(f"Stats for {src}:{gold}: {stats}")
