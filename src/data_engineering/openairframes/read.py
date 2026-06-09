@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 
 DEFAULT_OPENAIRFRAMES_ADSB_PATH = Path(
-    "/Volumes/T2-SSD/planequery/openairframes_adsb_2024-01-01_2026-02-28.csv"
+    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_adsb_2024-01-01_2026-05-15.csv"
 )
 
 COLUMN_MAP = {

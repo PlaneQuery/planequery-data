@@ -23,6 +23,37 @@ def default_stats_path() -> Path:
     filename = f"{run_time}_{commit_hash}_flights_evaluation.csv"
     return OUTPUT_DIR / "data" / "experiments" / "comparison" / filename
 
+
+def is_helicopter_expr(
+    aircraft_type_col: str = "aircraft_type",
+    aircraft_description_col: str = "aircraft_description",
+    category_col: str = "category",
+) -> pl.Expr:
+    HELICOPTER_PATTERN = (
+    r"(?i)"
+    r"HELICOPTER|HELIBUS|"
+    r"SIKORSKY|ROBINSON|BELL|AGUSTA|AIRBUS HELICOPTERS|EUROCOPTER|"
+    r"HUGHES|MD HELICOPTERS"
+    )
+    HELICOPTER_TYPE_CODES = [
+        "A139", "A169", "A189",
+        "B06", "B407", "B412", "B429",
+        "EC20", "EC30", "EC35", "EC45",
+        "H500",
+        "R22", "R44", "R66",
+        "S76", "S92",
+    ]
+
+    return (
+        (pl.col(category_col) == "A7")
+        | (pl.col(aircraft_type_col).is_in(HELICOPTER_TYPE_CODES))
+        | (
+            pl.col(aircraft_description_col)
+            .fill_null("")
+            .str.contains(HELICOPTER_PATTERN)
+        )
+    )
+
 def source_flights_reader(src: str):
     if src == "adsbx":
         return get_adsbx_flights_for_day
@@ -36,7 +67,7 @@ def source_flights_reader(src: str):
         return read_opensky_flights
     raise ValueError(f"Unknown flight source: {src}")
 
-def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date | list[date], use_all_icaos = False):
+def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date | list[date], use_all_icaos = False, filter_rotorcraft = False):
     if isinstance(test_src, str):
         test_src = [test_src]
     if isinstance(gold_src, str):
@@ -59,8 +90,11 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                     df_adsb = adsb_by_date[test_date]
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
                     df_source = df_source.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
+                if filter_rotorcraft:
+                    df_source = df_source.filter(is_helicopter_expr())
+                    df_gold = df_gold.filter(is_helicopter_expr())
                 _, stats = flights_df_comparison(df_source, df_gold)
-                rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, **stats})
+                rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, "filter_rotorcraft": filter_rotorcraft, **stats})
                 print(f"Stats for {src}:{gold}: {stats}")
 
     stats_output = default_stats_path()
@@ -75,6 +109,7 @@ if __name__ == "__main__":
     parser.add_argument("--gold-src", nargs="+", default=["bts"])
     parser.add_argument("--date", nargs="+", default=[DEFAULT_TARGET_DATE.isoformat()])
     parser.add_argument("--use_all_icaos", action="store_true", default=False)
+    parser.add_argument("--filter_rotorcraft", action="store_true", default=False)
     args = parser.parse_args()
 
     main(
@@ -82,4 +117,5 @@ if __name__ == "__main__":
         gold_src=args.gold_src,
         test_dates=[date.fromisoformat(d) for d in args.date],
         use_all_icaos=args.use_all_icaos,
+        filter_rotorcraft=args.filter_rotorcraft,
     )
