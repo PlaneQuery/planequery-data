@@ -95,18 +95,18 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
         for gold in gold_src:
             get_gold_flights = source_flights_reader(gold)
             for test_date in test_dates:
-                df_source = get_source_flights(test_date)
+                df_test = get_source_flights(test_date)
                 df_gold = get_gold_flights(test_date)
                 if not use_all_icaos:
                     if test_date not in adsb_by_date:
                         adsb_by_date[test_date] = read_adsb(test_date)
                     df_adsb = adsb_by_date[test_date]
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
-                    df_source = df_source.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
+                    df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
                 if filter_rotorcraft:
-                    df_source = df_source.filter(~is_helicopter_expr())
+                    df_test = df_test.filter(~is_helicopter_expr())
                     df_gold = df_gold.filter(~is_helicopter_expr())
-                _, stats = flights_df_comparison(df_source, df_gold)
+                _, stats = flights_df_comparison(df_test, df_gold)
                 rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, "filter_rotorcraft": filter_rotorcraft, **stats})
                 print(f"Stats for {src}:{gold}: {stats}")
 
