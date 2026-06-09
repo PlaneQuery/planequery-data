@@ -110,7 +110,7 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
         pl.lit(None).cast(pl.String).alias("aircraft_type"),
         pl.lit(None).cast(pl.String).alias("owner"),
         pl.lit(None).cast(pl.String).alias("aircraft_description"),
-        pl.lit(None).cast(pl.String).alias("category"),
+        pl.lit("A3").cast(pl.String).alias("category"),
     )
     df = df.rename({"time_takeoff": "takeoff_time", "time_landing": "landing_time"})
     df = df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
