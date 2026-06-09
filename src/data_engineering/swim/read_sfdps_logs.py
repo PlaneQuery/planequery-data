@@ -344,7 +344,6 @@ def process_day(
     day_dir = raw_dir / prefix
     if not day_dir.exists():
         download_swim_logs("sfdps", d, d+timedelta(days=1))
-        return
 
     gz_files = sorted(p for p in day_dir.iterdir() if p.is_file() and p.suffix in (".gz", ".gzip"))
     if not gz_files:
