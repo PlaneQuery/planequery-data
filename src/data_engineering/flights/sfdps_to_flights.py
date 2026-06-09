@@ -6,6 +6,7 @@ from datetime import date, datetime
 from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.adsb.read_adsb import scan_adsb
+from data_engineering.openairframes.read import ICAO_INFO_COLUMNS, scan_latest_icao_info_for_join
 
 def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
     #Maybe have some error if takeoff_time update is major change. 
@@ -128,43 +129,20 @@ def _collect_streaming(lf: pl.LazyFrame) -> pl.DataFrame:
         return lf.collect(streaming=True)
 
 def _adsb_registration_map(current_day: datetime, registrations: list[str]) -> pl.DataFrame:
-    if not registrations:
-        return pl.DataFrame(
-            {"icao": [], "registration": [], "pia": [], "ladd": []},
-            schema={"icao": pl.String, "registration": pl.String, "pia": pl.Boolean, "ladd": pl.Boolean},
-        )
-
     return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "registration", "pia", "ladd", "time"])
+        scan_adsb(current_day.date(), columns=["icao", "registration", "time"])
         .filter((pl.col("registration") != "") & pl.col("registration").is_in(registrations))
         .group_by(["icao", "registration"])
-        .agg(
-            pl.len().alias("len"),
-            pl.col("pia").any().alias("pia"),
-            pl.col("ladd").any().alias("ladd"),
-        )
+        .agg(pl.len().alias("len"))
         .sort(["registration", "len", "icao"], descending=[False, True, False])
         .group_by("registration", maintain_order=True)
         .first()
-        .select(["icao", "registration", "pia", "ladd"])
+        .select(["icao", "registration"])
     )
 
 def _adsb_callsign_segments(current_day: datetime, callsigns: list[str]) -> pl.DataFrame:
-    if not callsigns:
-        return pl.DataFrame(
-            {"icao": [], "callsign": [], "start_time": [], "end_time": [], "pia": [], "ladd": []},
-            schema={
-                "icao": pl.String,
-                "callsign": pl.String,
-                "start_time": pl.Datetime("ms"),
-                "end_time": pl.Datetime("ms"),
-                "pia": pl.Boolean,
-                "ladd": pl.Boolean,
-            },
-        )
-
     return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "callsign", "pia", "ladd", "time"])
+        scan_adsb(current_day.date(), columns=["icao", "callsign", "time"])
         .filter((pl.col("callsign") != "") & pl.col("callsign").is_in(callsigns))
         .sort(["icao", "time", "callsign"])
         .with_columns(
@@ -178,10 +156,34 @@ def _adsb_callsign_segments(current_day: datetime, callsigns: list[str]) -> pl.D
         .agg(
             pl.col("time").min().alias("start_time"),
             pl.col("time").max().alias("end_time"),
-            pl.col("pia").any().alias("pia"),
-            pl.col("ladd").any().alias("ladd"),
         )
-        .select(["icao", "callsign", "start_time", "end_time", "pia", "ladd"])
+        .select(["icao", "callsign", "start_time", "end_time"])
+    )
+
+def add_openairframes_icao_info(df_flights: pl.DataFrame) -> pl.DataFrame:
+    df_icao_info = _collect_streaming(
+        scan_latest_icao_info_for_join()
+        .with_columns(pl.lit(True).alias("_openairframes_match"))
+    )
+    df_flights = (
+        df_flights
+        .drop(ICAO_INFO_COLUMNS)
+        .join(df_icao_info, on="icao", how="left")
+    )
+    missing_icaos = (
+        df_flights
+        .filter(pl.col("_openairframes_match").is_null())
+        .get_column("icao")
+        .unique()
+        .to_list()
+    )
+    if missing_icaos:
+        raise ValueError(f"Missing OpenAirframes ICAO info for: {missing_icaos}")
+    return (
+        df_flights
+        .drop("_openairframes_match")
+        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
+        .cast(FLIGHT_POLARS_SCHEMA)
     )
 
 def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.DataFrame:
@@ -203,10 +205,8 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
         .join(df_adsb_registration_map, on="registration", how="inner", suffix="_adsb")
         .with_columns(
             pl.col("icao_adsb").alias("icao"),
-            pl.col("pia_adsb").alias("pia"),
-            pl.col("ladd_adsb").alias("ladd"),
         )
-        .drop("icao_adsb", "pia_adsb", "ladd_adsb")
+        .drop("icao_adsb")
     )
     df_adsb_map = _adsb_callsign_segments(current_day, callsigns)
     _30min = pl.duration(minutes=30)
@@ -214,7 +214,7 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_sfdps_flights_1 = ( # TODO: could fill in registration too from icao. 
     df_sfdps_flights_without_registration
     .with_row_index("_row_idx")
-    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time", "pia", "ladd"), on="callsign", how="left")
+    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time"), on="callsign", how="left")
     .with_columns(
         (
             (pl.col("takeoff_time") >= pl.col("start_time")) &
@@ -252,13 +252,11 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     .first()
     .with_columns(
         pl.col("icao").fill_null(pl.col("icao_right")),
-        pl.col("pia_right").alias("pia"),
-        pl.col("ladd_right").alias("ladd"),
     )
-    .drop("_row_idx", "icao_right", "pia_right", "ladd_right", "start_time", "end_time", "_takeoff_in_range", "_landing_in_range", "_priority", "_time_dist", "_icao_count")
+    .drop("_row_idx", "icao_right", "start_time", "end_time", "_takeoff_in_range", "_landing_in_range", "_priority", "_time_dist", "_icao_count")
     )
     df_flights = pl.concat([df_sfdps_flights_0, df_sfdps_flights_1])
-    return df_flights
+    return add_openairframes_icao_info(df_flights)
 
 from data_engineering.utils import OUTPUT_DIR
 def sfdps_flights_parquet_path(target_date: date) -> Path:
@@ -271,10 +269,10 @@ def create_sfdps_flights_day(target_date: date):
     df_flights = sfdps_flights_derive_icao(df_flights, target_date)
     df_flights = df_flights.sort(["icao", "takeoff_time"])
     return df_flights
-def get_sfdps_flights_day(current_day: date) -> pl.DataFrame:
+def get_sfdps_flights_day(current_day: date, use_cache = True) -> pl.DataFrame:
     # do caching logic
     parquet_path = sfdps_flights_parquet_path(current_day)
-    if parquet_path.exists():
+    if use_cache and parquet_path.exists():
         return pl.read_parquet(parquet_path)
     df_flights = create_sfdps_flights_day(current_day)
     os.makedirs(parquet_path.parent, exist_ok=True)
