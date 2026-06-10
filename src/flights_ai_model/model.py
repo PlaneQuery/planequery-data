@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import polars as pl
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import IterableDataset
-from flights_ai_model.features import apply_zscore
+from flights_ai_model.features import NULL_INDICATOR_COLS, apply_zscore
 
 def get_device() -> torch.device:
     if torch.cuda.is_available():
@@ -59,7 +59,16 @@ class FlightEventBiGRU(nn.Module):
         )
 
 
-FEATURE_COLS = ["baro_altitude_ft", "ground_speed_kt", "track_deg", "on_ground", "time_delta_s", "callsign_changed_from_prev", "above_ground_level_closest_airport"] # TODO: Make this NULLABLE_COLS + ZSCORE_COLS # TODO: I could run on a subset of these to compare performance.
+FEATURE_COLS = [
+    "baro_altitude_ft",
+    "ground_speed_kt",
+    "track_deg",
+    "on_ground",
+    "time_delta_s",
+    "callsign_changed_from_prev",
+    "above_ground_level_closest_airport",
+    *NULL_INDICATOR_COLS,
+] # TODO: Make this NULLABLE_COLS + ZSCORE_COLS # TODO: I could run on a subset of these to compare performance.
 MAX_SEQ_LEN = 2048
 WINDOW_STRIDE = 1536
 
@@ -99,5 +108,4 @@ class DailyFlightIterableDataset(IterableDataset):
                         x_win = F.pad(x_win, (0, 0, 0, pad))
                         y_win = F.pad(y_win, (0, pad))
                     yield x_win, y_win 
-
 
