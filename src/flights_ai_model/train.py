@@ -58,7 +58,7 @@ def train(
     df_val_features = df_val_features.filter(pl.col("icao").is_in(df_gold_flights.get_column("icao").unique().to_list()))
     # Pre-cache all days to parquet (no-op if already cached)
     all_day_paths: dict[datetime, Path] = {}
-    for i in range(num_days):
+    for i in range(num_days): # this could really be a create_training_features thing. Though probably could leave this out to simplify and just get training_features 
         day = start_date + timedelta(days=i)
         cache_path = _training_features_path(day)
         all_day_paths[day] = cache_path
