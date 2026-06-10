@@ -32,29 +32,29 @@ ZSCORE_STATS_S3_KEY = f"features/training/{TRAINING_FEATURES_VERSION}/zscore_sta
 s3 = boto3.client("s3")
 
 def _get_zscore_stats() -> dict:
-    path = TRAINING_FEATURES_DIR / "zscore_stats.json"
-    os.makedirs(path.parent, exist_ok=True)
-    if path.exists():
-        with open(path) as f:
+    stats_path = TRAINING_FEATURES_DIR / "zscore_stats.json"
+    os.makedirs(stats_path.parent, exist_ok=True)
+    if stats_path.exists():
+        with open(stats_path) as f:
             return json.load(f)
     # Try downloading from S3 before recomputing.
-    s3_key = str(path.relative_to(OUTPUT_DIR))
+    s3_key = str(stats_path.relative_to(OUTPUT_DIR))
     if s3_key_exists(s3, S3_BUCKET, s3_key):
-        s3.download_file(S3_BUCKET, s3_key, str(path))
-        with open(path) as f:
+        s3.download_file(S3_BUCKET, s3_key, str(stats_path))
+        with open(stats_path) as f:
             return json.load(f)
     parquet_paths = glob.glob(str(TRAINING_FEATURES_DIR / 'year=*/month=*/day=*/part-0.parquet'), recursive=False)
     print(f"Found {len(parquet_paths)} parquet files")
     col_values: dict[str, list[np.ndarray]] = {c: [] for c in ZSCORE_COLS}
-    for path in parquet_paths:
-        df = pl.read_parquet(path, columns=ZSCORE_COLS)
+    for parquet_path in parquet_paths:
+        df = pl.read_parquet(parquet_path, columns=ZSCORE_COLS)
         for c in ZSCORE_COLS:
             col_values[c].append(df.get_column(c).to_numpy())
     stats = {}
     for c in ZSCORE_COLS:
         all_vals = np.concatenate(col_values[c])
         stats[c] = {"mean": float(all_vals.mean()), "std": float(all_vals.std())}
-    with open(path, "w") as f:
+    with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
     return stats
 
