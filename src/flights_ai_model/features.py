@@ -15,8 +15,8 @@ from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import is_ecs, s3_key_exists
 from data_engineering.utils import OUTPUT_DIR, S3_BUCKET
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
-INFERENCE_FEATURES_VERSION = "v2"
-TRAINING_FEATURES_VERSION = "v17"
+INFERENCE_FEATURES_VERSION = "v3"
+TRAINING_FEATURES_VERSION = "v18"
 FEATURES_DIR = OUTPUT_DIR / "data/features"
 TRAINING_FEATURES_DIR = FEATURES_DIR / "training" / TRAINING_FEATURES_VERSION
 INFERENCE_FEATURES_DIR = FEATURES_DIR / "inference" / INFERENCE_FEATURES_VERSION
@@ -24,6 +24,7 @@ os.makedirs(TRAINING_FEATURES_DIR, exist_ok=True)
 os.makedirs(INFERENCE_FEATURES_DIR, exist_ok=True)
 
 NULLABLE_COLS = ["baro_altitude_ft", "ground_speed_kt", "track_deg", "above_ground_level_closest_airport"]
+NULL_INDICATOR_COLS = [f"{c}_is_null" for c in NULLABLE_COLS]
 
 ZSCORE_COLS  = ["baro_altitude_ft", "ground_speed_kt", "track_deg", "time_delta_s", "above_ground_level_closest_airport"]
 
@@ -81,7 +82,7 @@ def inference_features_path(current_date: date) -> Path:
         / f"day={current_date:%d}"
         / "part-0.parquet"
     )
-CUTOFF_TIME = pl.duration(minutes=30)
+CUTOFF_TIME = pl.duration(minutes=30) # TODO: Why am I removing information?
 def join_flights_and_adsb(df_adsb: pl.DataFrame, df_flights: pl.DataFrame) -> pl.DataFrame:
     icaos = df_flights.get_column("icao").unique()
 
@@ -208,6 +209,10 @@ def _to_features(df: pl.DataFrame) -> pl.DataFrame:
     df = (
         df
         .sort(["icao", "time"])
+        .with_columns([
+            pl.col(c).is_null().cast(pl.Int8).alias(f"{c}_is_null")
+            for c in NULLABLE_COLS
+        ])
         .with_columns(
             [pl.col(c).forward_fill().over("icao") for c in NULLABLE_COLS] +
             [pl.col("time").diff().over("icao").dt.total_seconds().fill_null(0).alias("time_delta_s")]
@@ -217,14 +222,7 @@ def _to_features(df: pl.DataFrame) -> pl.DataFrame:
         )
     )
     df = callsign_feature(df)
-    # lat_rad = np.radians(df.get_column("lat").to_numpy())
-    # lon_rad = np.radians(df.get_column("lon").to_numpy())
-    # df = df.with_columns(
-    #     pl.Series("lat_sin", np.sin(lat_rad), dtype=pl.Float64),
-    #     pl.Series("lat_cos", np.cos(lat_rad), dtype=pl.Float64),
-    #     pl.Series("lon_sin", np.sin(lon_rad), dtype=pl.Float64),
-    #     pl.Series("lon_cos", np.cos(lon_rad), dtype=pl.Float64),
-    # )
+
     return df.with_columns(
         pl.col("on_ground").cast(pl.Int8),
         pl.col("time_delta_s").log1p().alias("time_delta_s"),
