@@ -97,6 +97,9 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
             for test_date in test_dates:
                 df_test = get_source_flights(test_date)
                 df_gold = get_gold_flights(test_date)
+                expr = (pl.col("landing_time").dt.date() == test_date) & (pl.col("takeoff_time").dt.date() == test_date)
+                df_test = df_test.filter(expr)
+                df_gold = df_gold.filter(expr)
                 if not use_all_icaos:
                     if test_date not in adsb_by_date:
                         adsb_by_date[test_date] = read_adsb(test_date)
