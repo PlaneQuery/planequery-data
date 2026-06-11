@@ -300,28 +300,10 @@ def get_sfdps_flights_day(target_date: date, use_cache = True) -> pl.DataFrame:
     df_flights.write_parquet(parquet_path)
     return df_flights
 
-def get_sfdps_flights_with_perfect_math(target_date: date = date(2026, 3, 1), use_cache = True) -> pl.DataFrame:
-    from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
-
-    path = OUTPUT_DIR / "data" / "flights" / "sfdps" /"v1_perfect" / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
-    if use_cache and path.exists():
-        return pl.read_parquet(path)
-    df_sfdps_flights = get_sfdps_flights_day(target_date)
-    icaos_to_check = df_sfdps_flights.get_column("icao").drop_nulls().unique().to_list()
-    df_adsb = _collect_streaming(
-        scan_adsb(target_date, columns=["icao", "time", "lat", "lon"])
-        .filter(pl.col("icao").is_in(icaos_to_check))
-    )
-    icaos = get_icaos_with_perfect_match(df_sfdps_flights, df_adsb)
-    df_sfdps_flights = df_sfdps_flights.filter(pl.col("icao").is_in(icaos))
-    os.makedirs(path.parent, exist_ok=True)
-    df_sfdps_flights.write_parquet(path)
-    return df_sfdps_flights
 
 
 if __name__ == "__main__":
     current_day = date(2026, 3, 1)
     df_flights = get_sfdps_flights_day(current_day)
     print(df_flights)
-    df_flights = get_sfdps_flights_with_perfect_math(current_day)
     print(df_flights)
