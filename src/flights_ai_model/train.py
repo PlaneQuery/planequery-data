@@ -3,7 +3,7 @@ import math
 import os
 import random
 import subprocess
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +25,18 @@ from flights_ai_model.model import (
 
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./"))
 MODELS_DIR = OUTPUT_DIR / "data" / "models"
+TRAINING_FEATURE_PATHS = [
+    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=01/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=02/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=03/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=04/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=05/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=01/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=02/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=03/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=04/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=05/part-0.parquet",
+]
 
 
 def get_model_save_path(num_days: int, epochs: int, dt: datetime | None = None) -> Path:
@@ -37,6 +49,15 @@ def get_model_save_path(num_days: int, epochs: int, dt: datetime | None = None) 
     ).decode().strip()
     folder = f"{file_str}_{commit}_{num_days}days_{epochs}epochs"
     return MODELS_DIR / day_str / folder / "model.pth"
+
+
+def _training_source_for_date(current_date: date) -> str:
+    if current_date < date(2026, 1, 1):
+        return "bts"
+    if current_date > date(2026, 1, 20):
+        return "sfdps"
+    raise ValueError("No training data source available for this date.")
+
 
 def train(
     start_date: datetime,
@@ -54,26 +75,18 @@ def train(
     if val_date is None:
         val_date = start_date
     df_gold_flights = get_validation_flights(val_date, read_adsb(val_date))
-    df_val_features = apply_zscore(create_training_features_for_day(val_date))
+    df_val_features = apply_zscore(create_training_features_for_day(val_date, _training_source_for_date(val_date)))
     df_val_features = df_val_features.filter(pl.col("icao").is_in(df_gold_flights.get_column("icao").unique().to_list()))
-    # Pre-cache all days to parquet (no-op if already cached)
-    all_day_paths: dict[datetime, Path] = {}
-    for i in range(num_days): # this could really be a create_training_features thing. Though probably could leave this out to simplify and just get training_features 
-        day = start_date + timedelta(days=i)
-        cache_path = _training_features_path(day)
-        all_day_paths[day] = cache_path
-
+    
     # Fixed validation split (deterministic, no random shuffle)
     val_cache = _training_features_path(val_date)
     val_paths = [val_cache]
-    train_paths = [p for d, p in all_day_paths.items() if d != val_date]
-    if not train_paths:
-        train_paths = list(all_day_paths.values())
+    train_paths = TRAINING_FEATURE_PATHS
 
     # Auto-scale epochs: sqrt scaling from reference point (3 days / 10 epochs)
     if epochs is None:
         epochs = max(10, round(10 * math.sqrt(len(train_paths) / 3)))
-    output_path = get_model_save_path(num_days=num_days, epochs=epochs)
+    output_path = get_model_save_path(num_days=len(train_paths), epochs=epochs)
     print(f"Train days: {len(train_paths)}  |  Val days: {len(val_paths)}  |  Epochs: {epochs}  |  {len(FEATURE_COLS)} features")
 
     # Estimate class weights from all training days
@@ -174,4 +187,4 @@ if __name__ == "__main__":
         val_date=datetime.strptime(args.val_date, "%Y-%m-%d").date() if args.val_date else None,
     )
 
-# python src/flights_ai_model/train.py --start-date 2026-03-02 --num-days 3 --val-date 2026-03-01
+# nohup python -u src/flights_ai_model/train.py --start-date 2026-02-01 --num-days 15 --val-date 2026-03-01 &
