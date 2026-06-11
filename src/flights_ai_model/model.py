@@ -67,7 +67,7 @@ FEATURE_COLS = [
     "time_delta_s",
     "callsign_changed_from_prev",
     "above_ground_level_closest_airport",
-    *NULL_INDICATOR_COLS,
+    # *NULL_INDICATOR_COLS,
 ] # TODO: Make this NULLABLE_COLS + ZSCORE_COLS # TODO: I could run on a subset of these to compare performance.
 MAX_SEQ_LEN = 2048
 WINDOW_STRIDE = 1536
