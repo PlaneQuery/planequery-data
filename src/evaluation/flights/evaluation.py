@@ -106,6 +106,8 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                     df_adsb = adsb_by_date[test_date]
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
                     df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
+                else:
+                    df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
                 if filter_rotorcraft:
                     df_test = df_test.filter(~is_helicopter_expr())
                     df_gold = df_gold.filter(~is_helicopter_expr())
