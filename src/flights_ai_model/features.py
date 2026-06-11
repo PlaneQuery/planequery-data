@@ -15,7 +15,7 @@ from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import is_ecs, s3_key_exists
 from data_engineering.utils import OUTPUT_DIR, S3_BUCKET
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
-INFERENCE_FEATURES_VERSION = "v3"
+INFERENCE_FEATURES_VERSION = "v2"
 TRAINING_FEATURES_VERSION = "v18"
 FEATURES_DIR = OUTPUT_DIR / "data/features"
 TRAINING_FEATURES_DIR = FEATURES_DIR / "training" / TRAINING_FEATURES_VERSION
