@@ -9,7 +9,7 @@ import tempfile
 import boto3
 from datetime import timedelta
 from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb, exclude_invalid_icaos, read_icaos_from_adsb
-from data_engineering.bts.read_bts_ontime_to_flights import create_flights_from_bts
+from data_engineering.bts.read_bts_ontime_to_flights import create_flights_from_bts, get_bts_flights_for_day
 from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import is_ecs, s3_key_exists
@@ -131,12 +131,17 @@ def join_flights_and_adsb(df_adsb: pl.DataFrame, df_flights: pl.DataFrame) -> pl
     df = pl.concat(dfs).sort(["icao", "time"])
     return df
 
-def create_training_features_for_day(current_date: date) -> pl.DataFrame:
+def create_training_features_for_day(current_date: date, source) -> pl.DataFrame:
     cache_path = _training_features_path(current_date)
     if cache_path.exists():
         return pl.read_parquet(cache_path)
     df_adsb = read_adsb(current_date)
-    df_flights = get_sfdps_flights_day(current_date)
+    if source == "sfdps":
+        df_flights = get_sfdps_flights_day(current_date)
+    elif source == "bts":
+        df_flights = get_bts_flights_for_day(current_date)
+    else:
+        raise Exception("bad string")
     df_flights = df_flights.filter(
         (pl.col("takeoff_time").dt.date() == current_date) &
         (pl.col("landing_time").dt.date() == current_date)
@@ -285,6 +290,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=False, default="training", choices=["training", "inference"], help="Which features to create")
+    parser.add_argument("--source", required=False, default="bts", choices=["sfdps", "bts"])
     parser.add_argument("--start-date", required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="Start date inclusive (YYYY-MM-DD)")
     parser.add_argument("--end-date",   required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="End date exclusive (YYYY-MM-DD)")
     parser.add_argument("--write-to-s3", action="store_true", help="Whether to write inference features to S3 (also enables S3 caching)")
@@ -295,7 +301,8 @@ if __name__ == "__main__":
     while current < args.end_date:
         if args.features == "training":
             print(f"Creating training features for {current:%Y-%m-%d}")
-            create_training_features_for_day(current)
+            source = args.source
+            create_training_features_for_day(current, source)
         else:
             print(f"Creating inference features for {current:%Y-%m-%d}")
             create_inference_features_for_day(current, write_to_s3=write_to_s3)
