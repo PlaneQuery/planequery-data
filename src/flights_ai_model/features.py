@@ -44,7 +44,7 @@ def _get_zscore_stats() -> dict:
         s3.download_file(S3_BUCKET, s3_key, str(stats_path))
         with open(stats_path) as f:
             return json.load(f)
-    parquet_paths = glob.glob(str(TRAINING_FEATURES_DIR / 'year=*/month=*/day=*/part-0.parquet'), recursive=False)
+    parquet_paths = glob.glob(str(TRAINING_FEATURES_DIR / '*/year=*/month=*/day=*/part-0.parquet'), recursive=False)
     print(f"Found {len(parquet_paths)} parquet files")
     col_values: dict[str, list[np.ndarray]] = {c: [] for c in ZSCORE_COLS}
     for parquet_path in parquet_paths:
@@ -66,9 +66,12 @@ def apply_zscore(df: pl.DataFrame) -> pl.DataFrame:
         for c in ZSCORE_STATS
     ])
 
-def _training_features_path(current_date: date) -> Path:
+def _training_features_dir(source: str) -> Path:
+    return TRAINING_FEATURES_DIR / source
+
+def _training_features_path(current_date: date, source: str) -> Path:
     return (
-        TRAINING_FEATURES_DIR
+        _training_features_dir(source)
         / f"year={current_date:%Y}"
         / f"month={current_date:%m}"
         / f"day={current_date:%d}"
@@ -132,7 +135,7 @@ def join_flights_and_adsb(df_adsb: pl.DataFrame, df_flights: pl.DataFrame) -> pl
     return df
 
 def create_training_features_for_day(current_date: date, source) -> pl.DataFrame:
-    cache_path = _training_features_path(current_date)
+    cache_path = _training_features_path(current_date, source)
     if cache_path.exists():
         return pl.read_parquet(cache_path)
     df_adsb = read_adsb(current_date)
