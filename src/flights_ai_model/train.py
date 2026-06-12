@@ -31,11 +31,11 @@ TRAINING_FEATURE_PATHS = [
     OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=03/part-0.parquet",
     OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=04/part-0.parquet",
     OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=05/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=01/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=02/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=03/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=04/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=05/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/sfdps/year=2026/month=02/day=01/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/sfdps/year=2026/month=02/day=02/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/sfdps/year=2026/month=02/day=03/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/sfdps/year=2026/month=02/day=04/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/sfdps/year=2026/month=02/day=05/part-0.parquet",
 ]
 
 
