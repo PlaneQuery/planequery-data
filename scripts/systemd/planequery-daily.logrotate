@@ -1,4 +1,4 @@
-/home/goodejonah/planequery-data/logs/planequery-daily.log {
+/home/goodejonah/planequery-data-main/logs/planequery-daily.log {
     size 100M
     rotate 4
     compress
