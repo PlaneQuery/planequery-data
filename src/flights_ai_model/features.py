@@ -207,7 +207,19 @@ def get_icaos_in_features(current_date: date) -> list[str]:
     parquet_path = inference_features_path(current_date)
     df = pl.scan_parquet(parquet_path).select("icao").unique().collect()
     return df["icao"].sort().to_list()
+
+ADSB_FEATURE_MIN_INTERVAL = timedelta(seconds=5)
+def _cap_adsb_frequency(df: pl.DataFrame):
+    last_kept_time = None
+    keep = []
+    for t in df.get_column("time"):
+        should_keep = last_kept_time is None or t >= last_kept_time + ADSB_FEATURE_MIN_INTERVAL
+        keep.append(should_keep)
+        if should_keep:
+            last_kept_time = t
+    return df.filter(pl.Series(keep))
 def _to_features(df: pl.DataFrame) -> pl.DataFrame:
+    df = df.group_by("icao").map_groups(_cap_adsb_frequency)
     print(f"Start compute elevation from closest airport")
     df = elevation_from_closest_airport(df)
     print(f"Finished compute elevation from closest airport")
@@ -291,7 +303,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=False, default="training", choices=["training", "inference"], help="Which features to create")
     parser.add_argument("--source", required=False, default="bts", choices=["sfdps", "bts"])
-    parser.add_argument("--start-date", required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="Start date inclusive (YYYY-MM-DD)")
+    parser.add_argument("--start-date", required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="Start date inclusive (YYYY-MM-DD)") # TODO: MAke start-date and end-date required arguments
     parser.add_argument("--end-date",   required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="End date exclusive (YYYY-MM-DD)")
     parser.add_argument("--write-to-s3", action="store_true", help="Whether to write inference features to S3 (also enables S3 caching)")
     args = parser.parse_args()
