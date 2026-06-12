@@ -26,16 +26,16 @@ from flights_ai_model.model import (
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./"))
 MODELS_DIR = OUTPUT_DIR / "data" / "models"
 TRAINING_FEATURE_PATHS = [
-    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=01/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=02/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=03/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=04/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v18/year=2025/month=09/day=05/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=01/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=02/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=03/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=04/part-0.parquet",
-    OUTPUT_DIR / "data/features/training/v17/year=2026/month=02/day=05/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=01/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=02/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=03/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=04/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v18/bts/year=2025/month=09/day=05/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=01/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=02/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=03/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=04/part-0.parquet",
+    OUTPUT_DIR / "data/features/training/v17/sfdps/year=2026/month=02/day=05/part-0.parquet",
 ]
 
 
@@ -74,12 +74,13 @@ def train(
 
     if val_date is None:
         val_date = start_date
+    val_source = _training_source_for_date(val_date)
     df_gold_flights = get_validation_flights(val_date, read_adsb(val_date))
-    df_val_features = apply_zscore(create_training_features_for_day(val_date, _training_source_for_date(val_date)))
+    df_val_features = apply_zscore(create_training_features_for_day(val_date, val_source))
     df_val_features = df_val_features.filter(pl.col("icao").is_in(df_gold_flights.get_column("icao").unique().to_list()))
     
     # Fixed validation split (deterministic, no random shuffle)
-    val_cache = _training_features_path(val_date)
+    val_cache = _training_features_path(val_date, val_source)
     val_paths = [val_cache]
     train_paths = TRAINING_FEATURE_PATHS
 
