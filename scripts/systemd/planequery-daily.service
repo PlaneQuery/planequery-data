@@ -6,11 +6,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=goodejonah
-WorkingDirectory=/home/goodejonah/planequery-data
-EnvironmentFile=/home/goodejonah/planequery-data/.env
-ExecStart=/home/goodejonah/planequery-data/.venv/bin/python -u /home/goodejonah/planequery-data/scripts/daily_pipeline.py
-StandardOutput=append:/home/goodejonah/planequery-data/logs/planequery-daily.log
-StandardError=append:/home/goodejonah/planequery-data/logs/planequery-daily.log
+WorkingDirectory=/home/goodejonah/planequery-data-main
+EnvironmentFile=/home/goodejonah/planequery-data-main/.env
+ExecStart=/home/goodejonah/planequery-data-main/.venv/bin/python -u /home/goodejonah/planequery-data-main/scripts/daily_pipeline.py
+StandardOutput=append:/home/goodejonah/planequery-data-main/logs/planequery-daily.log
+StandardError=append:/home/goodejonah/planequery-data-main/logs/planequery-daily.log
 TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=best-effort
