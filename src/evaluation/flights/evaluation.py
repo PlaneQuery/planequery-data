@@ -4,7 +4,8 @@ from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from data_engineering.flights.flight_type import get_flights
+from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, get_flights
+from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import current_commit_hash
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
@@ -54,6 +55,26 @@ def is_helicopter_expr(
         )
     )
 
+def fr24_flights_parquet_path(target_date: date) -> Path:
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "fr24"
+        / FR24_FLIGHTS_VERSION
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
+        / "part-0.parquet"
+    )
+
+def read_fr24_flights(target_date: date) -> pl.DataFrame:
+    return (
+        pl.read_parquet(fr24_flights_parquet_path(target_date))
+        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
+        .cast(FLIGHT_POLARS_SCHEMA)
+    )
+
 def source_flights_reader(src: str):
     if src == "adsbx":
         return get_adsbx_flights_for_day
@@ -65,6 +86,9 @@ def source_flights_reader(src: str):
         return get_bts_flights_for_day
     if src =="opensky":
         return read_opensky_flights
+    if src == "fr24":
+        return read_fr24_flights
+
     raise ValueError(f"Unknown flight source: {src}")
 
 def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
