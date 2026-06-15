@@ -113,6 +113,7 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
         test_dates = [test_dates]
 
     rows = []
+    outputs = []
     adsb_by_date: dict[date, pl.DataFrame] = {}
     for src in test_src:
         get_source_flights = source_flights_reader(src)
@@ -135,7 +136,8 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                 if filter_rotorcraft:
                     df_test = df_test.filter(~is_helicopter_expr())
                     df_gold = df_gold.filter(~is_helicopter_expr())
-                _, stats = flights_df_comparison(df_test, df_gold)
+                df, stats = flights_df_comparison(df_test, df_gold)
+                outputs.append([df,stats])
                 rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, "filter_rotorcraft": filter_rotorcraft, **stats})
                 print(f"Stats for {src}:{gold}: {stats}")
 
@@ -146,6 +148,7 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
         df_stats = add_average_rows(df_stats)
     df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
+    return outputs
 
 TEST_DATES_2 = [
     date(2026,3,1),
