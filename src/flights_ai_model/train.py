@@ -84,7 +84,6 @@ def train( # this will simply take paths not start_days, end_days..
     # Auto-scale epochs: sqrt scaling from reference point (3 days / 10 epochs)
     if epochs is None:
         epochs = max(10, round(10 * math.sqrt(len(train_paths) / 3)))
-    output_path = get_model_save_path(num_days=len(train_paths), epochs=epochs)
     print(f"Train days: {len(train_paths)} |  Epochs: {epochs}  |  {len(FEATURE_COLS)} features")
 
     # Estimate class weights from all training days
@@ -155,6 +154,9 @@ def train( # this will simply take paths not start_days, end_days..
                 best_inf_f1 = f1
                 best_df_flights_output = df_flights_output
                 best_stats = stats
+        print(f"train loss: {train_loss}")
+        output_path = get_model_save_path(num_days=len(train_paths), epochs=epoch)
+        
         output_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), output_path)
         print(f"  -> saved to {output_path}")
