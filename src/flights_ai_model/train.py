@@ -70,7 +70,7 @@ def train( # this will simply take paths not start_days, end_days..
 ):
     device = get_device()
     print(f"Using device: {device}")
-
+    output_paths = []
     if evaluate_performance == True:
         assert val_date is not None
     if evaluate_performance and val_date:
@@ -160,9 +160,9 @@ def train( # this will simply take paths not start_days, end_days..
         output_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), output_path)
         print(f"  -> saved to {output_path}")
-
+        output_paths.append(output_path)
     print(f"Training complete. Best F1: {best_inf_f1:.4f}")
-    return output_path, best_df_flights_output, best_stats
+    return output_paths
 
 
 if __name__ == "__main__":
