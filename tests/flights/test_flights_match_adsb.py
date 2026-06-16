@@ -12,6 +12,32 @@ from data_engineering.flights.flight_type import get_flights
 from data_engineering.flights.flight_type import flights_to_flights_df, Flight
 
 
+AIRPORTS_CSV = """ident,type,name,latitude_deg,longitude_deg,elevation_ft,continent,iso_country,iso_region,municipality,scheduled_service,gps_code,iata_code,local_code,home_link,wikipedia_link,keywords
+TESTA,small_airport,Test Airport A,0.0,0.0,0,NA,US,US-TS,Test,no,TESTA,,TESTA,,,
+TESTB,small_airport,Test Airport B,0.0,2.0,0,NA,US,US-TS,Test,no,TESTB,,TESTB,,,
+"""
+
+
+def _write_test_airports_csv(output_dir):
+    airport_dir = output_dir / "data" / "interim"
+    airport_dir.mkdir(parents=True)
+    (airport_dir / "airports.csv").write_text(AIRPORTS_CSV)
+
+
+def _reset_airport_lookup_cache(monkeypatch, output_dir):
+    monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
+    import flights.flights_match_adsb as flights_match_adsb_module
+
+    flights_match_adsb_module._airport_lookup = None
+    flights_match_adsb_module._airport_lookup_loaded = False
+    try:
+        from airports.airportLookup import AirportLookup
+
+        AirportLookup._instance = None
+    except (ImportError, KeyError):
+        pass
+
+
 class TestFlightsMatchAdsb(unittest.TestCase):
     def test_flights_match_adsb(self):
         target_date = date(2026, 3, 1)
@@ -25,12 +51,15 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         df_flights = get_flights(target_date).filter(pl.col("icao") == icao)
         print(df_flights.select("takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident"))
         df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
-        self.assertTrue(flights_match_adsb(df_flights, df_adsb))
+        self.assertFalse(flights_match_adsb(df_flights, df_adsb))
 
     # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
 
 
-def test_get_matching_icaos_in_flights_can_read_readsb_parquet(tmp_path):
+def test_get_matching_icaos_in_flights_can_read_readsb_parquet(tmp_path, monkeypatch):
+    _write_test_airports_csv(tmp_path)
+    _reset_airport_lookup_cache(monkeypatch, tmp_path)
+
     target_date = date(2026, 3, 1)
     day_dir = tmp_path / "year=2026" / "month=03" / "day=01"
     day_dir.mkdir(parents=True)
@@ -43,15 +72,22 @@ def test_get_matching_icaos_in_flights_can_read_readsb_parquet(tmp_path):
                 icao="abc123",
                 takeoff_time=takeoff_time,
                 landing_time=landing_time,
-                takeoff_airport_ident="",
-                landing_airport_ident="",
+                takeoff_airport_ident="TESTA",
+                landing_airport_ident="TESTB",
             ),
             Flight(
                 icao="def456",
                 takeoff_time=takeoff_time,
                 landing_time=landing_time,
-                takeoff_airport_ident="",
-                landing_airport_ident="",
+                takeoff_airport_ident="TESTA",
+                landing_airport_ident="TESTB",
+            ),
+            Flight(
+                icao="ghi789",
+                takeoff_time=takeoff_time,
+                landing_time=landing_time,
+                takeoff_airport_ident="TESTB",
+                landing_airport_ident="TESTA",
             ),
         ]
     )
@@ -67,6 +103,11 @@ def test_get_matching_icaos_in_flights_can_read_readsb_parquet(tmp_path):
             {"time": takeoff_time, "icao": "def456", "lat": 0.0, "lon": 1.0},
             {"time": landing_time, "icao": "def456", "lat": 0.0, "lon": 2.0},
             {"time": datetime(2026, 3, 1, 12, 25), "icao": "def456", "lat": 0.0, "lon": 2.0},
+            {"time": datetime(2026, 3, 1, 12, 0), "icao": "ghi789", "lat": 0.0, "lon": 0.0},
+            {"time": takeoff_time, "icao": "ghi789", "lat": 0.0, "lon": 0.0},
+            {"time": datetime(2026, 3, 1, 12, 12), "icao": "ghi789", "lat": 0.0, "lon": 1.0},
+            {"time": landing_time, "icao": "ghi789", "lat": 0.0, "lon": 2.0},
+            {"time": datetime(2026, 3, 1, 12, 25), "icao": "ghi789", "lat": 0.0, "lon": 2.0},
         ]
     ).write_parquet(day_dir / "part-00000.parquet")
 
@@ -78,6 +119,7 @@ def test_get_matching_icaos_in_flights_can_read_readsb_parquet(tmp_path):
     )
 
     assert df.get_column("icao").unique().to_list() == ["abc123"]
+    assert "ghi789" not in df.get_column("icao").to_list()
 
 
 def test_flights_match_adsb_rejects_stationary_adsb_during_flight_window():
