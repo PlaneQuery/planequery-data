@@ -20,12 +20,9 @@ model_output_paths = train(train_paths, epochs=10)
 for path in model_output_paths:
     val_date = date(2026,3,1)
     sfdps_flights = get_sfdps_flights_day(val_date)
-    bts_flights = get_bts_flights_for_day(val_date)
-    icaos = list(set(sfdps_flights.get_column("icao")) | set(bts_flights.get_column("icao")))
-    df_test = run_inference(val_date, path, icaos=icaos)
     df_adsb = read_icaos_from_adsb(val_date, icaos)
-    for df_gold in [sfdps_flights, bts_flights]:
-        df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
-        df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
-        flights_df_comparison(df_test, df_gold)
+    df_gold = get_matching_icaos_in_flights(sfdps_flights, df_adsb)
+    icaos = list(set(df_gold.get_column("icao")))
+    df_test = run_inference(val_date, path, icaos=icaos)
+    flights_df_comparison(df_test, df_gold)
 
