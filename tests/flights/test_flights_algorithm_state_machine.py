@@ -232,7 +232,7 @@ def test_segments_to_flights_df_uses_flight_schema_defaults(monkeypatch):
 
     assert df.columns == list(FLIGHT_POLARS_SCHEMA.keys())
     assert df.row(0, named=True)["icao"] == "abc123"
-    assert df.row(0, named=True)["takeoff_airport_ident"] == ""
+    assert df.row(0, named=True)["takeoff_airport_ident"] is None
     assert df.row(0, named=True)["pia"] is False
 
 

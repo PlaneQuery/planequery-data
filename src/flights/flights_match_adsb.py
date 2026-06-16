@@ -17,6 +17,8 @@ READSB_HIST_PARQUET_ROOT = Path(
     "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
 )
 ADSB_MATCH_COLUMNS = ["time", "icao", "lat", "lon"]
+_airport_lookup = None
+_airport_lookup_loaded = False
 
 
 @dataclass
@@ -44,6 +46,41 @@ def closest_time_row_idx(adsb_rows, target_time, lte=True):
 
 def _time_gap_exceeds(row_time: datetime, target_time: datetime, max_gap: timedelta) -> bool:
     return abs(row_time - target_time) > max_gap
+
+
+def _get_airport_lookup():
+    global _airport_lookup, _airport_lookup_loaded
+    if _airport_lookup_loaded:
+        return _airport_lookup
+
+    try:
+        from airports.airportLookup import AirportLookup
+
+        _airport_lookup = AirportLookup()
+    except (FileNotFoundError, KeyError):
+        _airport_lookup = None
+    _airport_lookup_loaded = True
+    return _airport_lookup
+
+
+def _airport_ident_matches_adsb_row(
+    airport_lookup,
+    airport_ident: str,
+    adsb_row: _AdsbRow,
+) -> bool:
+    if airport_lookup is None or not airport_ident:
+        return False
+
+    airport = airport_lookup.get_Airport_from_airport_ident(airport_ident)
+    if airport is None:
+        return False
+
+    return haversine(
+        adsb_row.lat,
+        adsb_row.lon,
+        airport.lat,
+        airport.lon,
+    ) <= MAX_AIRPORT_DISTANCE_KM
 
 
 def _flight_interval_has_movement(adsb_rows, takeoff_row_idx: int, landing_row_idx: int) -> bool:
@@ -154,10 +191,11 @@ def _boundary_rows_for_flight(adsb_rows, flight) -> tuple[int, int] | None:
         return None
     return takeoff_row_idx, landing_row_idx
 
-def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
+def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
+    airport_lookup = _get_airport_lookup()
     flights = flights_df_to_flights(df_flights.sort("takeoff_time"))
     adsb_rows = [
         _AdsbRow(time=row["time"], lat=row["lat"], lon=row["lon"])
@@ -165,9 +203,6 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     ]
     assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False
 
-    # check that takeoff_airport idents match landing airport idents
-    # 2. check that from when flights say plane is landed plane did not move
-    # 3. check that last adsb message and first adsb message is near the airport. 
     previous_flight = None
     previous_landing_row_idx = None
     for flight in flights:
@@ -175,6 +210,19 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         if boundary_row_idxs is None:
             return False
         takeoff_row_idx, landing_row_idx = boundary_row_idxs
+
+        if not _airport_ident_matches_adsb_row(
+            airport_lookup,
+            flight.takeoff_airport_ident,
+            adsb_rows[takeoff_row_idx],
+        ):
+            return False
+        if not _airport_ident_matches_adsb_row(
+            airport_lookup,
+            flight.landing_airport_ident,
+            adsb_rows[landing_row_idx],
+        ):
+            return False
 
         if previous_flight:
             if previous_flight.landing_airport_ident != flight.takeoff_airport_ident:
@@ -213,7 +261,6 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         if distance > MAX_AIRPORT_DISTANCE_KM:
             return False
     return True
-    # 1. check that all takeoff_landing airport idents equal each other
 
 
 def _readsb_hist_parquet_day_dir(
