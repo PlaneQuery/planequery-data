@@ -1,11 +1,14 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+
+import polars as pl
 
 from flights_algorithm.main import (
     FlightSegment,
     _segment_takes_off_in_window,
     _segments_to_flights_df,
     identify_flight_segments,
+    run_main_2,
     stitch_flight_segments,
 )
 
@@ -132,6 +135,40 @@ def test_does_not_continue_across_implausibly_slow_airborne_gap():
     assert segments[1].takeoff_time == start + timedelta(hours=2, minutes=10)
 
 
+def test_continues_across_slow_gap_when_both_sides_are_high_altitude():
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start, 0.00, on_ground=True, ground_speed_kt=0.0),
+        _row(start + timedelta(minutes=1), 0.02, on_ground=False, ground_speed_kt=120.0, baro_altitude_ft=1000),
+        _row(start + timedelta(minutes=20), 1.20, on_ground=False, ground_speed_kt=300.0, baro_altitude_ft=35_000),
+        _row(start + timedelta(hours=2), 1.25, on_ground=False, ground_speed_kt=300.0, baro_altitude_ft=35_000),
+        _row(start + timedelta(hours=2, minutes=20), 1.45, on_ground=False, ground_speed_kt=95.0, baro_altitude_ft=700),
+        _row(start + timedelta(hours=2, minutes=23), 1.47, on_ground=False, ground_speed_kt=50.0, baro_altitude_ft=400),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 1
+    assert segments[0].takeoff_time == start + timedelta(minutes=1)
+    assert segments[0].landing_time == start + timedelta(hours=2, minutes=20)
+
+
+def test_backdates_takeoff_when_first_airborne_message_is_already_high():
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start, 0.00, on_ground=True, ground_speed_kt=0.0),
+        _row(start + timedelta(minutes=10), 0.20, on_ground=False, ground_speed_kt=160.0, baro_altitude_ft=4000),
+        _row(start + timedelta(minutes=20), 0.50, on_ground=False, ground_speed_kt=100.0, baro_altitude_ft=2500),
+        _row(start + timedelta(minutes=23), 0.52, on_ground=False, ground_speed_kt=50.0, baro_altitude_ft=400),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 1
+    assert segments[0].takeoff_time == start + timedelta(minutes=5)
+    assert segments[0].landing_time == start + timedelta(minutes=20)
+
+
 def test_decelerating_approach_can_identify_landing_above_absolute_landing_speed():
     start = datetime(2026, 1, 1, 12, 0)
     messages = [
@@ -229,6 +266,34 @@ def test_segment_filter_keeps_only_flights_that_take_off_on_target_day():
     assert not _segment_takes_off_in_window(before_day, day_start, day_end)
     assert _segment_takes_off_in_window(during_day, day_start, day_end)
     assert not _segment_takes_off_in_window(after_day, day_start, day_end)
+
+
+def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
+    target_date = date(2026, 3, 1)
+    day_dir = tmp_path / "year=2026" / "month=03" / "day=01"
+    day_dir.mkdir(parents=True)
+    start = datetime(2026, 3, 1, 12, 0)
+
+    rows = [
+        {"time": start, "icao": "abc123", "lat": 0.0, "lon": 0.00, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+        {"time": start + timedelta(minutes=1), "icao": "abc123", "lat": 0.0, "lon": 0.02, "ground_speed_kt": 100.0, "on_ground": False, "baro_altitude_ft": 1000},
+        {"time": start + timedelta(minutes=8), "icao": "abc123", "lat": 0.0, "lon": 0.20, "ground_speed_kt": 180.0, "on_ground": False, "baro_altitude_ft": 5000},
+        {"time": start + timedelta(minutes=12), "icao": "abc123", "lat": 0.0, "lon": 0.205, "ground_speed_kt": 20.0, "on_ground": True, "baro_altitude_ft": None},
+        {"time": start + timedelta(minutes=15), "icao": "abc123", "lat": 0.0, "lon": 0.205, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+        {"time": start, "icao": "def456", "lat": 0.0, "lon": 1.00, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+        {"time": start + timedelta(minutes=1), "icao": "def456", "lat": 0.0, "lon": 1.02, "ground_speed_kt": 100.0, "on_ground": False, "baro_altitude_ft": 1000},
+        {"time": start + timedelta(minutes=8), "icao": "def456", "lat": 0.0, "lon": 1.20, "ground_speed_kt": 180.0, "on_ground": False, "baro_altitude_ft": 5000},
+        {"time": start + timedelta(minutes=12), "icao": "def456", "lat": 0.0, "lon": 1.205, "ground_speed_kt": 20.0, "on_ground": True, "baro_altitude_ft": None},
+        {"time": start + timedelta(minutes=15), "icao": "def456", "lat": 0.0, "lon": 1.205, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+    ]
+    pl.DataFrame(rows).write_parquet(day_dir / "part-00000.parquet")
+
+    df = run_main_2(target_date, icaos=["abc123"], parquet_root=tmp_path)
+
+    assert df.height == 1
+    assert df.row(0, named=True)["icao"] == "abc123"
+    assert df.row(0, named=True)["takeoff_time"] == start + timedelta(minutes=1)
+    assert df.row(0, named=True)["landing_time"] == start + timedelta(minutes=12)
 
 
 def test_stitches_same_icao_segments_separated_by_short_gap():
