@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Sequence
 
 import polars as pl
@@ -32,6 +33,18 @@ MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
 MAX_SEGMENT_STITCH_GAP = timedelta(minutes=45)
 RUN_MAIN_CONTEXT = timedelta(hours=12)
+READSB_HIST_PARQUET_ROOT = Path(
+    "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
+)
+ADSB_ALGORITHM_COLUMNS = [
+    "time",
+    "icao",
+    "lat",
+    "lon",
+    "ground_speed_kt",
+    "on_ground",
+    "baro_altitude_ft",
+]
 
 
 class FlightState(Enum):
@@ -467,23 +480,11 @@ def _segment_takes_off_in_window(segment: FlightSegment, start: datetime, end: d
     return start <= segment.takeoff_time < end
 
 
-def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None = None) -> pl.DataFrame:
-    from data_engineering.adsb.read_adsb import scan_adsb
-
-    day_start, day_end = _day_bounds(target_date)
-    window_start = day_start - RUN_MAIN_CONTEXT
-    window_end = day_end + RUN_MAIN_CONTEXT
-    scan_dates = [target_date - timedelta(days=1), target_date, target_date + timedelta(days=1)]
-
-    lf_adsb = pl.concat(
-        [
-            scan_adsb(scan_date, columns=["time", "icao", "lat", "lon", "ground_speed_kt", "on_ground", "baro_altitude_ft"])
-            for scan_date in scan_dates
-        ]
-    ).filter(
-        (pl.col("time") >= window_start)
-        & (pl.col("time") < window_end)
-    )
+def _collect_segments_from_adsb_lf(
+    lf_adsb: pl.LazyFrame,
+    *,
+    icaos: Sequence[str] | None = None,
+) -> list[FlightSegment]:
     if icaos is not None:
         lf_adsb = lf_adsb.filter(pl.col("icao").is_in(list(icaos)))
 
@@ -502,7 +503,69 @@ def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None =
     segments = []
     for _, df_icao in df_adsb.group_by("icao", maintain_order=True):
         segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
+    return segments
 
+
+def _readsb_hist_parquet_day_dir(
+    target_date: date,
+    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
+) -> Path:
+    return (
+        Path(parquet_root)
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
+    )
+
+
+def _scan_readsb_hist_day_parquet(
+    target_date: date,
+    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
+) -> pl.LazyFrame:
+    day_dir = _readsb_hist_parquet_day_dir(target_date, parquet_root)
+    parquet_glob = day_dir / "part*.parquet"
+    return pl.scan_parquet(str(parquet_glob)).select(ADSB_ALGORITHM_COLUMNS)
+
+
+def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None = None) -> pl.DataFrame:
+    from data_engineering.adsb.read_adsb import scan_adsb
+
+    day_start, day_end = _day_bounds(target_date)
+    window_start = day_start - RUN_MAIN_CONTEXT
+    window_end = day_end + RUN_MAIN_CONTEXT
+    scan_dates = [target_date - timedelta(days=1), target_date, target_date + timedelta(days=1)]
+
+    lf_adsb = pl.concat(
+        [
+            scan_adsb(scan_date, columns=ADSB_ALGORITHM_COLUMNS)
+            for scan_date in scan_dates
+        ]
+    ).filter(
+        (pl.col("time") >= window_start)
+        & (pl.col("time") < window_end)
+    )
+
+    segments = _collect_segments_from_adsb_lf(lf_adsb, icaos=icaos)
+    segments = [
+        segment
+        for segment in segments
+        if _segment_takes_off_in_window(segment, day_start, day_end)
+    ]
+    return _segments_to_flights_df(segments)
+
+
+def run_main_2(
+    target_date: date = date(2026, 3, 1),
+    icaos: Sequence[str] | None = None,
+    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
+) -> pl.DataFrame:
+    day_start, day_end = _day_bounds(target_date)
+    lf_adsb = _scan_readsb_hist_day_parquet(target_date, parquet_root).filter(
+        (pl.col("time") >= day_start)
+        & (pl.col("time") < day_end)
+    )
+
+    segments = _collect_segments_from_adsb_lf(lf_adsb, icaos=icaos)
     segments = [
         segment
         for segment in segments
