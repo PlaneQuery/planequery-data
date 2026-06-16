@@ -7,6 +7,21 @@ from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfe
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 
+VALIDATION_TIER_ALL = "all"
+VALIDATION_TIER_ADSB_VERIFIED = "adsb_verified"
+VALIDATION_TIER_UNVERIFIED_OR_HARD = "unverified_or_hard"
+ADSB_VERIFICATION_STATUS_COL = "adsb_verification_status"
+ADSB_VERIFIED_COL = "is_adsb_verified"
+
+_VALIDATION_TIER_ALIASES = {
+    VALIDATION_TIER_ALL: VALIDATION_TIER_ALL,
+    VALIDATION_TIER_ADSB_VERIFIED: VALIDATION_TIER_ADSB_VERIFIED,
+    "verified": VALIDATION_TIER_ADSB_VERIFIED,
+    VALIDATION_TIER_UNVERIFIED_OR_HARD: VALIDATION_TIER_UNVERIFIED_OR_HARD,
+    "hard": VALIDATION_TIER_UNVERIFIED_OR_HARD,
+    "unverified": VALIDATION_TIER_UNVERIFIED_OR_HARD,
+}
+
 def _airport_ident_for_match_expr(col: str) -> pl.Expr:
     ident = pl.col(col).str.to_uppercase()
     return (
@@ -144,6 +159,8 @@ def flights_df_comparison(
     airport_stats: dict = {}
     for ident_col in ("takeoff_airport_ident", "landing_airport_ident"):
         df2_col = f"{ident_col}_df2"
+        if ident_col not in df_matched_out.columns or df2_col not in df_matched_out.columns:
+            continue
         left_ident = _airport_ident_for_match_expr(ident_col)
         right_ident = _airport_ident_for_match_expr(df2_col)
         n_with_both = df_matched_out.filter(
@@ -156,13 +173,14 @@ def flights_df_comparison(
         pct = n_match / n_with_both if n_with_both > 0 else float("nan")
         airport_stats[ident_col] = {"n_with_both": n_with_both, "n_match": n_match, "pct": pct}
 
-    total_with_both = sum(s["n_with_both"] for s in airport_stats.values())
-    total_match     = sum(s["n_match"]     for s in airport_stats.values())
-    airport_stats["overall"] = {
-        "n_with_both": total_with_both,
-        "n_match": total_match,
-        "pct": total_match / total_with_both if total_with_both > 0 else float("nan"),
-    }
+    if airport_stats:
+        total_with_both = sum(s["n_with_both"] for s in airport_stats.values())
+        total_match     = sum(s["n_match"]     for s in airport_stats.values())
+        airport_stats["overall"] = {
+            "n_with_both": total_with_both,
+            "n_match": total_match,
+            "pct": total_match / total_with_both if total_with_both > 0 else float("nan"),
+        }
 
     print(f"\n--- Match Summary (ICAO-based, ±30 min window) ---")
     print(f"Common ICAOs: {len(common_icaos)}")
@@ -184,7 +202,7 @@ def flights_df_comparison(
         "precision": precision,
         "recall": recall,
         "f1": f1,
-        "airport_ident_pct_match": airport_stats["overall"]["pct"],
+        "airport_ident_pct_match": airport_stats["overall"]["pct"] if airport_stats else float("nan"),
     }
     return df_all, stats
 
@@ -287,13 +305,116 @@ def haversine(lat1, lon1, lat2, lon2):
 def run_validation(current_date: datetime):
     pass
 
-def get_validation_flights(current_date: date, df_adsb: pl.DataFrame): # this takes in current_date so probably not good function. May need run_validation. 
+def _normalize_validation_tier(validation_tier: str) -> str:
+    try:
+        return _VALIDATION_TIER_ALIASES[validation_tier]
+    except KeyError:
+        valid_tiers = ", ".join(sorted(_VALIDATION_TIER_ALIASES))
+        raise ValueError(f"Unknown validation_tier={validation_tier!r}. Expected one of: {valid_tiers}") from None
+
+
+def _date_only(current_date: date | datetime) -> date:
+    if isinstance(current_date, datetime):
+        return current_date.date()
+    return current_date
+
+
+def add_adsb_verification_status(
+    df_gold: pl.DataFrame,
+    df_adsb: pl.DataFrame,
+    status_col: str = ADSB_VERIFICATION_STATUS_COL,
+) -> pl.DataFrame:
+    """Annotate gold flights with whether their ICAO has a strict ADS-B match.
+
+    The strict verifier is intentionally a confidence label, not the validation
+    population definition. Keeping the hard rows lets the broad eval expose
+    selection bias instead of filtering it away.
+    """
+    verified_icaos = list(get_icaos_with_perfect_match(df_gold, df_adsb))
+    is_verified = pl.col("icao").is_in(verified_icaos)
+    return df_gold.with_columns(
+        is_verified.alias(ADSB_VERIFIED_COL),
+        pl.when(is_verified)
+        .then(pl.lit(VALIDATION_TIER_ADSB_VERIFIED))
+        .otherwise(pl.lit(VALIDATION_TIER_UNVERIFIED_OR_HARD))
+        .alias(status_col),
+    )
+
+
+def validation_flight_tiers(
+    df_gold: pl.DataFrame,
+    df_adsb: pl.DataFrame,
+    status_col: str = ADSB_VERIFICATION_STATUS_COL,
+) -> dict[str, pl.DataFrame]:
+    df_gold = add_adsb_verification_status(df_gold, df_adsb, status_col=status_col)
+    return {
+        VALIDATION_TIER_ALL: df_gold,
+        VALIDATION_TIER_ADSB_VERIFIED: df_gold.filter(pl.col(status_col) == VALIDATION_TIER_ADSB_VERIFIED),
+        VALIDATION_TIER_UNVERIFIED_OR_HARD: df_gold.filter(pl.col(status_col) == VALIDATION_TIER_UNVERIFIED_OR_HARD),
+    }
+
+
+def _filter_predictions_to_gold_icaos(
+    df_pred: pl.DataFrame,
+    df_gold: pl.DataFrame,
+    left_on: str,
+    right_on: str,
+) -> pl.DataFrame:
+    if df_gold.is_empty():
+        return df_pred.head(0)
+    gold_icaos = df_gold.get_column(right_on).unique().to_list()
+    return df_pred.filter(pl.col(left_on).is_in(gold_icaos))
+
+
+def flights_df_comparison_by_validation_tier(
+    df_pred: pl.DataFrame,
+    df_gold: pl.DataFrame,
+    df_adsb: pl.DataFrame,
+    left_on: str = "icao",
+    right_on: str = "icao",
+    validation_tiers: list[str] | None = None,
+    filter_predictions_to_tier_icaos: bool = True,
+) -> dict[str, tuple[pl.DataFrame, dict]]:
+    """Run flight comparison for all, ADS-B-verified, and hard validation tiers."""
+    tiers = validation_flight_tiers(df_gold, df_adsb)
+    tier_names = validation_tiers or [
+        VALIDATION_TIER_ALL,
+        VALIDATION_TIER_ADSB_VERIFIED,
+        VALIDATION_TIER_UNVERIFIED_OR_HARD,
+    ]
+
+    outputs = {}
+    for validation_tier in tier_names:
+        validation_tier = _normalize_validation_tier(validation_tier)
+        df_gold_tier = tiers[validation_tier]
+        df_pred_tier = (
+            _filter_predictions_to_gold_icaos(df_pred, df_gold_tier, left_on, right_on)
+            if filter_predictions_to_tier_icaos
+            else df_pred
+        )
+        outputs[validation_tier] = flights_df_comparison(
+            df_pred_tier,
+            df_gold_tier,
+            left_on=left_on,
+            right_on=right_on,
+        )
+    return outputs
+
+
+def get_validation_flights(
+    current_date: date | datetime,
+    df_adsb: pl.DataFrame,
+    validation_tier: str = VALIDATION_TIER_ALL,
+) -> pl.DataFrame: # this takes in current_date so probably not good function. May need run_validation. 
+    current_date = _date_only(current_date)
     if current_date < date(2026,1,1):
         df_val_flights = get_bts_flights_for_day(current_date, use_cache=True)
     elif current_date > date(2026,1,20):
         df_val_flights = get_sfdps_flights_day(current_date)
     else:
         raise ValueError("No validation data available for this date.")
-    icaos = get_icaos_with_perfect_match(df_val_flights, df_adsb)
-    df_val_flights = df_val_flights.filter(pl.col("icao").is_in(icaos))
-    return df_val_flights
+    validation_tier = _normalize_validation_tier(validation_tier)
+    df_val_flights = add_adsb_verification_status(df_val_flights, df_adsb)
+    if validation_tier == VALIDATION_TIER_ALL:
+        return df_val_flights
+    return df_val_flights.filter(pl.col(ADSB_VERIFICATION_STATUS_COL) == validation_tier)
