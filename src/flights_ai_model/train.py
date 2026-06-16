@@ -46,7 +46,7 @@ def get_model_save_path(num_days: int, epochs: int, dt: datetime | None = None) 
     commit = subprocess.check_output(
         ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
     ).decode().strip()
-    folder = f"{date_str}_{commit}_{num_days}days_{epochs}epochs"
+    folder = f"{date_str}_{commit}_{num_days}days"
     return MODELS_DIR / folder / "checkpoints" / f"epoch_{epochs:03d}.pt"
 
 
