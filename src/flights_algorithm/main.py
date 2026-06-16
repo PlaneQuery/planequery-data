@@ -20,8 +20,13 @@ AIRBORNE_GAP_MIN_SPEED_KT = 90.0
 AIRBORNE_GAP_MIN_ALTITUDE_FT = 1_000
 MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT = 70.0
 MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT = 700.0
+HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT = 30_000
+TAKEOFF_BACKDATE_MIN_ALTITUDE_FT = 3_000
+TAKEOFF_BACKDATE_CLIMB_RATE_FT_PER_MIN = 800.0
+TAKEOFF_BACKDATE_MAX_SPEED_KT = 520.0
 MAX_MESSAGE_GAP = timedelta(minutes=30)
 MAX_AIRBORNE_GAP = timedelta(hours=8)
+MAX_TAKEOFF_BACKDATE = timedelta(minutes=30)
 LANDING_CONFIRMATION_TIME = timedelta(minutes=2)
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
@@ -237,12 +242,38 @@ def _should_continue_across_gap(motion: MessageMotion) -> bool:
         return False
 
     average_speed_kt = _gap_average_speed_kt(motion)
+    if average_speed_kt is None or average_speed_kt > MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT:
+        return False
+    if average_speed_kt >= MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT:
+        return True
+
+    prev_altitude_ft = _baro_altitude_ft(motion.prev)
+    curr_altitude_ft = _baro_altitude_ft(motion.curr)
     return (
-        average_speed_kt is not None
-        and MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT
-        <= average_speed_kt
-        <= MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT
+        prev_altitude_ft is not None
+        and curr_altitude_ft is not None
+        and prev_altitude_ft >= HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT
+        and curr_altitude_ft >= HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT
     )
+
+
+def _estimated_takeoff_time(message: AdsbMessageRow | AdsbPositionMessage) -> datetime:
+    if _on_ground(message) is True:
+        return message.time
+
+    altitude_ft = _baro_altitude_ft(message)
+    if altitude_ft is None or altitude_ft < TAKEOFF_BACKDATE_MIN_ALTITUDE_FT:
+        return message.time
+
+    speed_kt = _reported_ground_speed_kt(message)
+    if speed_kt is not None and speed_kt > TAKEOFF_BACKDATE_MAX_SPEED_KT:
+        return message.time
+
+    backdate = min(
+        MAX_TAKEOFF_BACKDATE,
+        timedelta(minutes=altitude_ft / TAKEOFF_BACKDATE_CLIMB_RATE_FT_PER_MIN),
+    )
+    return message.time - backdate
 
 
 def _maybe_add_segment(
@@ -260,10 +291,11 @@ def _maybe_add_segment(
         return
     if not _landing_endpoint_makes_sense(landing_message, max_speed_kt):
         return
+    takeoff_time = _estimated_takeoff_time(takeoff_message)
     segments.append(
         FlightSegment(
             icao=takeoff_message.icao,
-            takeoff_time=takeoff_message.time,
+            takeoff_time=takeoff_time,
             landing_time=landing_message.time,
             takeoff_message=takeoff_message,
             landing_message=landing_message,
