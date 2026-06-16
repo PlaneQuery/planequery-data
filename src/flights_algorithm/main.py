@@ -10,6 +10,14 @@ import polars as pl
 from adsb.adsb_messages_types import AdsbMessageRow
 
 
+AIRPORT_CANDIDATE_RADIUS_KM = 40.0
+AIRPORT_SIZE_BONUS_KM = 5.0
+MAX_AIRPORT_IDENT_DISTANCE_KM = 8.0
+AIRPORT_SIZE_RANK = {
+    "small_airport": 0,
+    "medium_airport": 1,
+    "large_airport": 2,
+}
 TAKEOFF_SPEED_KT = 35.0
 LANDING_SPEED_KT = 55.0
 TAKEOFF_ACCELERATION_KT = 20.0
@@ -84,6 +92,12 @@ class FlightSegment:
     takeoff_message: AdsbMessageRow | AdsbPositionMessage
     landing_message: AdsbMessageRow | AdsbPositionMessage
     distance_travelled_km: float = 0.0
+
+
+@dataclass(frozen=True)
+class AirportIdentGuess:
+    ident: str | None
+    distance_km: float | None
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -437,23 +451,134 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
     ]
 
 
+def _get_airport_lookup():
+    try:
+        from airports.airportLookup import AirportLookup
+
+        return AirportLookup()
+    except (FileNotFoundError, KeyError):
+        try:
+            AirportLookup._instance = None
+        except (NameError, AttributeError):
+            pass
+        return None
+
+
+def _airport_rank(airport) -> int:
+    return AIRPORT_SIZE_RANK.get(str(airport.type), 0)
+
+
+def _airport_distance_to_message(
+    airport,
+    message: AdsbMessageRow | AdsbPositionMessage,
+) -> float:
+    return haversine_km(message.lat, message.lon, airport.lat, airport.lon)
+
+
+def _airport_guess_for_message(
+    airport_lookup,
+    message: AdsbMessageRow | AdsbPositionMessage,
+) -> AirportIdentGuess:
+    if airport_lookup is None:
+        return AirportIdentGuess(ident=None, distance_km=None)
+
+    airports = airport_lookup.getAirportsWithinRadius(
+        message.lat,
+        message.lon,
+        AIRPORT_CANDIDATE_RADIUS_KM,
+    )
+    if not airports:
+        airports = [airport_lookup.getClosestAirport(message.lat, message.lon)]
+
+    best_airport = min(
+        airports,
+        key=lambda airport: (
+            _airport_distance_to_message(airport, message)
+            - AIRPORT_SIZE_BONUS_KM * _airport_rank(airport)
+        ),
+    )
+    return AirportIdentGuess(
+        ident=best_airport.ident,
+        distance_km=_airport_distance_to_message(best_airport, message),
+    )
+
+
+def _airport_guess_for_ident(
+    airport_lookup,
+    ident: str | None,
+    message: AdsbMessageRow | AdsbPositionMessage,
+) -> AirportIdentGuess:
+    if airport_lookup is None or ident is None:
+        return AirportIdentGuess(ident=None, distance_km=None)
+
+    airport = airport_lookup.get_Airport_from_airport_ident(ident)
+    if airport is None:
+        return AirportIdentGuess(ident=None, distance_km=None)
+    return AirportIdentGuess(
+        ident=ident,
+        distance_km=_airport_distance_to_message(airport, message),
+    )
+
+
+def _confident_airport_ident(guess: AirportIdentGuess) -> str | None:
+    if guess.ident is None or guess.distance_km is None:
+        return None
+    if guess.distance_km > MAX_AIRPORT_IDENT_DISTANCE_KM:
+        return None
+    return guess.ident
+
+
+def _airport_ident_guesses_for_segments(
+    segments: Sequence[FlightSegment],
+) -> tuple[list[AirportIdentGuess], list[AirportIdentGuess]]:
+    airport_lookup = _get_airport_lookup()
+    takeoff_guesses = [
+        _airport_guess_for_message(airport_lookup, segment.takeoff_message)
+        for segment in segments
+    ]
+    landing_guesses = [
+        _airport_guess_for_message(airport_lookup, segment.landing_message)
+        for segment in segments
+    ]
+
+    sorted_indices = sorted(
+        range(len(segments)),
+        key=lambda index: (segments[index].icao, segments[index].takeoff_time),
+    )
+    for previous_index, current_index in zip(sorted_indices, sorted_indices[1:]):
+        previous_segment = segments[previous_index]
+        current_segment = segments[current_index]
+        if previous_segment.icao != current_segment.icao:
+            continue
+
+        shared_ident = takeoff_guesses[current_index].ident
+        landing_guesses[previous_index] = _airport_guess_for_ident(
+            airport_lookup,
+            shared_ident,
+            previous_segment.landing_message,
+        )
+
+    return takeoff_guesses, landing_guesses
+
+
 def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
     from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
 
     if not segments:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
 
+    takeoff_guesses, landing_guesses = _airport_ident_guesses_for_segments(segments)
     rows = []
-    for segment in segments:
+    for segment, takeoff_guess, landing_guess in zip(segments, takeoff_guesses, landing_guesses):
         rows.append(
             {
                 "icao": segment.icao,
                 "callsign": "",
                 "registration": "",
                 "takeoff_time": segment.takeoff_time,
-                "takeoff_airport_ident": "",
+                "takeoff_airport_ident": _confident_airport_ident(takeoff_guess),
                 "landing_time": segment.landing_time,
-                "landing_airport_ident": "",
+                "landing_airport_ident": _confident_airport_ident(landing_guess),
                 "pia": False,
                 "ladd": False,
                 "military": False,
