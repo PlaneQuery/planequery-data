@@ -20,6 +20,7 @@ model_output_paths = train(train_paths, epochs=10)
 for path in model_output_paths:
     val_date = date(2026,3,1)
     sfdps_flights = get_sfdps_flights_day(val_date)
+    icaos = sfdps_flights.get_column("icao").to_list()
     df_adsb = read_icaos_from_adsb(val_date, icaos)
     df_gold = get_matching_icaos_in_flights(sfdps_flights, df_adsb)
     icaos = list(set(df_gold.get_column("icao")))
