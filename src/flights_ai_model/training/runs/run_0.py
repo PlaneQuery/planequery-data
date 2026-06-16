@@ -6,7 +6,7 @@ from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from evaluation.flights import evaluation
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from flights_ai_model.features import get_icaos_in_features, read_icaos_from_features
-from flights_ai_model.inference import inference
+from flights_ai_model.inference import inference, run_inference
 from flights_ai_model.train import train
 from flights_ai_model.training.training_days import sequence_training_days
 import polars as pl
@@ -19,11 +19,10 @@ model_output_paths = train(train_paths, epochs=10)
 # Get all the infernerce features for a day although I could get just the training features subset since that's what I'm going to be checking anyways. 
 for path in model_output_paths:
     val_date = date(2026,3,1)
+    df_test = run_inference(val_date, path)
     sfdps_flights = get_sfdps_flights_day(val_date)
     bts_flights = get_bts_flights_for_day(val_date)
     icaos = list(set(sfdps_flights.get_column("icao")) | set(bts_flights.get_column("icao")))
-    df_features = read_icaos_from_features(val_date,icaos)
-    df_test = inference(df_features,path)
     df_adsb = read_icaos_from_adsb(val_date, icaos)
     for df_gold in [sfdps_flights, bts_flights]:
         df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
