@@ -15,8 +15,8 @@ from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import is_ecs, s3_key_exists
 from data_engineering.utils import OUTPUT_DIR, S3_BUCKET
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
-INFERENCE_FEATURES_VERSION = "v3"
-TRAINING_FEATURES_VERSION = "v18"
+INFERENCE_FEATURES_VERSION = "v4"
+TRAINING_FEATURES_VERSION = "v19"
 FEATURES_DIR = OUTPUT_DIR / "data/features"
 TRAINING_FEATURES_DIR = FEATURES_DIR / "training" / TRAINING_FEATURES_VERSION
 INFERENCE_FEATURES_DIR = FEATURES_DIR / "inference" / INFERENCE_FEATURES_VERSION
@@ -25,6 +25,7 @@ os.makedirs(INFERENCE_FEATURES_DIR, exist_ok=True)
 
 NULLABLE_COLS = ["baro_altitude_ft", "ground_speed_kt", "track_deg", "above_ground_level_closest_airport"]
 NULL_INDICATOR_COLS = [f"{c}_is_null" for c in NULLABLE_COLS]
+POSITION_FEATURE_COLS = ["position_x", "position_y", "position_z"]
 
 ZSCORE_COLS  = ["baro_altitude_ft", "ground_speed_kt", "track_deg", "time_delta_s", "above_ground_level_closest_airport"]
 
@@ -226,9 +227,16 @@ def _to_features(df: pl.DataFrame) -> pl.DataFrame:
     print(f"Start compute elevation from closest airport")
     df = elevation_from_closest_airport(df)
     print(f"Finished compute elevation from closest airport")
+    lat_rad = pl.col("lat").fill_nan(None) * (np.pi / 180.0)
+    lon_rad = pl.col("lon").fill_nan(None) * (np.pi / 180.0)
     df = (
         df
         .sort(["icao", "time"])
+        .with_columns([
+            (lat_rad.cos() * lon_rad.cos()).fill_null(0.0).alias("position_x"),
+            (lat_rad.cos() * lon_rad.sin()).fill_null(0.0).alias("position_y"),
+            lat_rad.sin().fill_null(0.0).alias("position_z"),
+        ])
         .with_columns([
             pl.col(c).is_null().cast(pl.Int8).alias(f"{c}_is_null")
             for c in NULLABLE_COLS
@@ -301,6 +309,18 @@ def elevation_from_closest_airport(df: pl.DataFrame) -> pl.DataFrame:
         pl.Series("above_ground_level_closest_airport", agl_full, dtype=pl.Float64).fill_nan(None)
     )
 
+
+def create_features(features: str, source: str, start_date: date, end_date: date, write_to_s3: bool = False) -> None:
+    current = start_date
+    while current < end_date:
+        if features == "training":
+            print(f"Creating training features for {current:%Y-%m-%d}")
+            create_training_features_for_day(current, source)
+        else:
+            print(f"Creating inference features for {current:%Y-%m-%d}")
+            create_inference_features_for_day(current, write_to_s3=write_to_s3)
+        current += timedelta(days=1)
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -310,15 +330,4 @@ if __name__ == "__main__":
     parser.add_argument("--end-date",   required=True, type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), help="End date exclusive (YYYY-MM-DD)")
     parser.add_argument("--write-to-s3", action="store_true", help="Whether to write inference features to S3 (also enables S3 caching)")
     args = parser.parse_args()
-    write_to_s3 = args.write_to_s3
-
-    current = args.start_date
-    while current < args.end_date:
-        if args.features == "training":
-            print(f"Creating training features for {current:%Y-%m-%d}")
-            source = args.source
-            create_training_features_for_day(current, source)
-        else:
-            print(f"Creating inference features for {current:%Y-%m-%d}")
-            create_inference_features_for_day(current, write_to_s3=write_to_s3)
-        current += timedelta(days=1)
+    create_features(args.features, args.source, args.start_date, args.end_date, write_to_s3=args.write_to_s3)
