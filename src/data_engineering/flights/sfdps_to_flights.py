@@ -114,9 +114,11 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame: # This is golden fo
     return df
 
 def filter_sfdps_flights(df, current_date: datetime):
+    day_start = current_date.replace(hour=0, minute=0, second=0, microsecond=0)
     df = df.filter(
     (pl.col("takeoff_time").dt.date() == current_date.date()) &
-    (pl.col("landing_time").dt.date() == current_date.date())
+    (pl.col("landing_time").dt.date() == current_date.date()) &
+    (pl.col("takeoff_time") != day_start)
     )
     df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
     df = df.filter(pl.col("flight_duration") > pl.duration(minutes=20))
