@@ -7,6 +7,14 @@ from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfe
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 
+def _airport_ident_for_match_expr(col: str) -> pl.Expr:
+    ident = pl.col(col).str.to_uppercase()
+    return (
+        pl.when((ident.str.len_chars() == 4) & (ident.str.slice(0, 1) == "K"))
+        .then(ident.str.slice(1))
+        .otherwise(ident)
+    )
+
 def flights_df_comparison(
     df1: pl.DataFrame,
     df2: pl.DataFrame,
@@ -136,12 +144,14 @@ def flights_df_comparison(
     airport_stats: dict = {}
     for ident_col in ("takeoff_airport_ident", "landing_airport_ident"):
         df2_col = f"{ident_col}_df2"
+        left_ident = _airport_ident_for_match_expr(ident_col)
+        right_ident = _airport_ident_for_match_expr(df2_col)
         n_with_both = df_matched_out.filter(
             pl.col(ident_col).is_not_null() & pl.col(df2_col).is_not_null()
         ).height
         n_match = df_matched_out.filter(
             pl.col(ident_col).is_not_null() & pl.col(df2_col).is_not_null() &
-            (pl.col(ident_col) == pl.col(df2_col))
+            (left_ident == right_ident)
         ).height
         pct = n_match / n_with_both if n_with_both > 0 else float("nan")
         airport_stats[ident_col] = {"n_with_both": n_with_both, "n_match": n_match, "pct": pct}
