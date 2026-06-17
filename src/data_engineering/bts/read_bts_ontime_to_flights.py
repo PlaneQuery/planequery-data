@@ -14,13 +14,14 @@ tf = TimezoneFinder()
 COLUMNS = set([
     "fl_date", "op_unique_carrier", "op_carrier_fl_num",
     "origin", "dest", "wheels_off", "wheels_on",
-    "cancelled", "air_time", "diverted", "crs_dep_time", "tail_num",
+    "cancelled", "air_time", "diverted", "crs_dep_time", "crs_arr_time",
+    "arr_delay", "tail_num",
 ])
 
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
-BTS_FLIGHTS_VERSION = "v2"
+BTS_FLIGHTS_VERSION = "v3"
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 
 
@@ -28,7 +29,69 @@ def _hhmm_to_minutes(value: int) -> int:
     return (value // 100) * 60 + (value % 100)
 
 
+def _has_value(value) -> bool:
+    return value is not None and value == value
+
+
+def _local_datetime(local_date: date, hhmm: int, timezone_name: str) -> datetime:
+    return datetime(
+        local_date.year,
+        local_date.month,
+        local_date.day,
+        tzinfo=ZoneInfo(timezone_name),
+    ) + timedelta(minutes=_hhmm_to_minutes(hhmm))
+
+
+def _closest_local_datetime(reference: datetime, hhmm: int, timezone_name: str) -> datetime:
+    local_reference = reference.astimezone(ZoneInfo(timezone_name))
+    base = _local_datetime(local_reference.date(), hhmm, timezone_name)
+    candidates = [base - timedelta(days=1), base, base + timedelta(days=1)]
+    return min(candidates, key=lambda candidate: abs(candidate - reference))
+
+
+def _scheduled_arrival_datetime(row: dict) -> datetime:
+    scheduled_departure = _local_datetime(
+        row["fl_date"],
+        row["crs_dep_time"],
+        row["origin_timezone"],
+    )
+    scheduled_arrival = _local_datetime(
+        row["fl_date"],
+        row["crs_arr_time"],
+        row["dest_timezone"],
+    )
+    while scheduled_arrival.astimezone(ZoneInfo("UTC")) <= scheduled_departure.astimezone(ZoneInfo("UTC")):
+        scheduled_arrival += timedelta(days=1)
+    return scheduled_arrival
+
+
+def _compute_bts_timestamps_from_arrival_delay(row: dict) -> dict | None:
+    required_fields = [
+        "dest_timezone",
+        "crs_arr_time",
+        "arr_delay",
+        "wheels_on",
+    ]
+    if any(not _has_value(row.get(field)) for field in required_fields):
+        return None
+
+    scheduled_arrival = _scheduled_arrival_datetime(row)
+    actual_gate_arrival = scheduled_arrival + timedelta(minutes=row["arr_delay"])
+    landing = _closest_local_datetime(
+        actual_gate_arrival,
+        row["wheels_on"],
+        row["dest_timezone"],
+    )
+    landing_utc = landing.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    takeoff_utc = landing_utc - timedelta(minutes=row["air_time"])
+    return {"time_takeoff": takeoff_utc, "time_landing": landing_utc}
+
+
 def _compute_bts_timestamps(row: dict) -> dict:
+    timestamps = _compute_bts_timestamps_from_arrival_delay(row)
+    if timestamps is not None:
+        return timestamps
+
     tz_name = row["origin_timezone"]
     fl_date = row["fl_date"]
     day = datetime(fl_date.year, fl_date.month, fl_date.day, tzinfo=ZoneInfo(tz_name))
@@ -120,7 +183,17 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     )
     df = (
         df.with_columns(
-            pl.struct("fl_date", "origin_timezone", "wheels_off", "crs_dep_time", "air_time")
+            pl.struct(
+                "fl_date",
+                "origin_timezone",
+                "dest_timezone",
+                "wheels_off",
+                "wheels_on",
+                "crs_dep_time",
+                "crs_arr_time",
+                "arr_delay",
+                "air_time",
+            )
             .map_elements(
                 _compute_bts_timestamps,
                 return_dtype=pl.Struct({"time_takeoff": pl.Datetime("us"), "time_landing": pl.Datetime("us")}),
