@@ -20,6 +20,44 @@ COLUMNS = set([
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+BTS_FLIGHTS_VERSION = "v2"
+BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
+
+
+def _hhmm_to_minutes(value: int) -> int:
+    return (value // 100) * 60 + (value % 100)
+
+
+def _compute_bts_timestamps(row: dict) -> dict:
+    tz_name = row["origin_timezone"]
+    fl_date = row["fl_date"]
+    day = datetime(fl_date.year, fl_date.month, fl_date.day, tzinfo=ZoneInfo(tz_name))
+
+    wheels_off_minutes = _hhmm_to_minutes(row["wheels_off"])
+    scheduled_departure_minutes = _hhmm_to_minutes(row["crs_dep_time"])
+    if (
+        wheels_off_minutes < scheduled_departure_minutes
+        and scheduled_departure_minutes - wheels_off_minutes > BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES
+    ):
+        day += timedelta(days=1)
+
+    takeoff = day + timedelta(minutes=wheels_off_minutes)
+    takeoff_utc = takeoff.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    landing_utc = takeoff_utc + timedelta(minutes=row["air_time"])
+    return {"time_takeoff": takeoff_utc, "time_landing": landing_utc}
+
+
+def _bts_flights_parquet_path(year: int, month: int) -> Path:
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "bts"
+        / BTS_FLIGHTS_VERSION
+        / f"year={year}"
+        / f"month={month:02d}"
+        / "bts_flights.parquet"
+    )
 
 def ident_to_timezone_mapping():
     airport_lookup.ident_index
@@ -80,22 +118,11 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     df = df.with_columns(
         pl.col("fl_date").str.to_date(format="%Y-%m-%d").alias("fl_date")
     )
-    def compute_timestamps(row: dict) -> dict:
-        tz_name = row["origin_timezone"]
-        fl_date = row["fl_date"]  # datetime.date from polars Date column
-        day = datetime(fl_date.year, fl_date.month, fl_date.day, tzinfo=ZoneInfo(tz_name))
-        if row["wheels_off"] < row["crs_dep_time"]:
-            day += timedelta(days=1)
-        takeoff = day + timedelta(hours=row["wheels_off"] // 100, minutes=row["wheels_off"] % 100)
-        takeoff_utc = takeoff.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
-        landing_utc = takeoff_utc + timedelta(minutes=row["air_time"])
-        return {"time_takeoff": takeoff_utc, "time_landing": landing_utc}
-
     df = (
         df.with_columns(
             pl.struct("fl_date", "origin_timezone", "wheels_off", "crs_dep_time", "air_time")
             .map_elements(
-                compute_timestamps,
+                _compute_bts_timestamps,
                 return_dtype=pl.Struct({"time_takeoff": pl.Datetime("us"), "time_landing": pl.Datetime("us")}),
             )
             .struct.unnest()
@@ -117,13 +144,13 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     for col_name, dtype in FLIGHT_POLARS_SCHEMA.items():
         df = df.with_columns(pl.col(col_name).cast(dtype))
     df = df.with_columns(pl.col("icao").str.to_lowercase())
-    flights_output_path = OUTPUT_DIR / "data" / "flights" / "bts" / "v1" / f"year={year}" / f"month={month:02d}" / "bts_flights.parquet"
+    flights_output_path = _bts_flights_parquet_path(year, month)
     os.makedirs(flights_output_path.parent, exist_ok=True)
     df.write_parquet(flights_output_path)
     return df
 
 def get_bts_flights_for_day(target_date: date, use_cache = True) -> pl.DataFrame: # TODO: raise error if a particular date has no data. 
-    path = OUTPUT_DIR / "data" / "flights" / "bts" / "v1" / f"year={target_date.year}" / f"month={target_date.month:02d}" / "bts_flights.parquet"
+    path = _bts_flights_parquet_path(target_date.year, target_date.month)
     if use_cache == False or not path.exists():
         create_flights_from_bts(target_date.year, target_date.month)
     df = pl.read_parquet(path)
