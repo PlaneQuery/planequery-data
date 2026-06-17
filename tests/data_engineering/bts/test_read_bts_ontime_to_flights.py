@@ -40,3 +40,45 @@ def test_compute_bts_timestamps_rolls_true_midnight_wrap_to_next_day():
         "time_takeoff": datetime(2026, 3, 1, 7, 5),
         "time_landing": datetime(2026, 3, 1, 7, 35),
     }
+
+
+def test_compute_bts_timestamps_uses_arrival_delay_for_delayed_next_day_flight():
+    timestamps = _compute_bts_timestamps(
+        {
+            "fl_date": date(2026, 3, 1),
+            "origin_timezone": "America/Chicago",
+            "dest_timezone": "America/Chicago",
+            "wheels_off": 1319,
+            "wheels_on": 1406,
+            "crs_dep_time": 2234,
+            "crs_arr_time": 2348,
+            "arr_delay": 864,
+            "air_time": 47,
+        }
+    )
+
+    assert timestamps == {
+        "time_takeoff": datetime(2026, 3, 2, 19, 19),
+        "time_landing": datetime(2026, 3, 2, 20, 6),
+    }
+
+
+def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
+    timestamps = _compute_bts_timestamps(
+        {
+            "fl_date": date(2026, 3, 1),
+            "origin_timezone": "America/New_York",
+            "dest_timezone": "America/New_York",
+            "wheels_off": 600,
+            "wheels_on": 703,
+            "crs_dep_time": 549,
+            "crs_arr_time": 703,
+            "arr_delay": 0,
+            "air_time": 63,
+        }
+    )
+
+    assert timestamps == {
+        "time_takeoff": datetime(2026, 3, 1, 11, 0),
+        "time_landing": datetime(2026, 3, 1, 12, 3),
+    }
