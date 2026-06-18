@@ -23,43 +23,48 @@ def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_d
     '''
     we assume flights are assigned to days by takeoff_time. Only 1 flight in grace period at either end.
     '''
-    i = 0
+    i0 = 0
+    i1 = 0
     f0_match = [Match.FALSE for _ in flights_0]
     f1_match = [Match.FALSE for _ in flights_1]
 
-    while i < min(len(flights_0), len(flights_1)):
-        f0 = flights_0[i]
-        f1 = flights_1[i]
+    while i0 < len(flights_0) and i1 < len(flights_1):
+        f0 = flights_0[i0]
+        f1 = flights_1[i1]
         flight_match =  compare_flight(f0,f1, compare_airports)
         if flight_match:
-            f0_match[i] = Match.TRUE
-            f1_match[i] = Match.TRUE
-            i+=1
+            f0_match[i0] = Match.TRUE
+            f1_match[i1] = Match.TRUE
+            i0 += 1
+            i1 += 1
             continue
         flights_len_match = len(flights_0) == len(flights_1)
         if not flights_len_match:
-            f0_in_grace = f0.takeoff_time - start_dt <= grace_period
-            f1_in_grace = f1.takeoff_time -start_dt <= grace_period
-            if i == 0:
+            if i0 == 0 and i1 ==0:
+                f0_in_grace = f0.takeoff_time - start_dt <= grace_period
+                f1_in_grace = f1.takeoff_time -start_dt <= grace_period
                 if f0_in_grace and not f1_in_grace:
-                    f0_match[0] = Match.DISCARD
-                    flights_0 = flights_0[1:]
+                    f0_match[i0] = Match.DISCARD
+                    i0+=1
                     continue
                 if not f0_in_grace and f1_in_grace:
-                    f1_match[0] = Match.DISCARD
-                    flights_1 = flights_1[1:]
+                    f1_match[i1] = Match.DISCARD
+                    i1+=1
                     continue
-        i += 1
+        i0+=1
+        i1+=1
     
-    if len(flights_0) != len(flights_1):            
-        if len(flights_0) +1 == len(flights_1):
-            f0 = flights_0[-1]
-            f0_in_grace = end_dt - f0.takeoff_time <= grace_period
-            f0_match[-1] = Match.DISCARD
-        elif len(flights_1) + 1 == len(flights_0):
-            f1 = flights_1[-1]
-            f1_in_grace = end_dt - f1.takeoff_time <= grace_period
-            f1_match[-1] = Match.DISCARD
+    if i0 < len(flights_0):
+        f0 = flights_0[i0]
+        f0_in_grace = end_dt - f0.takeoff_time <= grace_period
+        if f0_in_grace and f0_match[i0] == Match.FALSE:
+            f0_match[i0] = Match.DISCARD
+    if i1 < len(flights_1):
+        f1 = flights_1[i1]
+        f1_in_grace = end_dt - f1.takeoff_time <= grace_period
+        if f1_in_grace and f1_match[i1] == Match.FALSE:
+            f1_match[i1] = Match.DISCARD
+
     return (f0_match, f1_match)
 
 '''
