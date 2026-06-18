@@ -32,6 +32,12 @@ flights_3 = [
     create_flight(datetime(2026,1,1,6)),
 ]
 
+flights_4 = [
+    create_flight(datetime(2026,1,1,3)),
+    create_flight(datetime(2026,1,1,6)),
+    create_flight(datetime(2026,1,1,23,58))
+]
+
 
 start_dt = datetime.combine(date(2026,1,1), time.min)
 end_dt = datetime.combine(date(2026,1,2), time.min)
