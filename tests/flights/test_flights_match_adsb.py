@@ -26,6 +26,8 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
     # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
+
+    #a7f63d on 2026-03-01 in BTS is accurate and very hard to verify. Alaska flights
 if __name__ == "__main__":
     unittest.main()
 
