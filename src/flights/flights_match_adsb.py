@@ -30,7 +30,7 @@ def closest_time_row_idx(adsb_rows, target_time, lte=True):
 
     return idx
 
-def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
+def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: 
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
