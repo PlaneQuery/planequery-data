@@ -19,7 +19,7 @@ def compare_flight(f0: Flight, f1: Flight, compare_airports = True):
             return False
     return True
 
-def flights_comparision(flights_0: list[Flight], flights_1: list[Flight], start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True):
+def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True):
     '''
     we assume flights are assigned to days by takeoff_time. Only 1 flight in grace period at either end.
     '''
