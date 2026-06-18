@@ -28,6 +28,7 @@ class TestFlightsMatchAdsb(unittest.TestCase):
     # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
 
     #a7f63d on 2026-03-01 in BTS is accurate and very hard to verify. Alaska flights. Also a6ce36 on 2026-03-01. Similiarly an Alaska flight. BTS is accurate.
+    # a7f63d this should have been gotten by the cutoff time logic.https://globe.adsbexchange.com/?icao=ac9113&lat=41.393&lon=-107.783&zoom=6.0&showTrace=2026-03-01&leg=1&timestamp=1772325663 
 if __name__ == "__main__":
     unittest.main()
 
