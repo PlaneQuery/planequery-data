@@ -78,3 +78,8 @@ def test_flights_comparison():
     assert f0_match == [Match.TRUE] * len(flights_2)
     assert f1_match == [Match.DISCARD] + ([Match.TRUE] * len(flights_2)) + [Match.DISCARD]
 
+    f0_match, f1_match = flights_comparison(flights_5, flights_2 , start_dt, end_dt)
+    assert f1_match == [Match.TRUE] * len(flights_2)
+    assert f0_match == [Match.DISCARD] + ([Match.TRUE] * len(flights_2)) + [Match.DISCARD]
+
+# I can have a fixed dataset here. 
