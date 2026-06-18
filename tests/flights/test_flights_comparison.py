@@ -64,3 +64,8 @@ def test_flights_comparison():
     f1_matches = [Match.DISCARD] + f0_matches
     assert f0_match == f0_matches
     assert f1_match == f1_matches
+
+    f0_match, f1_match = flights_comparison(flights_2, flights_4, start_dt, end_dt)
+    assert f0_match == [Match.TRUE] * len(flights_2)
+    assert f1_match == [Match.TRUE] * len(flights_2) + [Match.DISCARD]
+
