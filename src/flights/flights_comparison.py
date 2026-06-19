@@ -104,7 +104,35 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
 
         dfs.append(df)
 
-    return pl.concat(dfs)
+    df = pl.concat(dfs)
+    df = df.with_columns(
+    pl.when(
+        (pl.col("match_status") == "both")
+        & (pl.col("takeoff_airport_ident") == pl.col("takeoff_airport_ident_df1"))
+    )
+    .then(True)
+    .otherwise(False)
+    .alias("same_takeoff_airport_ident")
+    )
+    df = df.with_columns(
+    pl.when(
+        (pl.col("match_status") == "both")
+        & (pl.col("landing_airport_ident") == pl.col("landing_airport_ident_df1"))
+    )
+    .then(True)
+    .otherwise(False)
+    .alias("same_landing_airport_ident")
+    )
+    df = df.with_columns(
+    pl.when(
+        (pl.col("match_status") == "both")
+        & (pl.col("same_takeoff_airport_ident") & pl.col("same_landing_airport_ident"))
+    )
+    .then(True)
+    .otherwise(False)
+    .alias("same_airport_ident")
+    )
+    return df
 
 def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
     true_positive = df.filter(pl.col("match_status") == "both").height
@@ -118,6 +146,8 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
     recall = true_positive / recall_denominator if recall_denominator else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
+    airport_ident_match = df.filter(pl.col("same_airport_ident")).height
+    airport_ident_match_pct = airport_ident_match / true_positive
     return {
         "true_positive": true_positive,
         "false_positive": false_positive,
@@ -125,4 +155,5 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "airport_ident_match_pct": airport_ident_match_pct,
     }
