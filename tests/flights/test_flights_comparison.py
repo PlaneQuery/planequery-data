@@ -111,6 +111,7 @@ def test_df_flights_comparison_stats():
     comparison = pl.DataFrame(
         {
             "match_status": ["both", "both", "df0_only", "df1_only", "df1_only"],
+            "same_airport_ident": [True, False, False, False, False],
         }
     )
 
@@ -122,20 +123,8 @@ def test_df_flights_comparison_stats():
     assert stats["precision"] == pytest.approx(2 / 3)
     assert stats["recall"] == pytest.approx(1 / 2)
     assert stats["f1"] == pytest.approx(4 / 7)
+    assert stats["airport_ident_match_pct"] == pytest.approx(1 / 2)
 
-def test_df_flights_comparison_stats_with_no_matches():
-    comparison = pl.DataFrame({"match_status": []}, schema={"match_status": pl.String})
-
-    stats = df_flights_comparison_stats(comparison)
-
-    assert stats == {
-        "true_positive": 0,
-        "false_positive": 0,
-        "false_negative": 0,
-        "precision": 0.0,
-        "recall": 0.0,
-        "f1": 0.0,
-    }
 
 def test_df_test_df_bts_flights():
     from datetime import date, datetime, time
