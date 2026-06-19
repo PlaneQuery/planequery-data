@@ -1,8 +1,9 @@
 
 from datetime import timedelta
-from enum import Enum
-from data_engineering.flights.flight_type import Flight
-
+from enum import Enum, unique
+from data_engineering.flights.flight_type import Flight, flights_df_to_flights
+import polars as pl
+from itertools import zip_longest
 class Match(Enum):
     FALSE = 0
     TRUE = 1
@@ -21,61 +22,73 @@ def compare_flight(f0: Flight, f1: Flight, compare_airports = True):
 
 def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True):
     '''
-    we assume flights are assigned to days by takeoff_time. Only 1 flight in grace period at either end.
+    we assume flights are assigned to days by takeoff_time. 
     '''
-    i0 = 0
-    i1 = 0
-    f0_match = [Match.FALSE for _ in flights_0]
-    f1_match = [Match.FALSE for _ in flights_1]
+    f0_series: list[int | str | None] = [None] * len(flights_0)
+    f1_series: list[int | str | None] = [None] * len(flights_1)
 
-    while i0 < len(flights_0) and i1 < len(flights_1):
-        f0 = flights_0[i0]
-        f1 = flights_1[i1]
-        flight_match =  compare_flight(f0,f1, compare_airports)
-        if flight_match:
-            f0_match[i0] = Match.TRUE
-            f1_match[i1] = Match.TRUE
-            i0 += 1
-            i1 += 1
-            continue
-        flights_len_match = len(flights_0) == len(flights_1)
-        if not flights_len_match:
-            if i0 == 0 and i1 ==0:
-                f0_in_grace = f0.takeoff_time - start_dt <= grace_period
-                f1_in_grace = f1.takeoff_time -start_dt <= grace_period
-                if f0_in_grace and not f1_in_grace:
-                    f0_match[i0] = Match.DISCARD
-                    i0+=1
-                    continue
-                if not f0_in_grace and f1_in_grace:
-                    f1_match[i1] = Match.DISCARD
-                    i1+=1
-                    continue
-        i0+=1
-        i1+=1
-    
-    if i0 < len(flights_0):
-        f0 = flights_0[i0]
-        f0_in_grace = end_dt - f0.takeoff_time <= grace_period
-        if f0_in_grace and f0_match[i0] == Match.FALSE:
-            f0_match[i0] = Match.DISCARD
-    if i1 < len(flights_1):
-        f1 = flights_1[i1]
-        f1_in_grace = end_dt - f1.takeoff_time <= grace_period
-        if f1_in_grace and f1_match[i1] == Match.FALSE:
-            f1_match[i1] = Match.DISCARD
+    i1_start = 0
 
-    return (f0_match, f1_match)
+    for i0, f0 in enumerate(flights_0):
+        for j in range(i1_start, len(flights_1)):
+            if f1_series[j] is not None:
+                continue
 
-'''
-let's go through scenarios 
-first flight of flights_0 dosen't match first flight of flights_1 or first flight of flights_1 dosen't match that of flights_0 and there is uneuqla number of flights. 
-last flight of flights_0 dosen't match last flight of flights_1
+            if compare_flight(f0, flights_1[j], compare_airports):
+                f0_series[i0] = j
+                f1_series[j] = i0
+                i1_start = j + 1
+                break
 
-flights_0 has 1 or 2 more flights than flights_1.
-flights_0 has 
-flights_1 has more flights than flights_1
-what about when they both have a seperate but diffrent flight from cutoff. 
+    if f0_series and f0_series[0] is None and flights_0[0].takeoff_time - start_dt <= grace_period:
+        f0_series[0] = "DISCARD"
 
-Maybe we go through check with all flights and then check if the flights that have no match could be eliminated 
-'''
+    if f1_series and f1_series[0] is None and flights_1[0].takeoff_time - start_dt <= grace_period:
+        f1_series[0] = "DISCARD"
+
+    if f0_series and f0_series[-1] is None and end_dt - flights_0[-1].takeoff_time <= grace_period:
+        f0_series[-1] = "DISCARD"
+
+    if f1_series and f1_series[-1] is None and end_dt - flights_1[-1].takeoff_time <= grace_period:
+        f1_series[-1] = "DISCARD"
+
+    return (f0_series, f1_series)
+
+# we return the maps of what they map to and then.... we create both, df0, df1. in the dataframe I'll keep the original order those rows will just haven null for i.e the df1 columns
+def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True):
+    icaos = sorted(set(df_0.get_column("icao").unique().to_list()) | set(df_1.get_column("icao").unique().to_list()))
+    dfs = []
+    for icao in icaos:
+        df0 = df_0.filter(pl.col("icao") == icao)
+        df1 = df_1.filter(pl.col("icao") == icao)
+        df0 = df0.sort("takeoff_time")
+        df1 = df1.sort("takeoff_time")
+        flights_0 = flights_df_to_flights(df0)
+        flights_1 = flights_df_to_flights(df1)
+        match_0, match_1 = flights_comparison(flights_0, flights_1, start_dt, end_dt, grace_period, compare_airports)
+
+        df0 = df0.with_columns(pl.Series("match", [match.value for match in match_0], dtype=pl.Int8))
+        df1 = df1.with_columns(pl.Series("match", [match.value for match in match_1], dtype=pl.Int8))
+
+        df0 = df0.filter(pl.col("match") != Match.DISCARD.value)
+        df1 = df1.filter(pl.col("match") != Match.DISCARD.value)
+        flights_0 = [flight for flight, match in zip(flights_0, match_0) if match != Match.DISCARD]
+        flights_1 = [flight for flight, match in zip(flights_1, match_1) if match != Match.DISCARD]
+        match_0 = [match for match in match_0 if match != Match.DISCARD]
+        match_1 = [match for match in match_1 if match != Match.DISCARD]
+
+        match_series = []
+        for x,y in zip_longest(match_0, match_1, fillvalue=None):
+            if x == Match.TRUE and y == Match.TRUE:
+                match_series.append("both")
+            elif x == Match:
+                match_series.append(False)
+
+        df1 = df1.drop("icao")
+        df1 = df1.rename({col: f"{col}_1" for col in df1.columns})
+        df = pl.concat([df0, df1], how="horizontal")
+        df = df.with_columns(pl.Series("match_status", match_series))
+        df = df.with_columns(pl.lit(icao).alias("icao"))
+        dfs.append(df)
+
+    return pl.concat(dfs)
