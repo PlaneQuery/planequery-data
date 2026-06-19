@@ -48,7 +48,7 @@ def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_d
     if f0_series and f0_series[-1] is None and end_dt - flights_0[-1].takeoff_time <= grace_period:
         f0_series[-1] = "DISCARD"
 
-    if f1_series and f1_series[-1] is None and end_dt - flights_1[-1].takeoff_time <= grace_period:
+    if f1_series and f1_series[-1] is None and (end_dt - flights_1[-1].takeoff_time <= grace_period or flights_1[-1].landing_time > end_dt): # TODO: landing time is temporary since current ADSBX data is only for 1 day. 
         f1_series[-1] = "DISCARD"
 
     return (f0_series, f1_series)
