@@ -50,36 +50,33 @@ flights_comparison(flights_0,flights_0, start_dt, end_dt)
 
 def test_flights_comparison():
     f0_match, f1_match = flights_comparison(flights_0, flights_0, start_dt, end_dt)
-    assert f0_match == [Match.TRUE]
-    assert f1_match == [Match.TRUE]
+    assert f0_match == [0]
+    assert f1_match == [0]
 
     f0_match, f1_match = flights_comparison(flights_1, flights_1, start_dt, end_dt)
-    matches = [Match.TRUE] * (len(flights_1))
+    matches = [0, 1, 2, 3]
     assert f0_match == matches
     assert f1_match == matches
 
     f0_match, f1_match = flights_comparison(flights_0, flights_1, start_dt, end_dt)
-    assert f0_match == [Match.TRUE]
-    assert f1_match == [Match.TRUE] + [Match.FALSE] * (len(f1_match) - 1)
+    assert f0_match == [0]
+    assert f1_match == [0] + [None] * (len(f1_match) - 1)
 
     # check both ways 
     f0_match, f1_match = flights_comparison(flights_2, flights_3, start_dt, end_dt)
-    f0_matches = [Match.TRUE] * len(flights_2)
-    print(f0_matches)
-    f1_matches = [Match.DISCARD] + f0_matches
-    assert f0_match == f0_matches
-    assert f1_match == f1_matches
+    assert f0_match == [1,2]
+    assert f1_match == ['DISCARD',0,1]
 
     f0_match, f1_match = flights_comparison(flights_2, flights_4, start_dt, end_dt)
-    assert f0_match == [Match.TRUE] * len(flights_2)
-    assert f1_match == [Match.TRUE] * len(flights_2) + [Match.DISCARD]
+    assert f0_match == [0,1]
+    assert f1_match == [0,1, 'DISCARD']
 
     f0_match, f1_match = flights_comparison(flights_2, flights_5, start_dt, end_dt)
-    assert f0_match == [Match.TRUE] * len(flights_2)
-    assert f1_match == [Match.DISCARD] + ([Match.TRUE] * len(flights_2)) + [Match.DISCARD]
+    assert f0_match == [1,2]
+    assert f1_match == ["DISCARD",0,1, 'DISCARD']
 
     f0_match, f1_match = flights_comparison(flights_5, flights_2 , start_dt, end_dt)
-    assert f1_match == [Match.TRUE] * len(flights_2)
-    assert f0_match == [Match.DISCARD] + ([Match.TRUE] * len(flights_2)) + [Match.DISCARD]
+    assert f0_match == ["DISCARD",0,1, 'DISCARD']
+    assert f1_match == [1,2]
 
 # I can have a fixed dataset here. 
