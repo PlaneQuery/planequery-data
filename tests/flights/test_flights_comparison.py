@@ -4,7 +4,8 @@
 
 from datetime import date, datetime, time, timedelta
 from data_engineering.flights.flight_type import Flight
-from flights.flights_comparison import Match, flights_comparison
+from flights.flights_comparison import Match, df_flights_comparision, flights_comparison
+import polars as pl
 
 def create_flight(takeoff_time: datetime):
     landing_time = takeoff_time + timedelta(hours=1)
@@ -80,3 +81,27 @@ def test_flights_comparison():
     assert f1_match == [1,2]
 
 # I can have a fixed dataset here. 
+
+def test_df_flights_comparision_with_icao_only_in_one_df():
+    df_0 = pl.DataFrame(
+        {
+            "icao": ["a"],
+            "takeoff_time": [datetime(2026, 1, 1, 3)],
+            "landing_time": [datetime(2026, 1, 1, 4)],
+            "takeoff_airport_ident": ["A"],
+            "landing_airport_ident": ["B"],
+        }
+    )
+    df_1 = pl.DataFrame(
+        {
+            "icao": ["b"],
+            "takeoff_time": [datetime(2026, 1, 1, 3)],
+            "landing_time": [datetime(2026, 1, 1, 4)],
+            "takeoff_airport_ident": ["A"],
+            "landing_airport_ident": ["B"],
+        }
+    )
+
+    comparison = df_flights_comparision(df_0, df_1, start_dt, end_dt)
+
+    assert sorted(comparison.get_column("match_status").to_list()) == ["df0_only", "df1_only"]
