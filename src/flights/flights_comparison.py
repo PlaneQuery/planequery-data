@@ -66,29 +66,43 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
         flights_0 = flights_df_to_flights(df0)
         flights_1 = flights_df_to_flights(df1)
         match_0, match_1 = flights_comparison(flights_0, flights_1, start_dt, end_dt, grace_period, compare_airports)
+        discard_0 = [x == "DISCARD" for x in match_0]
 
-        df0 = df0.with_columns(pl.Series("match", [match.value for match in match_0], dtype=pl.Int8))
-        df1 = df1.with_columns(pl.Series("match", [match.value for match in match_1], dtype=pl.Int8))
+        df0 = (
+            df0.with_row_index("idx")
+            .with_columns(
+                pl.Series("discard", discard_0, dtype=pl.Boolean),
+            )
+            .filter(~pl.col("discard"))
+        )
 
-        df0 = df0.filter(pl.col("match") != Match.DISCARD.value)
-        df1 = df1.filter(pl.col("match") != Match.DISCARD.value)
-        flights_0 = [flight for flight, match in zip(flights_0, match_0) if match != Match.DISCARD]
-        flights_1 = [flight for flight, match in zip(flights_1, match_1) if match != Match.DISCARD]
-        match_0 = [match for match in match_0 if match != Match.DISCARD]
-        match_1 = [match for match in match_1 if match != Match.DISCARD]
-
-        match_series = []
-        for x,y in zip_longest(match_0, match_1, fillvalue=None):
-            if x == Match.TRUE and y == Match.TRUE:
-                match_series.append("both")
-            elif x == Match:
-                match_series.append(False)
-
-        df1 = df1.drop("icao")
-        df1 = df1.rename({col: f"{col}_1" for col in df1.columns})
-        df = pl.concat([df0, df1], how="horizontal")
-        df = df.with_columns(pl.Series("match_status", match_series))
+        row_map_1 = [None if x == "DISCARD" else x for x in match_1]
+        discard_1 = [x == "DISCARD" for x in match_1]
+        df1 = (df1
+            .with_columns(
+                pl.Series("row_map", row_map_1, dtype=pl.UInt32),
+                pl.Series("discard", discard_1, dtype=pl.Boolean),
+            )
+            .filter(~pl.col("discard"))
+        )
+        df = df0.join(
+            df1,
+            left_on="idx",
+            right_on="row_map",
+            how="full",
+            suffix="_df1"
+        )
+        df = df.with_columns(
+            pl.when(pl.col("row_map").is_not_null())
+            .then(pl.lit("both"))
+            .when(pl.col("idx").is_not_null())
+            .then(pl.lit("df0_only"))
+            .otherwise(pl.lit("df1_only"))
+            .alias("match_status")
+        )   
+        df = df.drop(["idx", "row_map", "discard"])
         df = df.with_columns(pl.lit(icao).alias("icao"))
+
         dfs.append(df)
 
     return pl.concat(dfs)
