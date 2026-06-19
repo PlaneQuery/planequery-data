@@ -136,3 +136,26 @@ def test_df_flights_comparison_stats_with_no_matches():
         "recall": 0.0,
         "f1": 0.0,
     }
+
+def test_df_test_df_bts_flights():
+    from datetime import date, datetime, time
+    from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+    from data_engineering.adsbx.readsb import read_adsbx_readsb
+    from flights.flights_match_adsb import get_matching_icaos_in_flights
+    import polars as pl
+
+    test_date = date(2026,3,1)
+    df_adsb = read_adsbx_readsb()
+    df_gold = get_bts_flights_for_day(test_date)
+    df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
+    df_test = pl.read_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/2026-03-01.parquet')
+    expr = pl.col("takeoff_time").dt.date() == test_date 
+    df_gold = df_gold.filter(expr)
+    df_test = df_test.filter(expr)
+    df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").unique().implode()))
+    from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
+    df = df_flights_comparision(df_test, df_gold, datetime.combine(test_date, time.min), datetime.combine(test_date, time.max), compare_airports=False)
+    stats = df_flights_comparison_stats(df)
+    assert stats['f1'] > 0.99
+    assert stats['precision'] > 0.99
+    assert stats['recall'] > 0.99
