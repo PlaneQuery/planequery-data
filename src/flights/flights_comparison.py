@@ -12,7 +12,6 @@ class Match(Enum):
 # maybe I can return a list like [True, False, True, False] "matched", "matched", "airport_ident x != y",
 MAX_TIME_DIFF = timedelta(hours=1)
 def compare_flight(f0: Flight, f1: Flight, compare_airports = True):
-    times_match = False
     if abs(f0.takeoff_time - f1.takeoff_time) > MAX_TIME_DIFF or abs(f0.landing_time - f1.landing_time) > MAX_TIME_DIFF:
         return False
     if compare_airports:
