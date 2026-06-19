@@ -106,3 +106,24 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
         dfs.append(df)
 
     return pl.concat(dfs)
+
+def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
+    true_positive = df.filter(pl.col("match_status") == "both").height
+    false_positive = df.filter(pl.col("match_status") == "df0_only").height
+    false_negative = df.filter(pl.col("match_status") == "df1_only").height
+
+    precision_denominator = true_positive + false_positive
+    recall_denominator = true_positive + false_negative
+
+    precision = true_positive / precision_denominator if precision_denominator else 0.0
+    recall = true_positive / recall_denominator if recall_denominator else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+    return {
+        "true_positive": true_positive,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
