@@ -4,8 +4,9 @@
 
 from datetime import date, datetime, time, timedelta
 from data_engineering.flights.flight_type import Flight
-from flights.flights_comparison import Match, df_flights_comparision, flights_comparison
+from flights.flights_comparison import Match, df_flights_comparision, df_flights_comparison_stats, flights_comparison
 import polars as pl
+import pytest
 
 def create_flight(takeoff_time: datetime):
     landing_time = takeoff_time + timedelta(hours=1)
@@ -105,3 +106,33 @@ def test_df_flights_comparision_with_icao_only_in_one_df():
     comparison = df_flights_comparision(df_0, df_1, start_dt, end_dt)
 
     assert sorted(comparison.get_column("match_status").to_list()) == ["df0_only", "df1_only"]
+
+def test_df_flights_comparison_stats():
+    comparison = pl.DataFrame(
+        {
+            "match_status": ["both", "both", "df0_only", "df1_only", "df1_only"],
+        }
+    )
+
+    stats = df_flights_comparison_stats(comparison)
+
+    assert stats["true_positive"] == 2
+    assert stats["false_positive"] == 1
+    assert stats["false_negative"] == 2
+    assert stats["precision"] == pytest.approx(2 / 3)
+    assert stats["recall"] == pytest.approx(1 / 2)
+    assert stats["f1"] == pytest.approx(4 / 7)
+
+def test_df_flights_comparison_stats_with_no_matches():
+    comparison = pl.DataFrame({"match_status": []}, schema={"match_status": pl.String})
+
+    stats = df_flights_comparison_stats(comparison)
+
+    assert stats == {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+    }
