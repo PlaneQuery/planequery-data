@@ -701,6 +701,6 @@ def run_main_2(
 
 if __name__ == "__main__":
     target_date = date(2026, 3, 1)
-    flights_df = run_main_2(target_date=target_date)
+    flights_df = run_main(target_date=target_date)
     print(flights_df)
-    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights.parquet')
+    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights-adsblol.parquet')
