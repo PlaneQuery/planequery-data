@@ -10,8 +10,10 @@ FLIGHT_POLARS_SCHEMA = {
     "registration": pl.String,
     "takeoff_time": pl.Datetime("ms"),
     "takeoff_airport_ident": pl.String,
+    "takeoff_airport_ident_distance_km": pl.Float64,
     "landing_time": pl.Datetime("ms"),
     "landing_airport_ident": pl.String,
+    "landing_airport_ident_distance_km": pl.Float64,
     "pia": pl.Boolean,
     "ladd": pl.Boolean,
     "military": pl.Boolean,
@@ -33,6 +35,8 @@ class Flight:
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    takeoff_airport_ident_distance_km: float | None = None
+    landing_airport_ident_distance_km: float | None = None
     callsign: str = ""
     registration: str = ""
     pia: bool = False
@@ -59,6 +63,8 @@ class TestFlight():
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    takeoff_airport_ident_distance_km: float | None = None
+    landing_airport_ident_distance_km: float | None = None
     category: str = ""
     @property
     def flight_id(self) -> str:
