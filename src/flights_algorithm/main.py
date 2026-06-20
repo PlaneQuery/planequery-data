@@ -520,12 +520,10 @@ def _airport_guess_for_ident(
     )
 
 
-def _confident_airport_ident(guess: AirportIdentGuess) -> str | None:
+def _airport_ident_is_confident(guess: AirportIdentGuess) -> bool:
     if guess.ident is None or guess.distance_km is None:
-        return None
-    if guess.distance_km > MAX_AIRPORT_IDENT_DISTANCE_KM:
-        return None
-    return guess.ident
+        return False
+    return guess.distance_km <= MAX_AIRPORT_IDENT_DISTANCE_KM
 
 
 def _airport_ident_guesses_for_segments(
@@ -551,12 +549,13 @@ def _airport_ident_guesses_for_segments(
         if previous_segment.icao != current_segment.icao:
             continue
 
-        shared_ident = takeoff_guesses[current_index].ident
-        landing_guesses[previous_index] = _airport_guess_for_ident(
+        shared_guess = _airport_guess_for_ident(
             airport_lookup,
-            shared_ident,
+            takeoff_guesses[current_index].ident,
             previous_segment.landing_message,
         )
+        if _airport_ident_is_confident(shared_guess):
+            landing_guesses[previous_index] = shared_guess
 
     return takeoff_guesses, landing_guesses
 
@@ -576,9 +575,11 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "callsign": "",
                 "registration": "",
                 "takeoff_time": segment.takeoff_time,
-                "takeoff_airport_ident": _confident_airport_ident(takeoff_guess),
+                "takeoff_airport_ident": takeoff_guess.ident,
+                "takeoff_airport_ident_distance_km": takeoff_guess.distance_km,
                 "landing_time": segment.landing_time,
-                "landing_airport_ident": _confident_airport_ident(landing_guess),
+                "landing_airport_ident": landing_guess.ident,
+                "landing_airport_ident_distance_km": landing_guess.distance_km,
                 "pia": False,
                 "ladd": False,
                 "military": False,
@@ -697,3 +698,9 @@ def run_main_2(
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     return _segments_to_flights_df(segments)
+
+if __name__ == "__main__":
+    target_date = date(2026, 3, 1)
+    flights_df = run_main_2(target_date=target_date)
+    print(flights_df)
+    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights.parquet')
