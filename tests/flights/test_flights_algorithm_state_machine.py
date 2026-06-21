@@ -20,6 +20,11 @@ def _row(
     ground_speed_kt: float | None = None,
     on_ground: bool | None = None,
     baro_altitude_ft: float | None = None,
+    dbFlags: int | None = None,
+    pia: bool | None = None,
+    ladd: bool | None = None,
+    military: bool | None = None,
+    interesting: bool | None = None,
 ):
     return SimpleNamespace(
         time=time,
@@ -29,6 +34,11 @@ def _row(
         ground_speed_kt=ground_speed_kt,
         on_ground=on_ground,
         baro_altitude_ft=baro_altitude_ft,
+        dbFlags=dbFlags,
+        pia=pia,
+        ladd=ladd,
+        military=military,
+        interesting=interesting,
     )
 
 
@@ -236,6 +246,27 @@ def test_segments_to_flights_df_uses_flight_schema_defaults(monkeypatch):
     assert df.row(0, named=True)["pia"] is False
 
 
+def test_segments_to_flights_df_uses_mode_db_flags(monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", "/tmp")
+
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start, 0.00, on_ground=True, ground_speed_kt=0.0, dbFlags=4),
+        _row(start + timedelta(minutes=1), 0.02, on_ground=False, ground_speed_kt=100.0, dbFlags=4),
+        _row(start + timedelta(minutes=8), 0.20, on_ground=False, ground_speed_kt=180.0, dbFlags=12),
+        _row(start + timedelta(minutes=12), 0.205, on_ground=True, ground_speed_kt=20.0, dbFlags=12),
+        _row(start + timedelta(minutes=15), 0.205, on_ground=True, ground_speed_kt=0.0, dbFlags=12),
+    ]
+
+    df = _segments_to_flights_df(identify_flight_segments(messages))
+    row = df.row(0, named=True)
+
+    assert row["pia"] is True
+    assert row["ladd"] is True
+    assert row["military"] is False
+    assert row["interesting"] is False
+
+
 def test_segment_filter_keeps_only_flights_that_take_off_on_target_day():
     day_start = datetime(2026, 1, 1)
     day_end = day_start + timedelta(days=1)
@@ -286,6 +317,11 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
         {"time": start + timedelta(minutes=12), "icao": "def456", "lat": 0.0, "lon": 1.205, "ground_speed_kt": 20.0, "on_ground": True, "baro_altitude_ft": None},
         {"time": start + timedelta(minutes=15), "icao": "def456", "lat": 0.0, "lon": 1.205, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
     ]
+    for row in rows:
+        row.update({"pia": False, "ladd": False, "military": False, "interesting": False})
+        if row["icao"] == "abc123":
+            row["pia"] = True
+            row["ladd"] = True
     pl.DataFrame(rows).write_parquet(day_dir / "part-00000.parquet")
 
     df = run_main_2(target_date, icaos=["abc123"], parquet_root=tmp_path)
@@ -294,6 +330,8 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
     assert df.row(0, named=True)["icao"] == "abc123"
     assert df.row(0, named=True)["takeoff_time"] == start + timedelta(minutes=1)
     assert df.row(0, named=True)["landing_time"] == start + timedelta(minutes=12)
+    assert df.row(0, named=True)["pia"] is True
+    assert df.row(0, named=True)["ladd"] is True
 
 
 def test_stitches_same_icao_segments_separated_by_short_gap():
