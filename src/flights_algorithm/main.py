@@ -1,4 +1,5 @@
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
@@ -13,6 +14,10 @@ from adsb.adsb_messages_types import AdsbMessageRow
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
 AIRPORT_SIZE_BONUS_KM = 5.0
 MAX_AIRPORT_IDENT_DISTANCE_KM = 8.0
+DB_FLAG_MILITARY = 1
+DB_FLAG_INTERESTING = 2
+DB_FLAG_PIA = 4
+DB_FLAG_LADD = 8
 AIRPORT_SIZE_RANK = {
     "small_airport": 0,
     "medium_airport": 1,
@@ -52,6 +57,10 @@ ADSB_ALGORITHM_COLUMNS = [
     "ground_speed_kt",
     "on_ground",
     "baro_altitude_ft",
+    "pia",
+    "ladd",
+    "military",
+    "interesting",
 ]
 
 
@@ -69,6 +78,11 @@ class AdsbPositionMessage:
     ground_speed_kt: float | None = None
     on_ground: bool | None = None
     baro_altitude_ft: float | None = None
+    dbFlags: int | None = None
+    pia: bool | None = None
+    ladd: bool | None = None
+    military: bool | None = None
+    interesting: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +106,7 @@ class FlightSegment:
     takeoff_message: AdsbMessageRow | AdsbPositionMessage
     landing_message: AdsbMessageRow | AdsbPositionMessage
     distance_travelled_km: float = 0.0
+    db_flags_counts: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -132,6 +147,87 @@ def _optional_float(value: float | None) -> float | None:
     if math.isnan(value):
         return None
     return float(value)
+
+
+def _optional_int(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_bool(value) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return bool(value)
+
+
+def _db_flags_from_message(message: AdsbMessageRow | AdsbPositionMessage) -> int | None:
+    db_flags = _optional_int(getattr(message, "dbFlags", getattr(message, "db_flags", None)))
+    if db_flags is not None:
+        return db_flags
+
+    split_flags = [
+        ("military", DB_FLAG_MILITARY),
+        ("interesting", DB_FLAG_INTERESTING),
+        ("pia", DB_FLAG_PIA),
+        ("ladd", DB_FLAG_LADD),
+    ]
+    db_flags = 0
+    found_split_flag = False
+    for attr, bit in split_flags:
+        value = _optional_bool(getattr(message, attr, None))
+        if value is None:
+            continue
+        found_split_flag = True
+        if value:
+            db_flags |= bit
+
+    return db_flags if found_split_flag else None
+
+
+def _db_flags_counts_for_messages(
+    messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
+) -> tuple[tuple[int, int], ...]:
+    db_flags = [
+        value
+        for message in messages
+        if (value := _db_flags_from_message(message)) is not None
+    ]
+    return tuple(Counter(db_flags).items())
+
+
+def _merge_db_flags_counts(
+    *counts_by_segment: tuple[tuple[int, int], ...],
+) -> tuple[tuple[int, int], ...]:
+    counter = Counter()
+    for counts in counts_by_segment:
+        for db_flags, count in counts:
+            counter[db_flags] += count
+    return tuple(counter.items())
+
+
+def _db_flags_mode_from_counts(db_flags_counts: tuple[tuple[int, int], ...]) -> int | None:
+    if not db_flags_counts:
+        return None
+    return max(db_flags_counts, key=lambda item: item[1])[0]
+
+
+def _db_flags_to_flight_flags(db_flags: int | None) -> dict[str, bool]:
+    if db_flags is None:
+        db_flags = 0
+    return {
+        "pia": bool(db_flags & DB_FLAG_PIA),
+        "ladd": bool(db_flags & DB_FLAG_LADD),
+        "military": bool(db_flags & DB_FLAG_MILITARY),
+        "interesting": bool(db_flags & DB_FLAG_INTERESTING),
+    }
 
 
 def _reported_ground_speed_kt(message: AdsbMessageRow | AdsbPositionMessage) -> float | None:
@@ -309,6 +405,7 @@ def _maybe_add_segment(
     landing_message: AdsbMessageRow | AdsbPositionMessage,
     distance_travelled_km: float,
     max_speed_kt: float | None,
+    segment_messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
 ) -> None:
     if takeoff_message is None:
         return
@@ -327,6 +424,7 @@ def _maybe_add_segment(
             takeoff_message=takeoff_message,
             landing_message=landing_message,
             distance_travelled_km=distance_travelled_km,
+            db_flags_counts=_db_flags_counts_for_messages(segment_messages),
         )
     )
 
@@ -338,6 +436,7 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
     distance_travelled_km = 0.0
     max_speed_kt = None
     last_message = None
+    segment_messages = []
     segments = []
 
     for motion in _motion_edges(messages):
@@ -354,12 +453,20 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 distance_travelled_km += motion.distance_km
                 gap_was_continued = True
             elif state == FlightState.IN_FLIGHT:
-                _maybe_add_segment(segments, takeoff_message, motion.prev, distance_travelled_km, max_speed_kt)
+                _maybe_add_segment(
+                    segments,
+                    takeoff_message,
+                    motion.prev,
+                    distance_travelled_km,
+                    max_speed_kt,
+                    segment_messages,
+                )
                 state = FlightState.GROUND
                 takeoff_message = None
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
+                segment_messages = []
                 continue
             else:
                 state = FlightState.GROUND
@@ -367,6 +474,7 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
+                segment_messages = []
                 continue
 
         if state == FlightState.GROUND:
@@ -376,29 +484,53 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = speed
+                segment_messages = [motion.curr]
             continue
 
         if speed is not None:
             max_speed_kt = speed if max_speed_kt is None else max(max_speed_kt, speed)
         if not gap_was_continued:
             distance_travelled_km += motion.distance_km
+        segment_messages.append(motion.curr)
         if _is_landing_motion(motion):
             if landing_candidate is None:
                 landing_candidate = motion.curr
             if motion.curr.time - landing_candidate.time >= LANDING_CONFIRMATION_TIME:
-                _maybe_add_segment(segments, takeoff_message, landing_candidate, distance_travelled_km, max_speed_kt)
+                _maybe_add_segment(
+                    segments,
+                    takeoff_message,
+                    landing_candidate,
+                    distance_travelled_km,
+                    max_speed_kt,
+                    segment_messages,
+                )
                 state = FlightState.GROUND
                 takeoff_message = None
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
+                segment_messages = []
         else:
             landing_candidate = None
 
     if state == FlightState.IN_FLIGHT and landing_candidate is not None:
-        _maybe_add_segment(segments, takeoff_message, landing_candidate, distance_travelled_km, max_speed_kt)
+        _maybe_add_segment(
+            segments,
+            takeoff_message,
+            landing_candidate,
+            distance_travelled_km,
+            max_speed_kt,
+            segment_messages,
+        )
     elif state == FlightState.IN_FLIGHT and last_message is not None:
-        _maybe_add_segment(segments, takeoff_message, last_message, distance_travelled_km, max_speed_kt)
+        _maybe_add_segment(
+            segments,
+            takeoff_message,
+            last_message,
+            distance_travelled_km,
+            max_speed_kt,
+            segment_messages,
+        )
 
     return segments
 
@@ -421,6 +553,10 @@ def stitch_flight_segments(segments: Sequence[FlightSegment]) -> list[FlightSegm
                 takeoff_message=current.takeoff_message,
                 landing_message=segment.landing_message,
                 distance_travelled_km=current.distance_travelled_km + segment.distance_travelled_km,
+                db_flags_counts=_merge_db_flags_counts(
+                    current.db_flags_counts,
+                    segment.db_flags_counts,
+                ),
             )
         else:
             stitched.append(current)
@@ -446,6 +582,11 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
             ground_speed_kt=row.get("ground_speed_kt"),
             on_ground=row.get("on_ground"),
             baro_altitude_ft=row.get("baro_altitude_ft"),
+            dbFlags=row.get("dbFlags"),
+            pia=row.get("pia"),
+            ladd=row.get("ladd"),
+            military=row.get("military"),
+            interesting=row.get("interesting"),
         )
         for row in df.iter_rows(named=True)
     ]
@@ -569,6 +710,9 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
     takeoff_guesses, landing_guesses = _airport_ident_guesses_for_segments(segments)
     rows = []
     for segment, takeoff_guess, landing_guess in zip(segments, takeoff_guesses, landing_guesses):
+        flight_flags = _db_flags_to_flight_flags(
+            _db_flags_mode_from_counts(segment.db_flags_counts)
+        )
         rows.append(
             {
                 "icao": segment.icao,
@@ -580,10 +724,7 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "landing_time": segment.landing_time,
                 "landing_airport_ident": landing_guess.ident,
                 "landing_airport_ident_distance_km": landing_guess.distance_km,
-                "pia": False,
-                "ladd": False,
-                "military": False,
-                "interesting": False,
+                **flight_flags,
                 "aircraft_type": "",
                 "owner": "",
                 "aircraft_description": "",
@@ -701,6 +842,6 @@ def run_main_2(
 
 if __name__ == "__main__":
     target_date = date(2026, 3, 1)
-    flights_df = run_main(target_date=target_date)
+    flights_df = run_main_2(target_date=target_date)
     print(flights_df)
-    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights-adsblol.parquet')
+    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights-adsbx.parquet')
