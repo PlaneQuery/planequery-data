@@ -145,19 +145,19 @@ def _collect_streaming(lf: pl.LazyFrame) -> pl.DataFrame:
 
 def _adsb_registration_map(current_day: datetime, registrations: list[str]) -> pl.DataFrame:
     return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "registration", "time"])
+        scan_adsb(current_day.date(), columns=["icao", "registration", "pia", "ladd", "time"])
         .filter((pl.col("registration") != "") & pl.col("registration").is_in(registrations))
         .group_by(["icao", "registration"])
         .agg(pl.len().alias("len"))
         .sort(["registration", "len", "icao"], descending=[False, True, False])
         .group_by("registration", maintain_order=True)
         .first()
-        .select(["icao", "registration"])
+        .select(["icao", "registration", "pia", "ladd"])
     )
 
 def _adsb_callsign_segments(current_day: datetime, callsigns: list[str]) -> pl.DataFrame:
     return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "callsign", "time"])
+        scan_adsb(current_day.date(), columns=["icao", "callsign", "pia", "ladd", "time"])
         .filter((pl.col("callsign") != "") & pl.col("callsign").is_in(callsigns))
         .sort(["icao", "time", "callsign"])
         .with_columns(
@@ -171,8 +171,10 @@ def _adsb_callsign_segments(current_day: datetime, callsigns: list[str]) -> pl.D
         .agg(
             pl.col("time").min().alias("start_time"),
             pl.col("time").max().alias("end_time"),
+            pl.col("pia").any().alias("pia"),
+            pl.col("ladd").any().alias("ladd"),
         )
-        .select(["icao", "callsign", "start_time", "end_time"])
+        .select(["icao", "callsign", "start_time", "end_time", "pia", "ladd"])
     )
 
 def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.DataFrame:
@@ -235,7 +237,7 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_sfdps_flights_1 = ( # TODO: could fill in registration too from icao. 
     df_sfdps_flights_without_registration
     .with_row_index("_row_idx")
-    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time"), on="callsign", how="left")
+    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time", "pia", "ladd"), on="callsign", how="left")
     .with_columns(
         (
             (pl.col("takeoff_time") >= pl.col("start_time")) &
