@@ -14,6 +14,12 @@ FLIGHT_POLARS_SCHEMA = {
     "landing_time": pl.Datetime("ms"),
     "landing_airport_ident": pl.String,
     "landing_airport_ident_distance_km": pl.Float64,
+    "last_lat": pl.Float64,
+    "last_lon": pl.Float64,
+    "last_baro_altitude_ft": pl.Int64,
+    "last_geom_altitude_ft": pl.Int64,
+    "takeoff_airport_elevation_difference_ft": pl.Int64,
+    "landing_airport_elevation_difference_ft": pl.Int64,
     "pia": pl.Boolean,
     "ladd": pl.Boolean,
     "military": pl.Boolean,
@@ -22,10 +28,6 @@ FLIGHT_POLARS_SCHEMA = {
     "owner": pl.String,
     "aircraft_description": pl.String,
     "category": pl.String,
-    "takeoff_airport_lat": pl.Float64,
-    "takeoff_airport_lon": pl.Float64,
-    "landing_airport_lat": pl.Float64,
-    "landing_airport_lon": pl.Float64,
 }
 
 def add_flight_duration_col(df: pl.DataFrame):
@@ -39,8 +41,14 @@ class Flight:
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    last_lat: float
+    last_lon: float
+    last_baro_altitude_ft: int
+    last_geom_altitude_ft: int
     takeoff_airport_ident_distance_km: float | None = None
     landing_airport_ident_distance_km: float | None = None
+    takeoff_airport_elevation_difference_ft: int | None = None
+    landing_airport_elevation_difference_ft: int | None = None
     callsign: str = ""
     registration: str = ""
     pia: bool = False
@@ -51,10 +59,7 @@ class Flight:
     owner: str = ""
     aircraft_description: str = ""
     category: str = ""
-    takeoff_airport_lat: float | None = None
-    takeoff_airport_lon: float | None = None
-    landing_airport_lat: float | None = None
-    landing_airport_lon: float | None = None
+
 
     @property
     def flight_id(self) -> str:
