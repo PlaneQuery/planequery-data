@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
-from data_engineering.flights.flight_type import TestFlight
+from data_engineering.flights.flight_type import Flight
 from pia.resolver import build_graph
 from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
@@ -17,17 +17,17 @@ import networkx as nx
 
 
 def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
-    def is_pia(flight: TestFlight) -> bool:
-        return flight.icao.startswith("pia")
+    def is_pia(flight: Flight) -> bool:
+        return flight.pia
 
-    def flight_label(flight: TestFlight) -> str:
+    def flight_label(flight: Flight) -> str:
         return (
             f"{flight.flight_id}\n"
             f"{flight.takeoff_airport_ident} -> {flight.landing_airport_ident}\n"
             f"{flight.takeoff_time:%H:%M}-{flight.landing_time:%H:%M}"
         )
 
-    def node_color(flight: TestFlight) -> str:
+    def node_color(flight: Flight) -> str:
         if is_pia(flight):
             return "#2563eb"
         return "#64748b"
