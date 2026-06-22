@@ -6,15 +6,26 @@ from data_engineering.flights.flight_type import Flight, flights_df_to_flights, 
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 
 
+def flight(**kwargs) -> Flight:
+    defaults = {
+        "last_lat": 0.0,
+        "last_lon": 0.0,
+        "last_baro_altitude_ft": 0,
+        "last_geom_altitude_ft": 0,
+    }
+    defaults.update(kwargs)
+    return Flight(**defaults)
+
+
 elon_flights = [
-    Flight(
+    flight(
         icao="a835af",
         takeoff_time=datetime(2025, 5, 15, 6, 7),
         landing_time=datetime(2025, 5, 15, 6, 7),
         takeoff_airport_ident="BIKF",
         landing_airport_ident="KAUS",
     ),
-    Flight(
+    flight(
         icao="a03c16",
         takeoff_time=datetime(2025, 5, 18, 23, 52),
         landing_time=datetime(2025, 5, 19, 3, 5),
@@ -22,7 +33,7 @@ elon_flights = [
         landing_airport_ident="KSJC",
         pia=True,
     ),
-    Flight(
+    flight(
         icao="a03c16",
         takeoff_time=datetime(2025, 5, 20, 0, 0),
         landing_time=datetime(2025, 5, 20, 5, 1),
@@ -33,18 +44,33 @@ elon_flights = [
 ]
 
 elon_pia_icaos = set(flight.icao for flight in elon_flights if flight.pia)
-mapping_dict_0 = {}
+_flights_0 = None
+_mapping_dict_0 = None
 
-df_flights_0 = get_flights(date(2025, 5, 14), end_date=date(2025, 5, 21))
-# df_flights_0 = df_flights_0.filter(pl.col("pia"))
-flights_0 = flights_df_to_flights(df_flights_0)
-for flight in flights_0:
-    if flight.icao in elon_pia_icaos:
-        mapping_dict_0[flight.flight_id] = "a835af"
+def _load_flights_0():
+    global _flights_0, _mapping_dict_0
+    if _flights_0 is None or _mapping_dict_0 is None:
+        df_flights_0 = get_flights(date(2025, 5, 14), end_date=date(2025, 5, 21))
+        # df_flights_0 = df_flights_0.filter(pl.col("pia"))
+        _flights_0 = flights_df_to_flights(df_flights_0)
+        _mapping_dict_0 = {}
+        for flight in _flights_0:
+            if flight.icao in elon_pia_icaos:
+                _mapping_dict_0[flight.flight_id] = "a835af"
+    return _flights_0, _mapping_dict_0
+
+def __getattr__(name: str):
+    if name == "flights_0":
+        flights, _ = _load_flights_0()
+        return flights
+    if name == "mapping_dict_0":
+        _, mapping_dict = _load_flights_0()
+        return mapping_dict
+    raise AttributeError(name)
 
 # these all must map to 1 icao. I don't know who's yet. 
 a039a2_flights = [
-    Flight(
+    flight(
         icao="a039a2",
         callsign="DCM2493",
         takeoff_time=datetime(2025, 5, 14, 13, 16, 59, 420000),
@@ -54,7 +80,7 @@ a039a2_flights = [
         ladd=False,
         pia=True,
     ),
-    Flight(
+    flight(
         icao="a039a2",
         callsign="DCM2493",
         takeoff_time=datetime(2025, 5, 14, 21, 46, 34, 580000),
@@ -64,7 +90,7 @@ a039a2_flights = [
         ladd=False,
         pia=True,
     ),
-    Flight(
+    flight(
         icao="a039a2",
         callsign="DCM2493",
         takeoff_time=datetime(2025, 5, 14, 23, 29, 19, 780000),
@@ -74,7 +100,7 @@ a039a2_flights = [
         ladd=False,
         pia=True,
     ),
-    Flight(
+    flight(
         icao="a039a2",
         callsign="DCM2493",
         takeoff_time=datetime(2025, 5, 20, 13, 27, 47, 480000),
@@ -84,7 +110,7 @@ a039a2_flights = [
         ladd=False,
         pia=True,
     ),
-    Flight(
+    flight(
         icao="a039a2",
         callsign="DCM2493",
         takeoff_time=datetime(2025, 5, 20, 16, 16, 9, 320000),
