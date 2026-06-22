@@ -1,6 +1,5 @@
 import polars as pl
 import os
-import hashlib
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
@@ -64,26 +63,6 @@ class Flight:
     @property
     def flight_id(self) -> str:
         return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
-
-@dataclass
-class TestFlight():
-    icao: str
-    takeoff_time: datetime
-    landing_time: datetime
-    takeoff_airport_ident: str
-    landing_airport_ident: str
-    takeoff_airport_ident_distance_km: float | None = None
-    landing_airport_ident_distance_km: float | None = None
-    category: str = ""
-    @property
-    def flight_id(self) -> str:
-        return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
-    @property
-    def pia(self) -> bool:
-        return self.icao.startswith("pia")
-    @property
-    def callsign(self) -> str:
-        return hashlib.sha1(self.flight_id.encode()).hexdigest()[:8].upper()
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])
