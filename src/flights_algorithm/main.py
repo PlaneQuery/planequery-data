@@ -1,3 +1,4 @@
+import argparse
 import math
 from collections import Counter
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Sequence
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
+from data_engineering.utils import OUTPUT_DIR
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -57,6 +59,7 @@ ADSB_ALGORITHM_COLUMNS = [
     "ground_speed_kt",
     "on_ground",
     "baro_altitude_ft",
+    "geom_altitude_ft",
     "pia",
     "ladd",
     "military",
@@ -78,6 +81,7 @@ class AdsbPositionMessage:
     ground_speed_kt: float | None = None
     on_ground: bool | None = None
     baro_altitude_ft: float | None = None
+    geom_altitude_ft: int | None = None
     dbFlags: int | None = None
     pia: bool | None = None
     ladd: bool | None = None
@@ -113,6 +117,9 @@ class FlightSegment:
 class AirportIdentGuess:
     ident: str | None
     distance_km: float | None
+    lat: float | None
+    lon: float | None
+    elevation_ft: int | None
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -247,6 +254,30 @@ def _baro_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> float | 
     return _optional_float(
         getattr(message, "baro_altitude_ft", getattr(message, "alt_baro", None))
     )
+
+
+def _last_baro_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | None:
+    return _optional_int(
+        getattr(message, "baro_altitude_ft", getattr(message, "alt_baro", None))
+    )
+
+
+def _geom_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | None:
+    return _optional_int(
+        getattr(message, "geom_altitude_ft", getattr(message, "alt_geom", None))
+    )
+
+
+def _airport_elevation_difference_ft(
+    message: AdsbMessageRow | AdsbPositionMessage,
+    airport_guess: AirportIdentGuess,
+) -> int | None:
+    altitude_ft = _geom_altitude_ft(message)
+    if altitude_ft is None:
+        altitude_ft = _last_baro_altitude_ft(message)
+    if altitude_ft is None or airport_guess.elevation_ft is None:
+        return None
+    return altitude_ft - airport_guess.elevation_ft
 
 
 def _motion_edges(messages: Sequence[AdsbMessageRow | AdsbPositionMessage]) -> list[MessageMotion]:
@@ -582,6 +613,7 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
             ground_speed_kt=row.get("ground_speed_kt"),
             on_ground=row.get("on_ground"),
             baro_altitude_ft=row.get("baro_altitude_ft"),
+            geom_altitude_ft=row.get("geom_altitude_ft"),
             dbFlags=row.get("dbFlags"),
             pia=row.get("pia"),
             ladd=row.get("ladd"),
@@ -621,7 +653,13 @@ def _airport_guess_for_message(
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> AirportIdentGuess:
     if airport_lookup is None:
-        return AirportIdentGuess(ident=None, distance_km=None)
+        return AirportIdentGuess(
+            ident=None,
+            distance_km=None,
+            lat=None,
+            lon=None,
+            elevation_ft=None,
+        )
 
     airports = airport_lookup.getAirportsWithinRadius(
         message.lat,
@@ -641,6 +679,9 @@ def _airport_guess_for_message(
     return AirportIdentGuess(
         ident=best_airport.ident,
         distance_km=_airport_distance_to_message(best_airport, message),
+        lat=best_airport.lat,
+        lon=best_airport.lon,
+        elevation_ft=best_airport.elevation_ft,
     )
 
 
@@ -650,14 +691,29 @@ def _airport_guess_for_ident(
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> AirportIdentGuess:
     if airport_lookup is None or ident is None:
-        return AirportIdentGuess(ident=None, distance_km=None)
+        return AirportIdentGuess(
+            ident=None,
+            distance_km=None,
+            lat=None,
+            lon=None,
+            elevation_ft=None,
+        )
 
     airport = airport_lookup.get_Airport_from_airport_ident(ident)
     if airport is None:
-        return AirportIdentGuess(ident=None, distance_km=None)
+        return AirportIdentGuess(
+            ident=None,
+            distance_km=None,
+            lat=None,
+            lon=None,
+            elevation_ft=None,
+        )
     return AirportIdentGuess(
         ident=ident,
         distance_km=_airport_distance_to_message(airport, message),
+        lat=airport.lat,
+        lon=airport.lon,
+        elevation_ft=airport.elevation_ft,
     )
 
 
@@ -724,6 +780,18 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "landing_time": segment.landing_time,
                 "landing_airport_ident": landing_guess.ident,
                 "landing_airport_ident_distance_km": landing_guess.distance_km,
+                "last_lat": segment.landing_message.lat,
+                "last_lon": segment.landing_message.lon,
+                "last_baro_altitude_ft": _last_baro_altitude_ft(segment.landing_message),
+                "last_geom_altitude_ft": _geom_altitude_ft(segment.landing_message),
+                "takeoff_airport_elevation_difference_ft": _airport_elevation_difference_ft(
+                    segment.takeoff_message,
+                    takeoff_guess,
+                ),
+                "landing_airport_elevation_difference_ft": _airport_elevation_difference_ft(
+                    segment.landing_message,
+                    landing_guess,
+                ),
                 **flight_flags,
                 "aircraft_type": "",
                 "owner": "",
@@ -785,13 +853,37 @@ def _readsb_hist_parquet_day_dir(
     )
 
 
+def _adsblol_flights_output_path(target_date: date) -> Path:
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "trad-model"
+        / "v3"
+        / "adsblol"
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
+        / "flights.parquet"
+    )
+
+
 def _scan_readsb_hist_day_parquet(
     target_date: date,
     parquet_root: Path = READSB_HIST_PARQUET_ROOT,
 ) -> pl.LazyFrame:
     day_dir = _readsb_hist_parquet_day_dir(target_date, parquet_root)
     parquet_glob = day_dir / "part*.parquet"
-    return pl.scan_parquet(str(parquet_glob)).select(ADSB_ALGORITHM_COLUMNS)
+    lf = pl.scan_parquet(str(parquet_glob))
+    available_columns = set(lf.collect_schema().names())
+    return lf.select(
+        [
+            pl.col(column)
+            if column in available_columns
+            else pl.lit(None).alias(column)
+            for column in ADSB_ALGORITHM_COLUMNS
+        ]
+    )
 
 
 def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None = None) -> pl.DataFrame:
@@ -818,7 +910,11 @@ def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None =
         for segment in segments
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
-    return _segments_to_flights_df(segments)
+    flights_df = _segments_to_flights_df(segments)
+    output_path = _adsblol_flights_output_path(target_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    flights_df.write_parquet(output_path)
+    return flights_df
 
 
 def run_main_2(
@@ -840,8 +936,35 @@ def run_main_2(
     ]
     return _segments_to_flights_df(segments)
 
+
+def _date_arg(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected date in YYYY-MM-DD format") from exc
+
+
+def _date_range(start_date: date, end_date: date):
+    current_date = start_date
+    while current_date < end_date:
+        yield current_date
+        current_date += timedelta(days=1)
+
+
+def cli() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("start_date", type=_date_arg)
+    parser.add_argument("end_date", type=_date_arg)
+    args = parser.parse_args()
+
+    if args.end_date <= args.start_date:
+        parser.error("end_date must be after start_date")
+
+    for target_date in _date_range(args.start_date, args.end_date):
+        print(f"Running flights algorithm for {target_date}")
+        flights_df = run_main(target_date=target_date)
+        print(flights_df)
+
+
 if __name__ == "__main__":
-    target_date = date(2026, 3, 1)
-    flights_df = run_main_2(target_date=target_date)
-    print(flights_df)
-    flights_df.write_parquet('/Volumes/T2-SSD/planequery/data/flights/trad-model/v2/flights-adsbx.parquet')
+    cli()
