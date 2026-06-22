@@ -4,7 +4,7 @@ from itertools import combinations
 import networkx as nx
 from ortools.sat.python import cp_model
 
-from data_engineering.flights.flight_type import Flight, TestFlight
+from data_engineering.flights.flight_type import Flight
 
 def _get_pia_nodes(g: nx.DiGraph):
     pia_nodes = [
