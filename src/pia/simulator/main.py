@@ -9,13 +9,20 @@ import hashlib
 import random
 
 NUMBER_OF_PIA_PLANES = 10
-airport_lookup = AirportLookup()
+_airport_lookup = None
+
+def _get_airport_lookup() -> AirportLookup:
+    global _airport_lookup
+    if _airport_lookup is None:
+        _airport_lookup = AirportLookup()
+    return _airport_lookup
 
 
 def make_pia_icao(flight_id: str) -> str:
     return "pia_" + hashlib.md5(flight_id.encode()).hexdigest()[:8]
 
 def flight_is_in_united_states_airspace(flight) -> bool:
+    airport_lookup = _get_airport_lookup()
     return (
         airport_lookup.airport_ident_is_in_us_faa_airspace(flight.takeoff_airport_ident)
         and airport_lookup.airport_ident_is_in_us_faa_airspace(flight.landing_airport_ident)

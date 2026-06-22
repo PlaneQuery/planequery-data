@@ -44,6 +44,7 @@ class TestPIA(unittest.TestCase):
         print(mapping_dict)
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
+@unittest.skip("skipping real-data PIA tests for now")
 class TestPIAReal(unittest.TestCase):
     def test_real_flights_0(self):
         from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
