@@ -6,7 +6,10 @@ from pathlib import Path
 import polars as pl
 
 DEFAULT_OPENAIRFRAMES_ADSB_PATH = Path(
-    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_adsb_2024-01-01_2026-05-15.csv"
+    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_adsb_2024-01-01_2026-06-20.csv"
+)
+DEFAULT_OPENAIRFRAMES_FAA_PATH = Path(
+    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_faa_2023-08-16_2026-06-21.csv"
 )
 
 COLUMN_MAP = {
@@ -86,6 +89,63 @@ def scan_latest_icao_info_for_join(
         .with_columns(extract_db_flags(col="db_flags"))
         .drop("db_flags")
         .select(["icao", *ICAO_INFO_COLUMNS])
+    )
+    return df
+
+
+def scan_latest_registration_icao_for_join(
+    path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
+    real_icao_column: str = "real_icao",
+) -> pl.LazyFrame:
+    """Scan one latest OpenAirframes ICAO per registration for tail-number joins."""
+    df = pl.scan_csv(
+        path,
+        schema_overrides={
+            "icao": pl.Utf8,
+            "r": pl.Utf8,
+        },
+        low_memory=True,
+    )
+    df = (
+        df.select(["icao", "r"])
+        .rename({"r": "registration", "icao": real_icao_column})
+        .with_columns(
+            pl.col("registration").str.strip_chars().str.to_uppercase(),
+            pl.col(real_icao_column).str.strip_chars().str.to_lowercase(),
+        )
+        .filter(pl.col("registration").is_not_null())
+        .unique(subset=["registration"], keep="last", maintain_order=False)
+    )
+    return df
+
+
+def scan_latest_faa_registration_icao_for_join(
+    path: str | Path = DEFAULT_OPENAIRFRAMES_FAA_PATH,
+    real_icao_column: str = "real_icao",
+) -> pl.LazyFrame:
+    """Scan one latest FAA OpenAirframes ICAO per registration for tail-number joins."""
+    df = pl.scan_csv(
+        path,
+        schema_overrides={
+            "transponder_code_hex": pl.Utf8,
+            "registration_number": pl.Utf8,
+        },
+        low_memory=True,
+    )
+    df = (
+        df.select(["transponder_code_hex", "registration_number"])
+        .rename(
+            {
+                "registration_number": "registration",
+                "transponder_code_hex": real_icao_column,
+            }
+        )
+        .with_columns(
+            pl.col("registration").str.strip_chars().str.to_uppercase(),
+            pl.col(real_icao_column).str.strip_chars().str.to_lowercase(),
+        )
+        .filter(pl.col("registration").is_not_null())
+        .unique(subset=["registration"], keep="last", maintain_order=False)
     )
     return df
 
