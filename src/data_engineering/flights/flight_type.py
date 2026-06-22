@@ -29,6 +29,32 @@ FLIGHT_POLARS_SCHEMA = {
     "category": pl.String,
 }
 
+FLIGHT_COLUMN_DEFAULTS = {
+    "callsign": "",
+    "registration": "",
+    "pia": False,
+    "ladd": False,
+    "military": False,
+    "interesting": False,
+    "aircraft_type": "",
+    "owner": "",
+    "aircraft_description": "",
+    "category": "",
+}
+
+def with_flight_schema_columns(df: pl.DataFrame) -> pl.DataFrame:
+    missing_columns = [
+        pl.lit(FLIGHT_COLUMN_DEFAULTS.get(column_name), dtype=dtype).alias(column_name)
+        for column_name, dtype in FLIGHT_POLARS_SCHEMA.items()
+        if column_name not in df.columns
+    ]
+    if missing_columns:
+        df = df.with_columns(missing_columns)
+    return df.select(
+        pl.col(column_name).cast(dtype).alias(column_name)
+        for column_name, dtype in FLIGHT_POLARS_SCHEMA.items()
+    )
+
 def add_flight_duration_col(df: pl.DataFrame):
     df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
     return df
@@ -100,8 +126,9 @@ def _get_flights_for_day(target_date: date):
     path = flights_parquet_path(target_date)
     if path.exists():
         df = pl.read_parquet(path)
-        return df
+        return with_flight_schema_columns(df)
     df = get_flights_from_iceberg(target_date)
+    df = with_flight_schema_columns(df)
     os.makedirs(path.parent, exist_ok=True)
     df.write_parquet(path)
     return df

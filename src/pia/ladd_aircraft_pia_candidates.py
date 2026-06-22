@@ -3,9 +3,18 @@ from data_engineering.flights.flight_type import flights_df_to_flights, get_flig
 import polars as pl
 from airports.airportLookup import AirportLookup
 from utils import haversine
-airport_lookup = AirportLookup()
+
+_airport_lookup = None
+
+def _get_airport_lookup() -> AirportLookup:
+    global _airport_lookup
+    if _airport_lookup is None:
+        _airport_lookup = AirportLookup()
+    return _airport_lookup
+
 def potential_pia_flight_count(group):
     # group = group.sort("takeoff_time") # uncessary alread sorted 
+    airport_lookup = _get_airport_lookup()
     flights = flights_df_to_flights(group)
     previous_flight = None
     count = 0
@@ -26,6 +35,7 @@ def potential_pia_flight_count(group):
     return count
 
 def add_airport_coords(df: pl.DataFrame, prefix: str) -> pl.DataFrame:
+    airport_lookup = _get_airport_lookup()
     airport_col = f"{prefix}_airport_ident"
     lat_col = f"{prefix}_airport_lat"
     lon_col = f"{prefix}_airport_lon"
