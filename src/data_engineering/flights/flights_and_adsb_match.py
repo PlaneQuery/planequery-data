@@ -6,7 +6,13 @@ from datetime import datetime
 
 MAX_AIRPORT_DISTANCE_KM = 16
 
-_airport_lookup = AirportLookup()
+_airport_lookup = None
+
+def _get_airport_lookup() -> AirportLookup:
+    global _airport_lookup
+    if _airport_lookup is None:
+        _airport_lookup = AirportLookup()
+    return _airport_lookup
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -20,6 +26,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def _icao_has_perfect_match(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
+    airport_lookup = _get_airport_lookup()
     df_flights = (
         df_flights
         .select(["takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident"])
@@ -35,7 +42,7 @@ def _icao_has_perfect_match(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> 
         return False
 
     def get_airport_coords(ident: str):
-        return _airport_lookup.get_airport_coordinates(ident)
+        return airport_lookup.get_airport_coordinates(ident)
 
     takeoff_coords = df_flights["takeoff_airport_ident"].map_elements(get_airport_coords, return_dtype=pl.List(pl.Float64))
     landing_coords = df_flights["landing_airport_ident"].map_elements(get_airport_coords, return_dtype=pl.List(pl.Float64))
