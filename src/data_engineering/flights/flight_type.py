@@ -1,8 +1,11 @@
-import polars as pl
-import os
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
-from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
+
+import polars as pl
+
+from data_engineering.utils import OUTPUT_DIR
+
+
 FLIGHT_POLARS_SCHEMA = {
     "icao": pl.String,
     "callsign": pl.String,
@@ -109,17 +112,20 @@ def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
     )
     return df
 
-def flights_parquet_path(target_date: date):
-    if target_date > date(2026,6,1) and target_date < date(2026,6,10):
-        FLIGHTS_OUTPUT_DIR = OUTPUT_DIR/"data"/"flights"/"trad-model"/"v3"/"adsblol"
-    else:
-        FLIGHTS_OUTPUT_DIR = OUTPUT_DIR / "data" / "flights" / FLIGHTS_VERSION
-    flights_path = FLIGHTS_OUTPUT_DIR / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
-    if flights_path.exists() == False:
-        FLIGHTS_OUTPUT_DIR =  OUTPUT_DIR / "data" / "flights" / "v1"
-        flights_path = FLIGHTS_OUTPUT_DIR / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
 
-    return flights_path
+def adsblol_flights_output_path(target_date: date):
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "trad-model"
+        / "v3"
+        / "adsblol"
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
+        / "flights.parquet"
+    )
 
 
 def _date_range(start_date: date, end_date: date):
@@ -130,15 +136,9 @@ def _date_range(start_date: date, end_date: date):
 
 
 def _get_flights_for_day(target_date: date):
-    path = flights_parquet_path(target_date)
-    if path.exists():
-        df = pl.read_parquet(path)
-        return with_flight_schema_columns(df)
-    df = get_flights_from_iceberg(target_date)
-    df = with_flight_schema_columns(df)
-    os.makedirs(path.parent, exist_ok=True)
-    df.write_parquet(path)
-    return df
+    path = adsblol_flights_output_path(target_date)
+    df = pl.read_parquet(path)
+    return with_flight_schema_columns(df)
 
 
 def get_flights(start_date: date, end_date: date | None = None):
@@ -147,32 +147,3 @@ def get_flights(start_date: date, end_date: date | None = None):
     if end_date <= start_date:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
     return pl.concat([_get_flights_for_day(target_date) for target_date in _date_range(start_date, end_date)])
-
-
-def get_flights_from_iceberg(target_date: date):
-    import awswrangler as wr
-    from data_engineering.utils import ATHENA_DATABASE, ATHENA_WORKGROUP
-    ICEBERG_TABLE = "planequery_lake_prod.flights"
-    next_day = target_date + timedelta(days=1)
-    sql = f"""
-        SELECT *
-        FROM {ICEBERG_TABLE}
-        WHERE takeoff_time >= TIMESTAMP '{target_date:%Y-%m-%d} 00:00:00'
-          AND takeoff_time <  TIMESTAMP '{next_day:%Y-%m-%d} 00:00:00'
-    """
-    # see datatypes I get back
-    pdf = wr.athena.read_sql_query(
-        sql=sql,
-        database=ATHENA_DATABASE,
-        workgroup=ATHENA_WORKGROUP,
-        ctas_approach=False,
-    )
-    df = pl.from_pandas(pdf)
-    for col_name in ["takeoff_time", "landing_time"]:
-        df = df.with_columns(
-            pl.col(col_name)
-              .dt.replace_time_zone(None)   # remove UTC → becomes naive
-              .dt.cast_time_unit("ms")      # ns → ms
-              .alias(col_name)
-        )
-    return df
