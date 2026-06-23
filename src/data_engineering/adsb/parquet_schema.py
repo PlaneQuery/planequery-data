@@ -16,7 +16,7 @@ COLUMNS = [
     "squawk", "emergency", "alert", "spi",
     "version", "nic", "nic_baro", "nac_p", "nac_v",
     "sil", "sil_type", "gva", "sda",
-    "type", "flags", "rssi_dbfs", "source",
+    "type", "flags", "rssi_dbfs",
     "no_reg_data", "pia", "ladd", "military", "interesting",
     "owner", "aircraft_description", "category",
     "wind_direction_deg", "wind_speed_kt",
@@ -83,11 +83,10 @@ PARQUET_SCHEMA = pa.schema([
     ("gva", pa.int32()),
     ("sda", pa.int32()),
 
-    # source / message metadata
+    # message metadata
     ("type", pa.string()),
     ("flags", pa.int32()),
     ("rssi_dbfs", pa.float32()),
-    ("source", pa.string()),
 
     # aircraft metadata (dbFlags bitfield split out)
     ("no_reg_data", pa.bool_()),

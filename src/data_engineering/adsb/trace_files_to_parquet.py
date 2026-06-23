@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -14,7 +15,6 @@ DEFAULT_TRACE_FOLDER = (
 DEFAULT_OUTPUT_ROOT = "/Volumes/T2-SSD/planequery/data/raw/adsb-exchange/traces_parquet"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
-DATA_SOURCE = "adsb-exchange"
 
 
 def _parse_date_from_trace_folder(folder_path: Path) -> tuple[str, str, str]:
@@ -65,6 +65,7 @@ def process_trace_files(
     output_root=DEFAULT_OUTPUT_ROOT,
     batch_size: int = 100_000,
 ) -> int:
+    start_time = time.perf_counter()
     folder_path = Path(folder_path)
     output_root = Path(output_root)
     year, month, day = _parse_date_from_trace_folder(folder_path)
@@ -90,7 +91,7 @@ def process_trace_files(
     try:
         for file in files:
             print(f"Processing {file}")
-            cols = process_file(file, data_source=DATA_SOURCE)
+            cols = process_file(file)
             if cols is None:
                 print(f"No valid data in {file}")
                 continue
@@ -133,6 +134,8 @@ def process_trace_files(
     print(f"Total rows written: {total_rows}")
     for bucket, row_count in total_rows_by_bucket.items():
         print(f"Bucket {bucket}: {row_count} rows -> {parquet_paths[bucket]}")
+    elapsed_seconds = time.perf_counter() - start_time
+    print(f"Elapsed time: {elapsed_seconds:.2f} seconds")
     return total_rows
 
 
