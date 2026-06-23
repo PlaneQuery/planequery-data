@@ -1,4 +1,3 @@
-import multiprocessing as mp
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -97,19 +96,8 @@ def _process_file_for_parquet(file: Path):
     return process_file(file, log_dedupes=False)
 
 
-def _process_pool_context():
-    if "fork" in mp.get_all_start_methods():
-        return mp.get_context("fork")
-    return None
-
-
 def _processed_trace_files(files: list[Path], max_workers: int, submit_chunk_size: int):
-    if max_workers == 1:
-        for file in files:
-            yield file, _process_file_for_parquet(file)
-        return
-
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=_process_pool_context()) as executor:
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for chunk_start in range(0, len(files), submit_chunk_size):
             chunk = files[chunk_start:chunk_start + submit_chunk_size]
             futures = [executor.submit(_process_file_for_parquet, file) for file in chunk]
