@@ -102,8 +102,8 @@ def run_adsb_day(day: date, args: argparse.Namespace) -> None:
         fmt(day),
         fmt(next_day(day)),
     ]
-    if args.keep_folders:
-        command.append("--keep-folders")
+    if not args.keep_folders:
+        command.append("--remove-folders")
     if args.write_to_s3:
         command.append("--write-to-s3")
     if args.ingest_to_iceberg:
@@ -160,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lock-file", type=Path, default=LOCK_FILE)
     parser.add_argument("--wait-for-lock", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--keep-folders", action="store_true")
+    parser.add_argument("--remove-folders", dest="keep_folders", action="store_false")
     parser.add_argument("--no-write-to-s3", dest="write_to_s3", action="store_false")
     parser.add_argument(
         "--no-ingest-to-iceberg",
@@ -168,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
     )
     parser.add_argument("--dev", dest="prod", action="store_false")
-    parser.set_defaults(write_to_s3=True, ingest_to_iceberg=True, prod=True)
+    parser.set_defaults(write_to_s3=True, ingest_to_iceberg=True, prod=True, keep_folders=True)
     return parser
 
 
