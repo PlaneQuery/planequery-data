@@ -15,7 +15,7 @@ ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" / "adsblol"
 DEFAULT_OUTPUT_ROOT = ADSBLOL_DIR / "parquet_output" / "v6"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
-DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 10)
+DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 32)
 PROGRESS_INTERVAL_FILES = 1_000
 
 
