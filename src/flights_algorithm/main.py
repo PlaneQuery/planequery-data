@@ -886,7 +886,11 @@ def _scan_readsb_hist_day_parquet(
     )
 
 
-def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None = None) -> pl.DataFrame:
+def run_main(
+    target_date: date = date(2026, 3, 1),
+    icaos: Sequence[str] | None = None,
+    american_icaos_only: bool = False,
+) -> pl.DataFrame:
     from data_engineering.adsb.read_adsb import scan_adsb
 
     day_start, day_end = _day_bounds(target_date)
@@ -896,7 +900,12 @@ def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None =
 
     lf_adsb = pl.concat(
         [
-            scan_adsb(scan_date, columns=ADSB_ALGORITHM_COLUMNS)
+            scan_adsb(
+                scan_date,
+                columns=ADSB_ALGORITHM_COLUMNS,
+                icaos=icaos,
+                american_icaos_only=american_icaos_only,
+            )
             for scan_date in scan_dates
         ]
     ).filter(
@@ -904,7 +913,7 @@ def run_main(target_date: date = date(2026, 3, 1), icaos: Sequence[str] | None =
         & (pl.col("time") < window_end)
     )
 
-    segments = _collect_segments_from_adsb_lf(lf_adsb, icaos=icaos)
+    segments = _collect_segments_from_adsb_lf(lf_adsb)
     segments = [
         segment
         for segment in segments
@@ -955,6 +964,7 @@ def cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("start_date", type=_date_arg)
     parser.add_argument("end_date", type=_date_arg)
+    parser.add_argument("--american-icaos-only", action="store_true")
     args = parser.parse_args()
 
     if args.end_date <= args.start_date:
@@ -962,7 +972,10 @@ def cli() -> None:
 
     for target_date in _date_range(args.start_date, args.end_date):
         print(f"Running flights algorithm for {target_date}")
-        flights_df = run_main(target_date=target_date)
+        flights_df = run_main(
+            target_date=target_date,
+            american_icaos_only=args.american_icaos_only,
+        )
         print(flights_df)
 
 
