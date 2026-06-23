@@ -97,20 +97,36 @@ def _trace_files(folder_path: Path) -> list[Path]:
     )
 
 
-def _process_file_for_parquet(file: Path):
-    return process_file(file, log_dedupes=False)
+def _process_file_for_parquet(file: Path, pia_or_american_ladd_only: bool):
+    return process_file(
+        file,
+        log_dedupes=False,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
+    )
 
 
-def _processed_trace_files(files: list[Path], max_workers: int, submit_chunk_size: int):
+def _processed_trace_files(
+    files: list[Path],
+    max_workers: int,
+    submit_chunk_size: int,
+    pia_or_american_ladd_only: bool,
+):
     if max_workers == 1:
         for file in files:
-            yield file, _process_file_for_parquet(file)
+            yield file, _process_file_for_parquet(file, pia_or_american_ladd_only)
         return
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for chunk_start in range(0, len(files), submit_chunk_size):
             chunk = files[chunk_start:chunk_start + submit_chunk_size]
-            futures = [executor.submit(_process_file_for_parquet, file) for file in chunk]
+            futures = [
+                executor.submit(
+                    _process_file_for_parquet,
+                    file,
+                    pia_or_american_ladd_only,
+                )
+                for file in chunk
+            ]
             for file, future in zip(chunk, futures):
                 yield file, future.result()
 
@@ -121,6 +137,7 @@ def process_trace_files(
     batch_size: int = 100_000,
     max_workers: int = DEFAULT_MAX_WORKERS,
     submit_chunk_size: int | None = None,
+    pia_or_american_ladd_only: bool = False,
 ) -> int:
     start_time = time.perf_counter()
     if submit_chunk_size is None:
@@ -150,12 +167,18 @@ def process_trace_files(
 
     current_bucket = None
     processed_file_count = 0
-    for file, cols in _processed_trace_files(files, max_workers, submit_chunk_size):
+    for file, cols in _processed_trace_files(
+        files,
+        max_workers,
+        submit_chunk_size,
+        pia_or_american_ladd_only,
+    ):
         processed_file_count += 1
         if processed_file_count % PROGRESS_INTERVAL_FILES == 0:
             print(f"Processed {processed_file_count}/{len(files)} trace files")
         if cols is None:
-            print(f"No valid data in {file}")
+            if not pia_or_american_ladd_only:
+                print(f"No valid data in {file}")
             continue
 
         cols = _sort_cols_by_icao_time(cols)
@@ -225,6 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--batch-size", type=int, default=100_000)
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
+    parser.add_argument("--pia-or-american-ladd-only", action="store_true")
     args = parser.parse_args()
 
     process_trace_files(
@@ -232,4 +256,5 @@ if __name__ == "__main__":
         output_root=args.output_root,
         batch_size=args.batch_size,
         max_workers=args.max_workers,
+        pia_or_american_ladd_only=args.pia_or_american_ladd_only,
     )
