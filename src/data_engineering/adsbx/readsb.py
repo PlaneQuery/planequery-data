@@ -113,6 +113,7 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
     cols["callsign"].append(_str_or_none(aircraft.get("flight")))
     cols["registration"].append(_str_or_none(aircraft.get("r")))
     cols["aircraft_type"].append(_str_or_none(aircraft.get("t")))
+    cols["aircraft-year"].append(_to_int(aircraft.get("year")))
 
     cols["lat"].append(lat)
     cols["lon"].append(lon)
