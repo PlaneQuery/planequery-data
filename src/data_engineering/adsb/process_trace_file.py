@@ -2,11 +2,11 @@
 
 import gzip
 import math
+from pathlib import Path
 
 import orjson
 
 from data_engineering.adsb.parquet_schema import COLUMNS
-
 
 DATA_SOURCE = "adsb.lol"
 
@@ -139,7 +139,7 @@ def _dedupe_cols_by_time_icao(cols: dict[str, list]) -> tuple[dict[str, list], i
     return deduped_cols, duplicate_count
 
 
-def process_file(filepath: str) -> dict | None:
+def process_file(filepath: str | Path, data_source: str = DATA_SOURCE) -> dict | None:
     """
     Process a single trace file and return a column-oriented dict (col -> list)
     matching the planequery_lake_dev.adsb_messages Iceberg schema.
@@ -148,8 +148,11 @@ def process_file(filepath: str) -> dict | None:
         [t_offset, lat, lon, altitude, gs, track, flags, baro_rate,
          aircraft_obj, type, geom_alt, geom_rate, ias, roll]
     """
-    with gzip.open(filepath, 'rb') as f:
-        data = orjson.loads(f.read())
+    filepath = Path(filepath)
+    raw = filepath.read_bytes()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    data = orjson.loads(raw)
 
     icao = data.get('icao')
     timestamp = data.get('timestamp')
@@ -243,7 +246,7 @@ def process_file(filepath: str) -> dict | None:
         cols["aircraft_description"].append(aircraft_description)
         cols["category"].append(_str_or_none(aircraft.get('category')))
 
-        cols["source"].append(DATA_SOURCE)
+        cols["source"].append(data_source)
         cols["flags"].append(row[6])
 
         cols["type"].append(_str_or_none(row[9]))
