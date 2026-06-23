@@ -1,5 +1,8 @@
-from pathlib import Path
+import multiprocessing as mp
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -15,6 +18,8 @@ DEFAULT_TRACE_FOLDER = (
 DEFAULT_OUTPUT_ROOT = "/Volumes/T2-SSD/planequery/data/raw/adsb-exchange/traces_parquet"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
+DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 10)
+PROGRESS_INTERVAL_FILES = 1_000
 
 
 def _parse_date_from_trace_folder(folder_path: Path) -> tuple[str, str, str]:
@@ -88,12 +93,40 @@ def _trace_files(folder_path: Path) -> list[Path]:
     )
 
 
+def _process_file_for_parquet(file: Path):
+    return process_file(file, log_dedupes=False)
+
+
+def _process_pool_context():
+    if "fork" in mp.get_all_start_methods():
+        return mp.get_context("fork")
+    return None
+
+
+def _processed_trace_files(files: list[Path], max_workers: int, submit_chunk_size: int):
+    if max_workers == 1:
+        for file in files:
+            yield file, _process_file_for_parquet(file)
+        return
+
+    with ProcessPoolExecutor(max_workers=max_workers, mp_context=_process_pool_context()) as executor:
+        for chunk_start in range(0, len(files), submit_chunk_size):
+            chunk = files[chunk_start:chunk_start + submit_chunk_size]
+            futures = [executor.submit(_process_file_for_parquet, file) for file in chunk]
+            for file, future in zip(chunk, futures):
+                yield file, future.result()
+
+
 def process_trace_files(
     folder_path=DEFAULT_TRACE_FOLDER,
     output_root=DEFAULT_OUTPUT_ROOT,
     batch_size: int = 100_000,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    submit_chunk_size: int | None = None,
 ) -> int:
     start_time = time.perf_counter()
+    if submit_chunk_size is None:
+        submit_chunk_size = max_workers * 8
     folder_path = Path(folder_path)
     output_root = Path(output_root)
     year, month, day = _parse_date_from_trace_folder(folder_path)
@@ -108,6 +141,7 @@ def process_trace_files(
 
     files = _trace_files(folder_path)
     print(f"Found {len(files)} trace files")
+    print(f"Processing with {max_workers} workers and {submit_chunk_size} submitted files per chunk")
 
     batch_cols_by_bucket = {bucket: _empty_cols() for bucket in range(ICAO_BUCKET_COUNT)}
     batch_count_by_bucket = {bucket: 0 for bucket in range(ICAO_BUCKET_COUNT)}
@@ -117,9 +151,11 @@ def process_trace_files(
     }
 
     current_bucket = None
-    for file in files:
-        print(f"Processing {file}")
-        cols = process_file(file)
+    processed_file_count = 0
+    for file, cols in _processed_trace_files(files, max_workers, submit_chunk_size):
+        processed_file_count += 1
+        if processed_file_count % PROGRESS_INTERVAL_FILES == 0:
+            print(f"Processed {processed_file_count}/{len(files)} trace files")
         if cols is None:
             print(f"No valid data in {file}")
             continue
