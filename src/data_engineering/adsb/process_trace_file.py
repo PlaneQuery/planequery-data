@@ -136,7 +136,7 @@ def _dedupe_cols_by_time_icao(cols: dict[str, list]) -> tuple[dict[str, list], i
     return deduped_cols, duplicate_count
 
 
-def process_file(filepath: str | Path) -> dict | None:
+def process_file(filepath: str | Path, log_dedupes: bool = True) -> dict | None:
     """
     Process a single trace file and return a column-oriented dict (col -> list)
     matching the planequery_lake_dev.adsb_messages Iceberg schema.
@@ -306,7 +306,7 @@ def process_file(filepath: str | Path) -> dict | None:
         return None
 
     cols, duplicate_count = _dedupe_cols_by_time_icao(cols)
-    if duplicate_count:
+    if duplicate_count and log_dedupes:
         print(f"Deduped {duplicate_count} duplicate rows in {filepath}")
 
     return cols
