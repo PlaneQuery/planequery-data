@@ -6,8 +6,9 @@ import polars as pl
 from data_engineering.flights.flight_type import get_flights
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.flights.flight_type import flights_df_to_flights
+from data_engineering.utils import OUTPUT_DIR
 from pia.main import run_pia_algorithm
-from pia.evaluation.main import evaluation
+from pia.evaluation.main import evaluation, visualize_graph
 
 mappings_path = Path("/Users/jonahgoode/Documents/PlaneQuery/r-piaicao jacksweeney mappings.csv")
 
@@ -38,6 +39,33 @@ df_mappings = df_mappings.filter(pl.col("real_icao").is_in(real_icaos_avaliable)
 pia_icaos = df_mappings.get_column("pia_icao").unique().to_list()
 icaos = set(real_icaos_avaliable) | set(pia_icaos)
 df_flights = df_flights.filter(pl.col("icao").is_in(icaos))
+def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
+    return (
+        df
+        .with_row_index("_route_fix_row_nr")
+        .sort(["icao", "takeoff_time"])
+        .with_columns(
+            pl.col("takeoff_airport_ident")
+            .shift(-1)
+            .over("icao")
+            .alias("_next_takeoff_airport_ident")
+        )
+        .with_columns(
+            pl.when(
+                pl.col("_next_takeoff_airport_ident").is_not_null()
+                & (pl.col("landing_airport_ident") != pl.col("_next_takeoff_airport_ident"))
+            )
+            .then(pl.col("_next_takeoff_airport_ident"))
+            .otherwise(pl.col("landing_airport_ident"))
+            .alias("landing_airport_ident")
+        )
+        .sort("_route_fix_row_nr")
+        .drop(["_route_fix_row_nr", "_next_takeoff_airport_ident"])
+    )
+
+
+df_flights = fix_route_mismatches(df_flights)
+
 
 pia_to_real_icao_map = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
 gold_dict = dict()
@@ -45,6 +73,8 @@ pia_flights = flights_df_to_flights(df_flights.filter(pl.col("pia")))
 for flight in pia_flights:
     gold_dict[flight.flight_id] = pia_to_real_icao_map[flight.icao]
 
-mappings, g = run_pia_algorithm(date(2026, 5, 1), date(2026, 6, 9), icaos=list(gold_dict.values()) + pia_icaos )
+icaos=list(gold_dict.values()) + pia_icaos 
+mappings, g = run_pia_algorithm(date(2026, 5, 1), date(2026, 6, 9))
 stats = evaluation(mappings, gold_dict)
+visualize_graph(g, OUTPUT_DIR/ "tmp" / "pia_graph_flights_real_flights_1.png")
 print(stats)
