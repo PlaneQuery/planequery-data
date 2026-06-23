@@ -5,7 +5,7 @@ import urllib.request
 import time
 from data_engineering.utils import OUTPUT_DIR
 ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" /"adsblol"
-PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v5"
+PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v6"
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
 LATEST_PROD_ADSB_DATE_CACHE = ADSBLOL_DIR / "LATEST_PROD_ADSB_DATE.txt"
 DEFAULT_LATEST_PROD_ADSB_DATE = date(2026, 6, 4)

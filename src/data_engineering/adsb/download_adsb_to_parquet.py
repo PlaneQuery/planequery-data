@@ -10,19 +10,15 @@ import os
 import re
 import resource
 import shutil
-import signal
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
 import time
-import orjson
-import pyarrow as pa
-import pyarrow.parquet as pq
 from pathlib import Path
 from data_engineering.adsblol.check_for_new_release import get_adsblol_releases_to_process, load_releases_txt
-from data_engineering.adsb.process_trace_file import process_file
+from data_engineering.adsb.trace_files_to_parquet import process_trace_files
 
 
 # ============================================================================
@@ -30,11 +26,38 @@ from data_engineering.adsb.process_trace_file import process_file
 # ============================================================================
 from data_engineering.utils import S3_BUCKET, OUTPUT_DIR
 ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" /"adsblol"
-PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v5"
-os.makedirs(PARQUET_DIR, exist_ok=True)
+RELEASES_DIR = ADSBLOL_DIR / "releases"
+EXTRACT_DIR = ADSBLOL_DIR / "extract"
+PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v6"
+for _dir in (RELEASES_DIR, EXTRACT_DIR, PARQUET_DIR):
+    _dir.mkdir(parents=True, exist_ok=True)
 
 TOKEN = os.environ.get('GITHUB_TOKEN')  # Optional: kept for authenticated asset downloads
 HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
+
+
+def _date_parts_from_version_date(version_date: str) -> tuple[str, str, str]:
+    return version_date[1:5], version_date[6:8], version_date[9:11]
+
+
+def _date_partition_dir(root: Path, year: str, month: str, day: str) -> Path:
+    return root / f"year={year}" / f"month={month}" / f"day={day}"
+
+
+def _release_dir(version_date: str) -> Path:
+    return _date_partition_dir(RELEASES_DIR, *_date_parts_from_version_date(version_date))
+
+
+def _extract_dir(version_date: str) -> Path:
+    return _date_partition_dir(EXTRACT_DIR, *_date_parts_from_version_date(version_date))
+
+
+def _parquet_partition_dir(day: date | datetime) -> Path:
+    return PARQUET_DIR / f"year={day.year}" / f"month={day.month:02d}" / f"day={day.day:02d}"
+
+
+def _parquet_partition_has_data(partition_dir: Path) -> bool:
+    return any(partition_dir.glob("icao_bucket=*/data.parquet"))
 
 
 def get_resource_usage() -> str:
@@ -107,7 +130,7 @@ def fetch_release_urls(version_date: str) -> list[str]:
     return urls
 
 
-def download_asset(asset_url: str, file_path: str, expected_size: int | None = None) -> bool:
+def download_asset(asset_url: str, file_path: str | Path, expected_size: int | None = None) -> bool:
     """Download a single release asset with size verification.
     
     Args:
@@ -206,7 +229,6 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
     """
     Extracts a split archive by concatenating the parts using 'cat'
     and then extracting with 'tar' in one pipeline.
-    Deletes the tar files immediately after extraction to save disk space.
     """
     if os.path.isdir(extract_dir):
         print(f"[SKIP] Extraction directory already exists: {extract_dir}")
@@ -267,18 +289,9 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
         
         print(f"Successfully extracted archive to {extract_dir}")
         
-        # Delete tar files immediately after extraction
-        for tar_file in file_paths:
-            try:
-                os.remove(tar_file)
-                print(f"Deleted tar file: {tar_file}")
-            except Exception as e:
-                print(f"Failed to delete {tar_file}: {e}")
-        
-        # Check disk usage after deletion
         disk = shutil.disk_usage('.')
         free_gb = disk.free / (1024**3)
-        print(f"Disk space after tar deletion: {free_gb:.1f}GB free")
+        print(f"Disk space after extraction: {free_gb:.1f}GB free")
         
         return True
     except Exception as e:
@@ -287,57 +300,30 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
         return False
 
 
-# ============================================================================
-# Parquet Writing
-# ============================================================================
-
-# Column names in canonical order, matching the Iceberg `adsb_messages` table.
-from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
-
 OS_CPU_COUNT = os.cpu_count() or 1
 MAX_WORKERS = min(OS_CPU_COUNT, 4)
 
 
-def collect_trace_files_with_find(root_dir):
-    """Find all trace_full_*.json files in the extracted directory."""
-    trace_dict: dict[str, str] = {}
-    cmd = ['find', root_dir, '-type', 'f', '-name', 'trace_full_*.json']
-    
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
-    if result.returncode != 0:
-        print(f"Error executing find: {result.stderr}")
-        return trace_dict
-    
-    for file_path in result.stdout.strip().split('\n'):
-        if file_path:
-            filename = os.path.basename(file_path)
-            if filename.startswith("trace_full_") and filename.endswith(".json"):
-                icao = filename[len("trace_full_"):-len(".json")]
-                trace_dict[icao] = file_path
-                    
-    return trace_dict
-
-
 def download_and_extract(version_date: str) -> str | None:
     """Download and extract tar files, return extract directory path."""
-    extract_dir = os.path.join(ADSBLOL_DIR, f"{version_date}-planes-readsb-prod-0.tar_0")
+    release_dir = _release_dir(version_date)
+    extract_dir = _extract_dir(version_date)
+    release_dir.mkdir(parents=True, exist_ok=True)
     
     # Check if already extracted
     if os.path.isdir(extract_dir):
         print(f"[SKIP] Already extracted: {extract_dir}")
-        return extract_dir
+        return str(extract_dir)
     
     # Check for existing tar files
-    pattern = os.path.join(ADSBLOL_DIR, f"{version_date}-planes-readsb-prod-0*")
+    pattern = str(release_dir / f"{version_date}-planes-readsb-prod-*")
     matches = [p for p in glob.glob(pattern) if os.path.isfile(p)]
     
     if matches:
         print(f"Found existing tar files for {version_date}")
         normal_matches = [
             p for p in matches
-            if "-planes-readsb-prod-0." in os.path.basename(p)
-            and "tmp" not in os.path.basename(p)
+            if "tmp" not in os.path.basename(p)
         ]
         downloaded_files = normal_matches if normal_matches else matches
     else:
@@ -357,21 +343,21 @@ def download_and_extract(version_date: str) -> str | None:
         downloaded_files = []
         for url in use_urls:
             asset_name = url.rstrip('/').split('/')[-1]
-            file_path = os.path.join(ADSBLOL_DIR, asset_name)
+            file_path = release_dir / asset_name
             if download_asset(url, file_path):
-                downloaded_files.append(file_path)
+                downloaded_files.append(str(file_path))
     
     if not downloaded_files:
         print(f"No files downloaded for {version_date}")
         return None
     
     # Extract
-    if extract_split_archive(downloaded_files, extract_dir):
-        return extract_dir
+    if extract_split_archive(downloaded_files, str(extract_dir)):
+        return str(extract_dir)
     return None
 
 
-def process_version_date(version_date: str, keep_folders: bool = False) -> int:
+def process_version_date(version_date: str, keep_folders: bool = True) -> int:
     """Process a version date: download, extract, and write to parquet.
     
     Args:
@@ -392,76 +378,18 @@ def process_version_date(version_date: str, keep_folders: bool = False) -> int:
         print(f"Failed to download/extract data for {version_date}")
         return 0
     
-    # Collect trace files
-    all_trace_files = collect_trace_files_with_find(extract_dir)
-    print(f"Found {len(all_trace_files)} trace files")
-    
-    if not all_trace_files:
-        print("No trace files found")
-        return 0
-    
-    # Process trace files and write to parquet
-    # version_date format: 'v2025.10.01'
-    _year, _month, _day = version_date[1:5], version_date[6:8], version_date[9:11]
-    partition_dir = os.path.join(PARQUET_DIR, f"year={_year}", f"month={_month}", f"day={_day}")
-    os.makedirs(partition_dir, exist_ok=True)
-    parquet_path = os.path.join(partition_dir, "part-00000.parquet")
+    target_day = datetime.strptime(version_date, "v%Y.%m.%d").date()
+    partition_dir = _parquet_partition_dir(target_day)
 
-    print(f"Processing trace files and writing to {parquet_path}")
-    total_rows = 0
-    batch_size = 100_000  # rows before flushing to parquet
-    # Limit pending futures to cap RAM from buffered results (completed but not yet consumed)
-    SUBMIT_CHUNK = MAX_WORKERS * 32
-
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-
-    def _flush(batch_cols: dict, n: int, writer):
-        arrays = [pa.array(batch_cols[col], type=PARQUET_SCHEMA.field(col).type) for col in COLUMNS]
-        table = pa.table(dict(zip(COLUMNS, arrays)), schema=PARQUET_SCHEMA)
-        if writer is None:
-            writer = pq.ParquetWriter(parquet_path, PARQUET_SCHEMA, compression='zstd')
-        writer.write_table(table)
-        print(f"Wrote batch: {n} rows (total: {total_rows})")
-        return writer
-
-    batch_cols = {col: [] for col in COLUMNS}
-    batch_count = 0
-    writer = None
-    file_items = list(all_trace_files.items())
-
-    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for chunk_start in range(0, len(file_items), SUBMIT_CHUNK):
-            chunk = file_items[chunk_start:chunk_start + SUBMIT_CHUNK]
-            futures = {executor.submit(process_file, path): icao for icao, path in chunk}
-
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result:
-                        n = len(result["time"])
-                        for col in COLUMNS:
-                            batch_cols[col].extend(result[col])
-                        total_rows += n
-                        batch_count += n
-
-                        if batch_count >= batch_size:
-                            writer = _flush(batch_cols, batch_count, writer)
-                            batch_cols = {col: [] for col in COLUMNS}
-                            batch_count = 0
-                except Exception as e:
-                    icao = futures[future]
-                    print(f"Error processing {icao}: {e}")
-
-    if batch_count:
-        writer = _flush(batch_cols, batch_count, writer)
-        print(f"Wrote final batch: {batch_count} rows")
-
-    if writer:
-        writer.close()
+    print(f"Processing trace files and writing parquet under {partition_dir}")
+    total_rows = process_trace_files(
+        folder_path=extract_dir,
+        output_root=PARQUET_DIR,
+        max_workers=MAX_WORKERS,
+    )
     
     print(f"\nTotal rows written: {total_rows}")
-    print(f"Parquet file: {parquet_path}")
-    print(f"Partition dir: {partition_dir}")    
+    print(f"Partition dir: {partition_dir}")
     # Cleanup extracted directory
     if not keep_folders and os.path.exists(extract_dir):
         print(f"Removing {extract_dir}")
@@ -474,13 +402,15 @@ def process_version_date(version_date: str, keep_folders: bool = False) -> int:
 def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
     from data_engineering.spark import get_spark_session
     spark = get_spark_session()
+    table_name = "glue.planequery_lake_prod.adsb_messages"
     df = spark.read.parquet(str(parquet_path))
+    df = df.select(*spark.table(table_name).columns)
     df = df.coalesce(2)
     next_day = target_date + timedelta(days=1)
     existing_row_count = spark.sql(
         f"""
         SELECT COUNT(*) AS row_count
-        FROM glue.planequery_lake_prod.adsb_messages
+        FROM {table_name}
         WHERE time >= TIMESTAMP '{target_date:%Y-%m-%d} 00:00:00'
           AND time < TIMESTAMP '{next_day:%Y-%m-%d} 00:00:00'
         """
@@ -489,39 +419,35 @@ def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
     if existing_row_count > 10_000:
         raise Exception(f"Data for {target_date} already exists in Iceberg. Ingestion skipped.")
     
-    df.writeTo("glue.planequery_lake_prod.adsb_messages").append()
-    print(f"Ingested full parquet file into Iceberg: {parquet_path}")
+    df.writeTo(table_name).append()
+    print(f"Ingested parquet into Iceberg: {parquet_path}")
     spark.stop()
 
-def create_parquet_for_day(day, keep_folders: bool = False):
-    """Create parquet file for a single day.
+def create_parquet_for_day(day, keep_folders: bool = True):
+    """Create parquet output for a single day.
     
     Args:
         day: datetime object or string in 'YYYY-MM-DD' format
         keep_folders: Whether to keep extracted folders after processing
     
     Returns:
-        Path to the created parquet file, or None if failed
+        Path to the created parquet partition directory, or None if failed
     """
-    from pathlib import Path
-    
     if isinstance(day, str):
         day = datetime.strptime(day, "%Y-%m-%d")
     
     version_date = f"v{day.strftime('%Y.%m.%d')}"
 
-    # Check if parquet already exists
-    partition_dir = Path(PARQUET_DIR) / f"year={day.year}" / f"month={day.month:02d}" / f"day={day.day:02d}"
-    parquet_path = partition_dir / "part-00000.parquet"
-    if parquet_path.exists():
-        print(f"Parquet file already exists: {parquet_path}")
-        return parquet_path
+    partition_dir = _parquet_partition_dir(day)
+    if _parquet_partition_has_data(partition_dir):
+        print(f"Parquet partition already exists: {partition_dir}")
+        return partition_dir
 
     print(f"Creating parquet for {version_date}")
     rows_processed = process_version_date(version_date, keep_folders)
 
-    if rows_processed > 0 and parquet_path.exists():
-        return parquet_path
+    if rows_processed > 0 and _parquet_partition_has_data(partition_dir):
+        return partition_dir
     else:
         return None
 
@@ -529,8 +455,15 @@ def create_parquet_for_day(day, keep_folders: bool = False):
 def upload_to_s3(parquet_path: Path):
     import boto3
     s3 = boto3.client('s3')
-    s3_key = str(parquet_path.relative_to(OUTPUT_DIR))
-    s3.upload_file(str(parquet_path), S3_BUCKET, s3_key)
+    if parquet_path.is_file():
+        paths = [parquet_path]
+    else:
+        paths = sorted(path for path in parquet_path.rglob("*") if path.is_file())
+
+    for path in paths:
+        s3_key = str(path.relative_to(OUTPUT_DIR))
+        s3.upload_file(str(path), S3_BUCKET, s3_key)
+        print(f"Uploaded {path} to s3://{S3_BUCKET}/{s3_key}")
 
 
 NO_ADSBLOL_RELEASES_EXIT_CODE = 42
@@ -572,9 +505,10 @@ if __name__ == '__main__':
         help='End date (exclusive) in YYYY-MM-DD format. If omitted, only start_date is processed.'
     )
     parser.add_argument(
-        '--keep-folders',
-        action='store_true',
-        help='Keep extracted folders after processing'
+        '--remove-folders',
+        dest='keep_folders',
+        action='store_false',
+        help='Remove extracted folders after processing'
     )
     parser.add_argument(
         '--write-to-s3',
@@ -586,6 +520,7 @@ if __name__ == '__main__':
         action='store_true',
         help='Ingest the created parquet files into Iceberg'
     )
+    parser.set_defaults(keep_folders=True)
     
     args = parser.parse_args()
 
@@ -605,7 +540,7 @@ if __name__ == '__main__':
     for day in days:
         result = create_parquet_for_day(day, args.keep_folders)
         if result:
-            print(f"\n✓ Success! Parquet file created: {result}")
+            print(f"\n✓ Success! Parquet output created: {result}")
             if args.ingest_to_iceberg:
                 ingest_parquet_to_iceberg(result, day)
             if args.write_to_s3:

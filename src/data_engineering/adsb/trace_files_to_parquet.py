@@ -8,23 +8,28 @@ import pyarrow.parquet as pq
 
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
 from data_engineering.adsb.process_trace_file import process_file
+from data_engineering.utils import OUTPUT_DIR
 
 
-DEFAULT_TRACE_FOLDER = (
-    "/Volumes/T2-SSD/planequery/data/raw/adsb-exchange/traces/2026-03-01/"
-    "adsbx-trace-download/traces/2026/03/01"
-)
-DEFAULT_OUTPUT_ROOT = "/Volumes/T2-SSD/planequery/data/raw/adsb-exchange/traces_parquet"
+ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" / "adsblol"
+DEFAULT_OUTPUT_ROOT = ADSBLOL_DIR / "parquet_output" / "v6"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
 DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 10)
 PROGRESS_INTERVAL_FILES = 1_000
 
 
+def _date_partition_value(path_part: str, partition_name: str) -> str:
+    prefix = f"{partition_name}="
+    if path_part.startswith(prefix):
+        return path_part[len(prefix):]
+    return path_part
+
+
 def _parse_date_from_trace_folder(folder_path: Path) -> tuple[str, str, str]:
-    day = folder_path.name
-    month = folder_path.parent.name
-    year = folder_path.parent.parent.name
+    day = _date_partition_value(folder_path.name, "day")
+    month = _date_partition_value(folder_path.parent.name, "month")
+    year = _date_partition_value(folder_path.parent.parent.name, "year")
     if not (len(year) == 4 and len(month) == 2 and len(day) == 2):
         raise ValueError(f"Could not parse YYYY/MM/DD from {folder_path}")
     return year, month, day
@@ -97,6 +102,11 @@ def _process_file_for_parquet(file: Path):
 
 
 def _processed_trace_files(files: list[Path], max_workers: int, submit_chunk_size: int):
+    if max_workers == 1:
+        for file in files:
+            yield file, _process_file_for_parquet(file)
+        return
+
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         for chunk_start in range(0, len(files), submit_chunk_size):
             chunk = files[chunk_start:chunk_start + submit_chunk_size]
@@ -106,7 +116,7 @@ def _processed_trace_files(files: list[Path], max_workers: int, submit_chunk_siz
 
 
 def process_trace_files(
-    folder_path=DEFAULT_TRACE_FOLDER,
+    folder_path: str | Path,
     output_root=DEFAULT_OUTPUT_ROOT,
     batch_size: int = 100_000,
     max_workers: int = DEFAULT_MAX_WORKERS,
@@ -208,4 +218,18 @@ def process_trace_files(
 
 
 if __name__ == "__main__":
-    process_trace_files()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Convert adsb.lol trace files to bucketed parquet")
+    parser.add_argument("folder_path", help="Trace folder, e.g. .../extract/year=2026/month=03/day=01")
+    parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--batch-size", type=int, default=100_000)
+    parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
+    args = parser.parse_args()
+
+    process_trace_files(
+        folder_path=args.folder_path,
+        output_root=args.output_root,
+        batch_size=args.batch_size,
+        max_workers=args.max_workers,
+    )
