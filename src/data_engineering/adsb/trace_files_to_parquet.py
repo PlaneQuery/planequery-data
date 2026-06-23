@@ -116,64 +116,63 @@ def process_trace_files(
         bucket: None for bucket in range(ICAO_BUCKET_COUNT)
     }
 
-    try:
-        current_bucket = None
-        for file in files:
-            print(f"Processing {file}")
-            cols = process_file(file)
-            if cols is None:
-                print(f"No valid data in {file}")
-                continue
+    current_bucket = None
+    for file in files:
+        print(f"Processing {file}")
+        cols = process_file(file)
+        if cols is None:
+            print(f"No valid data in {file}")
+            continue
 
-            cols = _sort_cols_by_icao_time(cols)
-            bucket = _icao_bucket(cols["icao"][0])
-            if current_bucket is not None and bucket != current_bucket and batch_count_by_bucket[current_bucket]:
-                writers[current_bucket] = _write_cols(
-                    writers[current_bucket],
-                    parquet_paths[current_bucket],
-                    batch_cols_by_bucket[current_bucket],
-                )
-                print(
-                    f"Wrote bucket {current_bucket} final sorted batch: "
-                    f"{batch_count_by_bucket[current_bucket]} rows "
-                    f"(total: {total_rows_by_bucket[current_bucket]})"
-                )
-                batch_cols_by_bucket[current_bucket] = _empty_cols()
-                batch_count_by_bucket[current_bucket] = 0
-            current_bucket = bucket
+        cols = _sort_cols_by_icao_time(cols)
+        bucket = _icao_bucket(cols["icao"][0])
+        if current_bucket is not None and bucket != current_bucket and batch_count_by_bucket[current_bucket]:
+            writers[current_bucket] = _write_cols(
+                writers[current_bucket],
+                parquet_paths[current_bucket],
+                batch_cols_by_bucket[current_bucket],
+            )
+            print(
+                f"Wrote bucket {current_bucket} final sorted batch: "
+                f"{batch_count_by_bucket[current_bucket]} rows "
+                f"(total: {total_rows_by_bucket[current_bucket]})"
+            )
+            batch_cols_by_bucket[current_bucket] = _empty_cols()
+            batch_count_by_bucket[current_bucket] = 0
+        current_bucket = bucket
 
-            row_count = _extend_cols(batch_cols_by_bucket[bucket], cols)
-            batch_count_by_bucket[bucket] += row_count
-            total_rows_by_bucket[bucket] += row_count
+        row_count = _extend_cols(batch_cols_by_bucket[bucket], cols)
+        batch_count_by_bucket[bucket] += row_count
+        total_rows_by_bucket[bucket] += row_count
 
-            if batch_count_by_bucket[bucket] >= batch_size:
-                writers[bucket] = _write_cols(
-                    writers[bucket],
-                    parquet_paths[bucket],
-                    batch_cols_by_bucket[bucket],
-                )
-                print(
-                    f"Wrote bucket {bucket} batch: {batch_count_by_bucket[bucket]} rows "
-                    f"(total: {total_rows_by_bucket[bucket]})"
-                )
-                batch_cols_by_bucket[bucket] = _empty_cols()
-                batch_count_by_bucket[bucket] = 0
+        if batch_count_by_bucket[bucket] >= batch_size:
+            writers[bucket] = _write_cols(
+                writers[bucket],
+                parquet_paths[bucket],
+                batch_cols_by_bucket[bucket],
+            )
+            print(
+                f"Wrote bucket {bucket} batch: {batch_count_by_bucket[bucket]} rows "
+                f"(total: {total_rows_by_bucket[bucket]})"
+            )
+            batch_cols_by_bucket[bucket] = _empty_cols()
+            batch_count_by_bucket[bucket] = 0
 
-        for bucket in range(ICAO_BUCKET_COUNT):
-            if batch_count_by_bucket[bucket]:
-                writers[bucket] = _write_cols(
-                    writers[bucket],
-                    parquet_paths[bucket],
-                    batch_cols_by_bucket[bucket],
-                )
-                print(
-                    f"Wrote bucket {bucket} final batch: {batch_count_by_bucket[bucket]} rows "
-                    f"(total: {total_rows_by_bucket[bucket]})"
-                )
-    finally:
-        for writer in writers.values():
-            if writer is not None:
-                writer.close()
+    for bucket in range(ICAO_BUCKET_COUNT):
+        if batch_count_by_bucket[bucket]:
+            writers[bucket] = _write_cols(
+                writers[bucket],
+                parquet_paths[bucket],
+                batch_cols_by_bucket[bucket],
+            )
+            print(
+                f"Wrote bucket {bucket} final batch: {batch_count_by_bucket[bucket]} rows "
+                f"(total: {total_rows_by_bucket[bucket]})"
+            )
+
+    for writer in writers.values():
+        if writer is not None:
+            writer.close()
 
     total_rows = sum(total_rows_by_bucket.values())
     print(f"Total rows written: {total_rows}")
