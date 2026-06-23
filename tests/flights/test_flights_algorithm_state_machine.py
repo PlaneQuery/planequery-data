@@ -5,6 +5,7 @@ import polars as pl
 
 from flights_algorithm.main import (
     FlightSegment,
+    _collect_segments_from_adsb_lf,
     _segment_takes_off_in_window,
     _segments_to_flights_df,
     identify_flight_segments,
@@ -332,6 +333,43 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
     assert df.row(0, named=True)["landing_time"] == start + timedelta(minutes=12)
     assert df.row(0, named=True)["pia"] is True
     assert df.row(0, named=True)["ladd"] is True
+
+
+def test_collect_segments_from_adsb_lf_matches_parallel_workers(capsys):
+    start = datetime(2026, 3, 1, 12, 0)
+    rows = []
+    for icao, lon_offset in [("abc123", 0.0), ("def456", 1.0)]:
+        rows.extend(
+            [
+                {"time": start, "icao": icao, "lat": 0.0, "lon": lon_offset, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+                {"time": start + timedelta(minutes=1), "icao": icao, "lat": 0.0, "lon": lon_offset + 0.02, "ground_speed_kt": 100.0, "on_ground": False, "baro_altitude_ft": 1000},
+                {"time": start + timedelta(minutes=8), "icao": icao, "lat": 0.0, "lon": lon_offset + 0.20, "ground_speed_kt": 180.0, "on_ground": False, "baro_altitude_ft": 5000},
+                {"time": start + timedelta(minutes=12), "icao": icao, "lat": 0.0, "lon": lon_offset + 0.205, "ground_speed_kt": 20.0, "on_ground": True, "baro_altitude_ft": None},
+                {"time": start + timedelta(minutes=15), "icao": icao, "lat": 0.0, "lon": lon_offset + 0.205, "ground_speed_kt": 0.0, "on_ground": True, "baro_altitude_ft": None},
+            ]
+        )
+    for row in rows:
+        row.update({"pia": False, "ladd": False, "military": False, "interesting": False})
+
+    lf_adsb = pl.DataFrame(rows).lazy()
+    sequential = _collect_segments_from_adsb_lf(lf_adsb, max_workers=1)
+    parallel = _collect_segments_from_adsb_lf(
+        lf_adsb,
+        max_workers=2,
+        segment_chunk_size=1,
+        print_progress=True,
+    )
+
+    assert [
+        (segment.icao, segment.takeoff_time, segment.landing_time)
+        for segment in parallel
+    ] == [
+        (segment.icao, segment.takeoff_time, segment.landing_time)
+        for segment in sequential
+    ]
+    progress_output = capsys.readouterr().out
+    assert "Segmenting 2 ICAOs with 2 worker(s)" in progress_output
+    assert "Segmented 2/2 ICAOs" in progress_output
 
 
 def test_stitches_same_icao_segments_separated_by_short_gap():
