@@ -338,7 +338,11 @@ def download_and_extract(version_date: str) -> str | None:
     return None
 
 
-def process_version_date(version_date: str, keep_folders: bool = True) -> int:
+def process_version_date(
+    version_date: str,
+    keep_folders: bool = True,
+    pia_or_american_ladd_only: bool = False,
+) -> int:
     """Process a version date: download, extract, and write to parquet.
     
     Args:
@@ -366,6 +370,7 @@ def process_version_date(version_date: str, keep_folders: bool = True) -> int:
         folder_path=extract_dir,
         output_root=PARQUET_DIR,
         max_workers=MAX_WORKERS,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
     
     print(f"\nTotal rows written: {total_rows}")
@@ -402,7 +407,11 @@ def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
     print(f"Ingested parquet into Iceberg: {parquet_path}")
     spark.stop()
 
-def create_parquet_for_day(day, keep_folders: bool = True):
+def create_parquet_for_day(
+    day,
+    keep_folders: bool = True,
+    pia_or_american_ladd_only: bool = False,
+):
     """Create parquet output for a single day.
     
     Args:
@@ -423,7 +432,11 @@ def create_parquet_for_day(day, keep_folders: bool = True):
         return partition_dir
 
     print(f"Creating parquet for {version_date}")
-    rows_processed = process_version_date(version_date, keep_folders)
+    rows_processed = process_version_date(
+        version_date,
+        keep_folders,
+        pia_or_american_ladd_only,
+    )
 
     if rows_processed > 0 and _parquet_partition_has_data(partition_dir):
         return partition_dir
@@ -499,6 +512,11 @@ if __name__ == '__main__':
         action='store_true',
         help='Ingest the created parquet files into Iceberg'
     )
+    parser.add_argument(
+        '--pia-or-american-ladd-only',
+        action='store_true',
+        help='Only write PIA ICAOs and American LADD aircraft'
+    )
     parser.set_defaults(keep_folders=True)
     
     args = parser.parse_args()
@@ -517,7 +535,11 @@ if __name__ == '__main__':
 
     processed_days = []
     for day in days:
-        result = create_parquet_for_day(day, args.keep_folders)
+        result = create_parquet_for_day(
+            day,
+            keep_folders=args.keep_folders,
+            pia_or_american_ladd_only=args.pia_or_american_ladd_only,
+        )
         if result:
             print(f"\n✓ Success! Parquet output created: {result}")
             if args.ingest_to_iceberg:
