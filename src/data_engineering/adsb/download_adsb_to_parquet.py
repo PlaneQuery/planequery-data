@@ -554,66 +554,6 @@ def get_adsblol_releases_to_process_or_exit() -> list[date]:
     sys.exit(NO_ADSBLOL_RELEASES_EXIT_CODE)
 
 
-def _inference_feature_days(processed_days: list[date | datetime]) -> list[date]:
-    days = sorted({d.date() if isinstance(d, datetime) else d for d in processed_days})
-    latest_day = days[-1]
-    feature_days = {days[0] - timedelta(days=1)}
-    feature_days.update(day for day in days if day < latest_day)
-    return sorted(feature_days)
-
-
-def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None: # TODO: Much of this should be moved to CDK stack or elsewhere.
-    parameter_name = os.environ.get("DAILY_PIPELINE_MANIFEST_SSM_PARAMETER")
-    if not parameter_name:
-        return
-
-    feature_days = _inference_feature_days(processed_days)
-    manifest = {
-        "processed_adsb_days": _format_day_list(processed_days),
-        "inference_feature_days": _format_day_list(feature_days),
-        "inference_features_execution_input": {
-            "dates": [
-                {
-                    "date": day.strftime("%Y-%m-%d"),
-                    "command": [
-                        "--start-date",
-                        day.strftime("%Y-%m-%d"),
-                        "--end-date",
-                        (day + timedelta(days=1)).strftime("%Y-%m-%d"),
-                    ],
-                }
-                for day in feature_days
-            ],
-            "max_concurrency": int(os.environ.get("INFERENCE_FEATURES_MAX_CONCURRENCY", "1")),
-        },
-        "flight_inference_jobs": [
-            {
-                "date": day.strftime("%Y-%m-%d"),
-                "job_name": f"daily-flights-{day:%Y-%m-%d}",
-                "command": [
-                    "python",
-                    "/app/src/data_engineering/flights/flights_from_model.py",
-                    day.strftime("%Y-%m-%d"),
-                    (day + timedelta(days=1)).strftime("%Y-%m-%d"),
-                    "--write-to-s3",
-                    "--ingest-to-iceberg",
-                    "--prod",
-                ],
-            }
-            for day in feature_days
-        ],
-    }
-
-    import boto3
-    ssm = boto3.client("ssm")
-    ssm.put_parameter(
-        Name=parameter_name,
-        Value=orjson.dumps(manifest).decode("utf-8"),
-        Type="String",
-        Overwrite=True,
-    )
-    print(f"Wrote daily pipeline manifest to SSM parameter {parameter_name}")
-
 
 if __name__ == '__main__':
     import argparse
@@ -674,6 +614,3 @@ if __name__ == '__main__':
         else:
             print(f"\n✗ Failed to create parquet file for {day.strftime('%Y-%m-%d')}")
             sys.exit(1)
-
-    if processed_days:
-        write_daily_pipeline_manifest(processed_days)
