@@ -136,7 +136,11 @@ def _dedupe_cols_by_time_icao(cols: dict[str, list]) -> tuple[dict[str, list], i
     return deduped_cols, duplicate_count
 
 
-def process_file(filepath: str | Path, log_dedupes: bool = True) -> dict | None:
+def process_file(
+    filepath: str | Path,
+    log_dedupes: bool = True,
+    pia_or_american_ladd_only: bool = False,
+) -> dict | None:
     """
     Process a single trace file and return a column-oriented dict (col -> list)
     matching the planequery_lake_dev.adsb_messages Iceberg schema.
@@ -176,6 +180,11 @@ def process_file(filepath: str | Path, log_dedupes: bool = True) -> dict | None:
         interesting = bool(db_flags_int & 2)
         pia = bool(db_flags_int & 4)
         ladd = bool(db_flags_int & 8)
+
+    if pia_or_american_ladd_only:
+        icao_is_american = "a00000" <= icao.lower() <= "afffff"
+        if not (pia or (icao_is_american and ladd)):
+            return None
 
     cols: dict[str, list] = {col: [] for col in COLUMNS}
 
