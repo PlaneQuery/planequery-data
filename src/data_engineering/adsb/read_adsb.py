@@ -1,11 +1,7 @@
-import boto3
 import polars as pl
 from datetime import datetime,date, timedelta
 from pathlib import Path
 import os
-
-import os
-from data_engineering.utils import S3_BUCKET, is_ecs, lookup_parquet_version, s3_key_exists
 
 from data_engineering.utils import OUTPUT_DIR
 ATHENA_DATABASE = "planequery_lake_dev"
@@ -42,32 +38,43 @@ def _read_adsb_from_iceberg(current_day, columns):
 
 
 DEFAULT_COLUMNS_SET = columns=["time", "icao", "registration", "callsign", "lat", "lon", "baro_altitude_ft", "on_ground", "ground_speed_kt", "track_deg", "aircraft_type", "aircraft_description", "owner", "category", "pia", "ladd", "military", "interesting"]
+
+
+def _day_partition_dir(root: Path, current_day: date) -> Path:
+    return root / f"year={current_day.year}" / f"month={current_day.month:02d}" / f"day={current_day.day:02d}"
+
+
+def _v6_parquet_partition_dir(current_day: date) -> Path:
+    parquet_dir = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+    return _day_partition_dir(parquet_dir, current_day)
+
+
+def _parquet_partition_has_data(partition_dir: Path) -> bool:
+    return any(partition_dir.glob("icao_bucket=*/data.parquet"))
+
+
 def _get_parquet_file_path(current_day: date):
-    parquet_dir =  OUTPUT_DIR / "data/raw/adsblol/parquet_output" / lookup_parquet_version(current_day)
-    return parquet_dir / f"year={current_day.year}/month={current_day.month:02d}/day={current_day.day:02d}/part-00000.parquet"
-def _get_s3_key(current_day: date):
-    return str(_get_parquet_file_path(current_day).relative_to(OUTPUT_DIR))
+    return _v6_parquet_partition_dir(current_day)
+
+
+def _get_parquet_read_path(current_day: date) -> str | Path:
+    return str(_get_parquet_file_path(current_day) / "icao_bucket=*" / "data.parquet")
+
+
 def post_process_adsb_df(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(pl.col("callsign").str.replace_all(" ",""))
     return df
 def create_adsb_parquet_for_day(current_day: date):
     parquet_file_path = _get_parquet_file_path(current_day)
-    os.makedirs(parquet_file_path.parent, exist_ok=True)
-    if parquet_file_path.exists():
+    if _parquet_partition_has_data(parquet_file_path):
         return
-    s3 = boto3.client("s3")
-    s3_path = _get_s3_key(current_day)
-    key_exists = s3_key_exists(s3, S3_BUCKET, s3_path)
-    if key_exists:
-        print(f"Downloading {s3_path} from S3")
-        s3.download_file(S3_BUCKET, s3_path, str(parquet_file_path))
-        return
+
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day
     create_parquet_for_day(current_day)
 def read_adsb(current_day: date, columns=DEFAULT_COLUMNS_SET, additional_columns=[],):
     create_adsb_parquet_for_day(current_day)
     columns = list(set(columns + additional_columns))
-    parquet_file_path = _get_parquet_file_path(current_day)
+    parquet_file_path = _get_parquet_read_path(current_day)
     df = pl.read_parquet(parquet_file_path, columns=columns)
     df = df.filter(pl.col("time").dt.date() == current_day)
     return post_process_adsb_df(df)
@@ -76,7 +83,7 @@ def scan_adsb(current_day: date, columns=DEFAULT_COLUMNS_SET, additional_columns
     create_adsb_parquet_for_day(current_day)
     columns = list(dict.fromkeys(columns + additional_columns))
     scan_columns = list(dict.fromkeys(columns + ["time"]))
-    parquet_file_path = _get_parquet_file_path(current_day)
+    parquet_file_path = _get_parquet_read_path(current_day)
     lf = pl.scan_parquet(parquet_file_path).select(scan_columns)
     lf = lf.filter(pl.col("time").dt.date() == current_day)
     if "callsign" in columns:
@@ -85,7 +92,7 @@ def scan_adsb(current_day: date, columns=DEFAULT_COLUMNS_SET, additional_columns
 
 def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
     create_adsb_parquet_for_day(current_day)
-    parquet_file_path = _get_parquet_file_path(current_day)
+    parquet_file_path = _get_parquet_read_path(current_day)
     df = pl.scan_parquet(parquet_file_path).filter(pl.col("icao").is_in(icaos)).select(columns).collect()
     return post_process_adsb_df(df)
 def get_icaos_in_adsb(current_day: date) -> list[str]:
@@ -93,7 +100,7 @@ def get_icaos_in_adsb(current_day: date) -> list[str]:
     Filters invalid icaos
     '''
     create_adsb_parquet_for_day(current_day)
-    parquet_file_path = _get_parquet_file_path(current_day)
+    parquet_file_path = _get_parquet_read_path(current_day)
     df = pl.scan_parquet(parquet_file_path).select("icao").filter(exclude_invalid_icaos()).unique().collect()
     return df["icao"].to_list()
 
