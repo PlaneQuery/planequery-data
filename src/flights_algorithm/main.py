@@ -12,7 +12,7 @@ from typing import Sequence
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
-from data_engineering.utils import OUTPUT_DIR
+from data_engineering.flights.flight_type import adsblol_flights_output_path
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -918,21 +918,6 @@ def _readsb_hist_parquet_day_dir(
     )
 
 
-def _adsblol_flights_output_path(target_date: date) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "trad-model"
-        / "v3"
-        / "adsblol"
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
-
 def _scan_readsb_hist_day_parquet(
     target_date: date,
     parquet_root: Path = READSB_HIST_PARQUET_ROOT,
@@ -996,7 +981,7 @@ def run_main(
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     flights_df = _segments_to_flights_df(segments)
-    output_path = _adsblol_flights_output_path(target_date)
+    output_path = adsblol_flights_output_path(target_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
     return flights_df
