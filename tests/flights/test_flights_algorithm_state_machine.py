@@ -6,6 +6,7 @@ import polars as pl
 from flights_algorithm.main import (
     FlightSegment,
     _collect_segments_from_adsb_lf,
+    _ladd_or_pia_icao_filter,
     _segment_takes_off_in_window,
     _segments_to_flights_df,
     identify_flight_segments,
@@ -370,6 +371,20 @@ def test_collect_segments_from_adsb_lf_matches_parallel_workers(capsys):
     progress_output = capsys.readouterr().out
     assert "Segmenting 2 ICAOs with 2 worker(s)" in progress_output
     assert "Segmented 2/2 ICAOs" in progress_output
+
+
+def test_ladd_or_pia_icao_filter_keeps_all_rows_for_flagged_icaos():
+    df = pl.DataFrame(
+        {
+            "icao": ["a00001", "a00001", "a00002", "a00003"],
+            "pia": [False, True, False, None],
+            "ladd": [False, False, True, None],
+        }
+    )
+
+    filtered = df.filter(_ladd_or_pia_icao_filter())
+
+    assert filtered["icao"].to_list() == ["a00001", "a00001", "a00002"]
 
 
 def test_stitches_same_icao_segments_separated_by_short_gap():

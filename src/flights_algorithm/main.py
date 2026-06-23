@@ -839,6 +839,22 @@ def _segment_takes_off_in_window(segment: FlightSegment, start: datetime, end: d
     return start <= segment.takeoff_time < end
 
 
+def _is_american_icao_expr() -> pl.Expr:
+    icao = pl.col("icao").str.to_lowercase()
+    return (icao >= "a00000") & (icao <= "afffff")
+
+
+def _pia_or_american_ladd_filter() -> pl.Expr:
+    return (
+        pl.col("pia").fill_null(False)
+        | (_is_american_icao_expr() & pl.col("ladd").fill_null(False))
+    )
+
+
+def _pia_or_american_ladd_icao_filter() -> pl.Expr:
+    return _pia_or_american_ladd_filter().any().over("icao")
+
+
 def _collect_segments_from_adsb_lf(
     lf_adsb: pl.LazyFrame,
     *,
@@ -939,7 +955,7 @@ def _scan_readsb_hist_day_parquet(
 def run_main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
-    american_icaos_only: bool = False,
+    pia_or_american_ladd_only: bool = False,
     max_workers: int | None = None,
     segment_chunk_size: int | None = None,
 ) -> pl.DataFrame:
@@ -960,7 +976,7 @@ def run_main(
                 scan_date,
                 columns=ADSB_ALGORITHM_COLUMNS,
                 icaos=icaos,
-                american_icaos_only=american_icaos_only,
+                american_icaos_only=False,
             )
             for scan_date in scan_dates
         ]
@@ -968,6 +984,8 @@ def run_main(
         (pl.col("time") >= window_start)
         & (pl.col("time") < window_end)
     )
+    if pia_or_american_ladd_only:
+        lf_adsb = lf_adsb.filter(_pia_or_american_ladd_icao_filter())
 
     segments = _collect_segments_from_adsb_lf(
         lf_adsb,
@@ -981,6 +999,8 @@ def run_main(
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     flights_df = _segments_to_flights_df(segments)
+    if pia_or_american_ladd_only:
+        flights_df = flights_df.filter(_pia_or_american_ladd_filter())
     output_path = adsblol_flights_output_path(target_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
@@ -1035,7 +1055,11 @@ def cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("start_date", type=_date_arg)
     parser.add_argument("end_date", type=_date_arg)
-    parser.add_argument("--american-icaos-only", action="store_true")
+    parser.add_argument(
+        "--pia-or-american-ladd-only",
+        action="store_true",
+        help="only segment and output PIA ICAOs or American LADD aircraft",
+    )
     parser.add_argument(
         "--max-workers",
         type=_positive_int_arg,
@@ -1050,7 +1074,7 @@ def cli() -> None:
         print(f"Running flights algorithm for {target_date}")
         flights_df = run_main(
             target_date=target_date,
-            american_icaos_only=args.american_icaos_only,
+            pia_or_american_ladd_only=args.pia_or_american_ladd_only,
             max_workers=args.max_workers,
         )
         print(flights_df)
