@@ -8,7 +8,6 @@ import datetime as dt
 import glob
 import os
 import re
-import resource
 import shutil
 import subprocess
 import sys
@@ -58,24 +57,6 @@ def _parquet_partition_dir(day: date | datetime) -> Path:
 
 def _parquet_partition_has_data(partition_dir: Path) -> bool:
     return any(partition_dir.glob("icao_bucket=*/data.parquet"))
-
-
-def get_resource_usage() -> str:
-    """Get current RAM and disk usage as a formatted string."""
-    # RAM usage (RSS = Resident Set Size)
-    ram_bytes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # On macOS, ru_maxrss is in bytes; on Linux, it's in KB
-    if sys.platform == 'darwin':
-        ram_gb = ram_bytes / (1024**3)
-    else:
-        ram_gb = ram_bytes / (1024**2)  # Convert KB to GB
-    
-    # Disk usage
-    disk = shutil.disk_usage('.')
-    disk_free_gb = disk.free / (1024**3)
-    disk_total_gb = disk.total / (1024**3)
-    
-    return f"RAM: {ram_gb:.2f}GB | Disk: {disk_free_gb:.1f}GB free / {disk_total_gb:.1f}GB total"
 
 
 # ============================================================================
@@ -370,7 +351,6 @@ def process_version_date(version_date: str, keep_folders: bool = True) -> int:
     print(f"\n{'='*80}")
     print(f"Processing {version_date}")
     print(f"{'='*80}")
-    print(get_resource_usage())
     
     # Download and extract
     extract_dir = download_and_extract(version_date)
@@ -395,7 +375,6 @@ def process_version_date(version_date: str, keep_folders: bool = True) -> int:
         print(f"Removing {extract_dir}")
         shutil.rmtree(extract_dir)
     
-    print(get_resource_usage())
     return total_rows
 
 
