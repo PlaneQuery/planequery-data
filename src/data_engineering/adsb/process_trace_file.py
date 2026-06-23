@@ -160,6 +160,7 @@ def process_file(filepath: str | Path, log_dedupes: bool = True) -> dict | None:
     # Constant per-file (top-level) fields. Empty strings -> None.
     registration = _str_or_none(data.get('r'))
     aircraft_type = _str_or_none(data.get('t'))
+    aircraft_year = _to_int(data.get('year'))
     owner = _str_or_none(data.get('ownOp'))
     aircraft_description = _str_or_none(data.get('desc'))
     no_reg_data_raw = data.get('noRegData')
@@ -233,6 +234,7 @@ def process_file(filepath: str | Path, log_dedupes: bool = True) -> dict | None:
         cols["callsign"].append(_str_or_none(aircraft.get('flight')))
         cols["registration"].append(registration)
         cols["aircraft_type"].append(aircraft_type)
+        cols["aircraft-year"].append(aircraft_year)
 
         cols["no_reg_data"].append(no_reg_data)
         cols["pia"].append(pia)

@@ -6,6 +6,7 @@ import pyarrow as pa
 # Column names in canonical order, matching the Iceberg `adsb_messages` table.
 COLUMNS = [
     "time", "icao", "callsign", "registration", "aircraft_type",
+    "aircraft-year",
     "lat", "lon", "radius_of_containment_m", "on_ground",
     "baro_altitude_ft", "geom_altitude_ft", "baro_rate_fpm", "geom_rate_fpm",
     "ground_speed_kt", "indicated_airspeed_kt", "true_airspeed_kt", "mach",
@@ -33,6 +34,7 @@ PARQUET_SCHEMA = pa.schema([
     ("callsign", pa.string()),
     ("registration", pa.string()),
     ("aircraft_type", pa.string()),
+    ("aircraft-year", pa.int32()),
 
     # position / state
     ("lat", pa.float64()),
