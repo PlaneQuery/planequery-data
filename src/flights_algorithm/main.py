@@ -1,6 +1,8 @@
 import argparse
 import math
+import os
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
@@ -51,6 +53,7 @@ RUN_MAIN_CONTEXT = timedelta(hours=12)
 READSB_HIST_PARQUET_ROOT = Path(
     "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
 )
+DEFAULT_RUN_MAIN_MAX_WORKERS = min(os.cpu_count() or 1, 32)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
     "icao",
@@ -624,6 +627,27 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
     ]
 
 
+def _flight_segments_from_icao_dfs(dfs: Sequence[pl.DataFrame]) -> list[FlightSegment]:
+    segments = []
+    for df_icao in dfs:
+        segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
+    return segments
+
+
+def _chunks(items: Sequence[pl.DataFrame], chunk_size: int):
+    for start in range(0, len(items), chunk_size):
+        yield items[start:start + chunk_size]
+
+
+def _default_max_workers() -> int:
+    return DEFAULT_RUN_MAIN_MAX_WORKERS
+
+
+def _validate_max_workers(max_workers: int) -> None:
+    if max_workers < 1:
+        raise ValueError("max_workers must be at least 1")
+
+
 def _get_airport_lookup():
     try:
         from airports.airportLookup import AirportLookup
@@ -819,7 +843,11 @@ def _collect_segments_from_adsb_lf(
     lf_adsb: pl.LazyFrame,
     *,
     icaos: Sequence[str] | None = None,
+    max_workers: int = 1,
+    segment_chunk_size: int | None = None,
+    print_progress: bool = False,
 ) -> list[FlightSegment]:
+    _validate_max_workers(max_workers)
     if icaos is not None:
         lf_adsb = lf_adsb.filter(pl.col("icao").is_in(list(icaos)))
 
@@ -835,9 +863,46 @@ def _collect_segments_from_adsb_lf(
         .sort(["icao", "time"])
     )
 
+    icao_dfs = [
+        df_icao
+        for _, df_icao in df_adsb.group_by("icao", maintain_order=True)
+    ]
+    if not icao_dfs:
+        return []
+
+    max_workers = min(max_workers, len(icao_dfs))
+    if segment_chunk_size is None:
+        segment_chunk_size = max(1, math.ceil(len(icao_dfs) / (max_workers * 4)))
+    if segment_chunk_size < 1:
+        raise ValueError("segment_chunk_size must be at least 1")
+
+    total_icaos = len(icao_dfs)
+    processed_icaos = 0
+    chunks = list(_chunks(icao_dfs, segment_chunk_size))
     segments = []
-    for _, df_icao in df_adsb.group_by("icao", maintain_order=True):
-        segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
+    if print_progress:
+        print(
+            f"Segmenting {total_icaos} ICAOs with {max_workers} worker(s)",
+            flush=True,
+        )
+
+    if max_workers == 1:
+        for chunk in chunks:
+            segments.extend(_flight_segments_from_icao_dfs(chunk))
+            processed_icaos += len(chunk)
+            if print_progress:
+                print(f"Segmented {processed_icaos}/{total_icaos} ICAOs", flush=True)
+        return segments
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for chunk, chunk_segments in zip(
+            chunks,
+            executor.map(_flight_segments_from_icao_dfs, chunks),
+        ):
+            processed_icaos += len(chunk)
+            if print_progress:
+                print(f"Segmented {processed_icaos}/{total_icaos} ICAOs", flush=True)
+            segments.extend(chunk_segments)
     return segments
 
 
@@ -890,8 +955,14 @@ def run_main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
     american_icaos_only: bool = False,
+    max_workers: int | None = None,
+    segment_chunk_size: int | None = None,
 ) -> pl.DataFrame:
     from data_engineering.adsb.read_adsb import scan_adsb
+
+    if max_workers is None:
+        max_workers = _default_max_workers()
+    _validate_max_workers(max_workers)
 
     day_start, day_end = _day_bounds(target_date)
     window_start = day_start - RUN_MAIN_CONTEXT
@@ -913,7 +984,12 @@ def run_main(
         & (pl.col("time") < window_end)
     )
 
-    segments = _collect_segments_from_adsb_lf(lf_adsb)
+    segments = _collect_segments_from_adsb_lf(
+        lf_adsb,
+        max_workers=max_workers,
+        segment_chunk_size=segment_chunk_size,
+        print_progress=True,
+    )
     segments = [
         segment
         for segment in segments
@@ -953,6 +1029,16 @@ def _date_arg(value: str) -> date:
         raise argparse.ArgumentTypeError("expected date in YYYY-MM-DD format") from exc
 
 
+def _positive_int_arg(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("expected positive integer")
+    return parsed
+
+
 def _date_range(start_date: date, end_date: date):
     current_date = start_date
     while current_date < end_date:
@@ -965,6 +1051,11 @@ def cli() -> None:
     parser.add_argument("start_date", type=_date_arg)
     parser.add_argument("end_date", type=_date_arg)
     parser.add_argument("--american-icaos-only", action="store_true")
+    parser.add_argument(
+        "--max-workers",
+        type=_positive_int_arg,
+        help="ICAO segmentation worker processes (default: min(os.cpu_count(), 32))",
+    )
     args = parser.parse_args()
 
     if args.end_date <= args.start_date:
@@ -975,6 +1066,7 @@ def cli() -> None:
         flights_df = run_main(
             target_date=target_date,
             american_icaos_only=args.american_icaos_only,
+            max_workers=args.max_workers,
         )
         print(flights_df)
 
