@@ -35,9 +35,7 @@ def _icao_bucket(icao: str) -> int:
 
 def _icao_from_trace_file(path: Path) -> str:
     filename = path.name
-    if filename.endswith(".json.gz"):
-        filename = filename[:-len(".json.gz")]
-    elif filename.endswith(".json"):
+    if filename.endswith(".json"):
         filename = filename[:-len(".json")]
     if not filename.startswith("trace_full_"):
         raise ValueError(f"Unexpected trace filename: {path}")
@@ -85,7 +83,7 @@ def _write_cols(writer: pq.ParquetWriter | None, parquet_path: Path, cols: dict[
 
 def _trace_files(folder_path: Path) -> list[Path]:
     return sorted(
-        [*folder_path.rglob("trace_full_*.json"), *folder_path.rglob("trace_full_*.json.gz")],
+        folder_path.rglob("trace_full_*.json"),
         key=_trace_file_sort_key,
     )
 
