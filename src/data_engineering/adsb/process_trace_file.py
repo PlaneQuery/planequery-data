@@ -8,9 +8,6 @@ import orjson
 
 from data_engineering.adsb.parquet_schema import COLUMNS
 
-DATA_SOURCE = "adsb.lol"
-
-
 def _str_or_none(v):
     """Return v as a non-empty string, else None."""
     if v is None:
@@ -31,7 +28,7 @@ def _to_int(v):
 
 
 DEDUPE_KEY_COLUMNS = ("time", "icao")
-DEDUPE_SCORE_EXCLUDE_COLUMNS = set(DEDUPE_KEY_COLUMNS) | {"source"}
+DEDUPE_SCORE_EXCLUDE_COLUMNS = set(DEDUPE_KEY_COLUMNS)
 DEDUPE_PRIORITY_WEIGHTS = {
     # Prefer rows with real aircraft state over rows that only have metadata.
     "lat": 8,
@@ -139,7 +136,7 @@ def _dedupe_cols_by_time_icao(cols: dict[str, list]) -> tuple[dict[str, list], i
     return deduped_cols, duplicate_count
 
 
-def process_file(filepath: str | Path, data_source: str = DATA_SOURCE) -> dict | None:
+def process_file(filepath: str | Path) -> dict | None:
     """
     Process a single trace file and return a column-oriented dict (col -> list)
     matching the planequery_lake_dev.adsb_messages Iceberg schema.
@@ -246,7 +243,6 @@ def process_file(filepath: str | Path, data_source: str = DATA_SOURCE) -> dict |
         cols["aircraft_description"].append(aircraft_description)
         cols["category"].append(_str_or_none(aircraft.get('category')))
 
-        cols["source"].append(data_source)
         cols["flags"].append(row[6])
 
         cols["type"].append(_str_or_none(row[9]))

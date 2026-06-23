@@ -18,7 +18,6 @@ DEFAULT_OUTPUT_ROOT = Path(
     "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
 )
 FILENAME_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})Z\.json\.gz$")
-DATA_SOURCE = "adsb-exchange"
 
 
 def _str_or_none(value):
@@ -162,7 +161,6 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
     cols["type"].append(_str_or_none(aircraft.get("type")))
     cols["flags"].append(None)
     cols["rssi_dbfs"].append(aircraft.get("rssi"))
-    cols["source"].append(DATA_SOURCE)
 
     cols["no_reg_data"].append(no_reg_data)
     cols["pia"].append(pia)
