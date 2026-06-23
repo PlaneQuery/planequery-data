@@ -110,8 +110,15 @@ def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 def flights_parquet_path(target_date: date):
-    FLIGHTS_OUTPUT_DIR = OUTPUT_DIR / "data" / "flights" / FLIGHTS_VERSION
+    if target_date > date(2026,6,1) and target_date < date(2026,6,10):
+        FLIGHTS_OUTPUT_DIR = OUTPUT_DIR/"data"/"flights"/"trad-model"/"v3"/"adsblol"
+    else:
+        FLIGHTS_OUTPUT_DIR = OUTPUT_DIR / "data" / "flights" / FLIGHTS_VERSION
     flights_path = FLIGHTS_OUTPUT_DIR / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
+    if flights_path.exists() == False:
+        FLIGHTS_OUTPUT_DIR =  OUTPUT_DIR / "data" / "flights" / "v1"
+        flights_path = FLIGHTS_OUTPUT_DIR / f"year={target_date.year}" / f"month={target_date.month:02d}" / f"day={target_date.day:02d}" / "part-0.parquet"
+
     return flights_path
 
 
