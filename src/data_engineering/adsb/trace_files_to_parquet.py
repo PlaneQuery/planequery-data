@@ -33,8 +33,38 @@ def _icao_bucket(icao: str) -> int:
     return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
 
 
+def _icao_from_trace_file(path: Path) -> str:
+    filename = path.name
+    if filename.endswith(".json.gz"):
+        filename = filename[:-len(".json.gz")]
+    elif filename.endswith(".json"):
+        filename = filename[:-len(".json")]
+    if not filename.startswith("trace_full_"):
+        raise ValueError(f"Unexpected trace filename: {path}")
+    return filename[len("trace_full_"):]
+
+
+def _trace_file_sort_key(path: Path) -> tuple[int, str, str]:
+    icao = _icao_from_trace_file(path).lower()
+    return _icao_bucket(icao), icao, str(path)
+
+
 def _empty_cols() -> dict[str, list]:
     return {col: [] for col in COLUMNS}
+
+
+def _sort_cols_by_icao_time(cols: dict[str, list]) -> dict[str, list]:
+    row_count = len(cols["time"])
+    if row_count < 2:
+        return cols
+    row_indices = sorted(
+        range(row_count),
+        key=lambda row_idx: (cols["icao"][row_idx], cols["time"][row_idx]),
+    )
+    return {
+        col: [cols[col][row_idx] for row_idx in row_indices]
+        for col in COLUMNS
+    }
 
 
 def _extend_cols(batch_cols: dict[str, list], cols: dict[str, list]) -> int:
@@ -55,8 +85,8 @@ def _write_cols(writer: pq.ParquetWriter | None, parquet_path: Path, cols: dict[
 
 def _trace_files(folder_path: Path) -> list[Path]:
     return sorted(
-        [*folder_path.rglob("*.json"), *folder_path.rglob("*.json.gz")],
-        key=lambda path: str(path),
+        [*folder_path.rglob("trace_full_*.json"), *folder_path.rglob("trace_full_*.json.gz")],
+        key=_trace_file_sort_key,
     )
 
 
@@ -89,6 +119,7 @@ def process_trace_files(
     }
 
     try:
+        current_bucket = None
         for file in files:
             print(f"Processing {file}")
             cols = process_file(file)
@@ -96,7 +127,23 @@ def process_trace_files(
                 print(f"No valid data in {file}")
                 continue
 
+            cols = _sort_cols_by_icao_time(cols)
             bucket = _icao_bucket(cols["icao"][0])
+            if current_bucket is not None and bucket != current_bucket and batch_count_by_bucket[current_bucket]:
+                writers[current_bucket] = _write_cols(
+                    writers[current_bucket],
+                    parquet_paths[current_bucket],
+                    batch_cols_by_bucket[current_bucket],
+                )
+                print(
+                    f"Wrote bucket {current_bucket} final sorted batch: "
+                    f"{batch_count_by_bucket[current_bucket]} rows "
+                    f"(total: {total_rows_by_bucket[current_bucket]})"
+                )
+                batch_cols_by_bucket[current_bucket] = _empty_cols()
+                batch_count_by_bucket[current_bucket] = 0
+            current_bucket = bucket
+
             row_count = _extend_cols(batch_cols_by_bucket[bucket], cols)
             batch_count_by_bucket[bucket] += row_count
             total_rows_by_bucket[bucket] += row_count
