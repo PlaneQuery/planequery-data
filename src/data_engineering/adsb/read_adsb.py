@@ -9,7 +9,6 @@ from data_engineering.utils import OUTPUT_DIR
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
-AMERICAN_ICAO_BUCKET = 5
 EMPTY_COLUMN_DTYPES = {
     "time": pl.Datetime("ms"),
     "icao": pl.String,
@@ -74,11 +73,6 @@ def _icao_bucket(icao: str) -> int:
     return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
 
 
-def _is_american_icao_value(icao: str) -> bool:
-    icao = icao.lower()
-    return "a00000" <= icao <= "afffff"
-
-
 def _parquet_read_paths(
     current_day: date,
     icao_buckets: Sequence[int] | None = None,
@@ -96,15 +90,9 @@ def _parquet_read_paths(
 def _query_buckets(
     *,
     icaos: Sequence[str] | None = None,
-    american_icaos_only: bool = False,
 ) -> list[int] | None:
     if icaos is not None:
-        query_icaos = list(icaos)
-        if american_icaos_only:
-            query_icaos = [icao for icao in query_icaos if _is_american_icao_value(icao)]
-        return sorted({_icao_bucket(icao) for icao in query_icaos})
-    if american_icaos_only:
-        return [AMERICAN_ICAO_BUCKET]
+        return sorted({_icao_bucket(icao) for icao in icaos})
     return None
 
 
@@ -121,13 +109,20 @@ def _empty_scan(columns: Sequence[str]) -> pl.LazyFrame:
     ).lazy()
 
 
-def create_adsb_parquet_for_day(current_day: date):
+def create_adsb_parquet_for_day(
+    current_day: date,
+    *,
+    pia_or_american_ladd_only: bool = False,
+):
     parquet_day_dir = _parquet_day_dir(current_day)
     if _parquet_partition_has_data(parquet_day_dir):
         return
 
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day
-    create_parquet_for_day(current_day)
+    create_parquet_for_day(
+        current_day,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
+    )
 
 
 def read_adsb(
@@ -136,14 +131,14 @@ def read_adsb(
     additional_columns=None,
     *,
     icaos: Sequence[str] | None = None,
-    american_icaos_only: bool = False,
+    pia_or_american_ladd_only: bool = False,
 ):
     return scan_adsb(
         current_day,
         columns=columns,
         additional_columns=additional_columns,
         icaos=icaos,
-        american_icaos_only=american_icaos_only,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
     ).collect()
 
 
@@ -153,14 +148,18 @@ def scan_adsb(
     additional_columns=None,
     *,
     icaos: Sequence[str] | None = None,
-    american_icaos_only: bool = False,
+    pia_or_american_ladd_only: bool = False,
 ):
-    create_adsb_parquet_for_day(current_day)
+    create_adsb_parquet_for_day(
+        current_day,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
+    )
     columns = _column_list(columns, additional_columns)
-    scan_columns = list(dict.fromkeys(columns + ["time", "icao"]))
+    filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
+    scan_columns = list(dict.fromkeys(columns + ["time", "icao", *filter_columns]))
     parquet_paths = _parquet_read_paths(
         current_day,
-        _query_buckets(icaos=icaos, american_icaos_only=american_icaos_only),
+        _query_buckets(icaos=icaos),
     )
     if not parquet_paths:
         return _empty_scan(columns)
@@ -169,8 +168,8 @@ def scan_adsb(
     lf = lf.filter(pl.col("time").dt.date() == current_day)
     if icaos is not None:
         lf = lf.filter(pl.col("icao").is_in(list(icaos)))
-    if american_icaos_only:
-        lf = lf.filter(is_american_icao())
+    if pia_or_american_ladd_only:
+        lf = lf.filter(pia_or_american_ladd_icao())
     if "callsign" in columns:
         lf = lf.with_columns(pl.col("callsign").str.replace_all(" ","").alias("callsign"))
     return lf.select(columns)
@@ -188,7 +187,19 @@ def get_icaos_in_adsb(current_day: date) -> list[str]:
     return df["icao"].to_list()
 
 def is_american_icao(col: str = "icao") -> pl.Expr:
-    return (pl.col(col) >= "a00000") & (pl.col(col) <= "afffff")
+    icao = pl.col(col).str.to_lowercase()
+    return (icao >= "a00000") & (icao <= "afffff")
+
+
+def pia_or_american_ladd() -> pl.Expr:
+    return (
+        pl.col("pia").fill_null(False)
+        | (is_american_icao() & pl.col("ladd").fill_null(False))
+    )
+
+
+def pia_or_american_ladd_icao() -> pl.Expr:
+    return pia_or_american_ladd().any().over("icao")
 
 
 def exclude_invalid_icaos(col: str = "icao") -> pl.Expr:
