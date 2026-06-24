@@ -31,27 +31,13 @@ def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: da
         .sort(flight_key)
     )
 
-def run_pia_algorithm(start_date: date, end_date: date, icaos: list[str] | None = None):
+def run_pia_algorithm(df_flights, start_date: date):
     '''
     start_date inclusive
     end_date exclusive
     '''
-    # canidate_start_date = max(date(2024,1,1), start_date - timedelta(days=365))
-    canidate_start_date = start_date
-    df_flights = get_flights(canidate_start_date, end_date)
-    if icaos:
-        df_flights = df_flights.filter(pl.col("icao").is_in(icaos))
-    else:
-        df_flights = df_flights.filter(pl.col("ladd") | pl.col("pia"))
-    print("read df flights")
-    ladd_pia_candidates = get_ladd_pia_candidates(df_flights)
-    # print(f"{len(ladd_pia_candidates)} ladd pia candidates")
-    df_flights = df_flights.filter(pl.col("icao").is_in(ladd_pia_candidates) | pl.col("pia"))
-    df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
-    df_flights = fix_route_mismatches(df_flights)
-    # df_flights_2 = get_flights(end_date, end_date + timedelta(days=1)) # We proboably don't need most of this just pree ladd flight is what's required.
-    # df_flights_2 = df_flights_2.filter(pl.col("icao").is_in(ladd_pia_candidates) | pl.col("pia"))
-    # df_flights = pl.concat([df_flights, df_flights_2]) # We still have pia source nodes present. 
+    # df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
+    # df_flights = fix_route_mismatches(df_flights)
     flights = flights_df_to_flights(df_flights)
     print("start resolver")
     mappings,g = resolve_pia_mappings(flights)
