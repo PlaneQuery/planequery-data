@@ -2,6 +2,7 @@
 
 import gzip
 import math
+import zlib
 from pathlib import Path
 
 import orjson
@@ -150,10 +151,14 @@ def process_file(
          aircraft_obj, type, geom_alt, geom_rate, ias, roll]
     """
     filepath = Path(filepath)
-    raw = filepath.read_bytes()
-    if raw[:2] == b"\x1f\x8b":
-        raw = gzip.decompress(raw)
-    data = orjson.loads(raw)
+    try:
+        raw = filepath.read_bytes()
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        data = orjson.loads(raw)
+    except (OSError, EOFError, zlib.error, orjson.JSONDecodeError) as exc:
+        print(f"Skipping unreadable trace file {filepath}: {exc}")
+        return None
 
     icao = data.get('icao')
     timestamp = data.get('timestamp')
