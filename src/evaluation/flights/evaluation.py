@@ -55,6 +55,19 @@ def is_helicopter_expr(
         )
     )
 
+
+def is_american_icao_expr(icao_col: str = "icao") -> pl.Expr:
+    icao = pl.col(icao_col).str.to_lowercase()
+    return (icao >= "a00000") & (icao <= "afffff")
+
+
+def pia_or_american_ladd_expr() -> pl.Expr:
+    return (
+        pl.col("pia").fill_null(False)
+        | (is_american_icao_expr() & pl.col("ladd").fill_null(False))
+    )
+
+
 def fr24_flights_parquet_path(target_date: date) -> Path:
     return (
         OUTPUT_DIR
@@ -92,19 +105,39 @@ def source_flights_reader(src: str):
     raise ValueError(f"Unknown flight source: {src}")
 
 def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
-    metadata_cols = {"test_date", "test_src", "gold_src", "use_all_icaos", "filter_rotorcraft"}
+    metadata_cols = {
+        "test_date",
+        "test_src",
+        "gold_src",
+        "use_all_icaos",
+        "filter_rotorcraft",
+        "pia_or_american_ladd_only",
+    }
     stats_cols = [col for col in df_stats.columns if col not in metadata_cols]
     df_stats = df_stats.with_columns(pl.col(stats_cols).cast(pl.Float64))
     df_avg = (
         df_stats
-        .group_by(["test_src", "gold_src", "use_all_icaos", "filter_rotorcraft"])
+        .group_by([
+            "test_src",
+            "gold_src",
+            "use_all_icaos",
+            "filter_rotorcraft",
+            "pia_or_american_ladd_only",
+        ])
         .agg([pl.col(col).mean().alias(col) for col in stats_cols])
         .with_columns(pl.lit("average").alias("test_date"))
         .select(df_stats.columns)
     )
     return pl.concat([df_stats, df_avg])
 
-def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date | list[date], use_all_icaos = False, filter_rotorcraft = False):
+def main(
+    test_src: str | list[str],
+    gold_src: str | list[str],
+    test_dates: date | list[date],
+    use_all_icaos = False,
+    filter_rotorcraft = False,
+    pia_or_american_ladd_only = False,
+):
     if isinstance(test_src, str):
         test_src = [test_src]
     if isinstance(gold_src, str):
@@ -125,9 +158,15 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                 expr = (pl.col("landing_time").dt.date() == test_date) & (pl.col("takeoff_time").dt.date() == test_date)
                 df_test = df_test.filter(expr)
                 df_gold = df_gold.filter(expr)
+                if pia_or_american_ladd_only:
+                    df_test = df_test.filter(pia_or_american_ladd_expr())
+                    df_gold = df_gold.filter(pia_or_american_ladd_expr())
                 if not use_all_icaos:
                     if test_date not in adsb_by_date:
-                        adsb_by_date[test_date] = read_adsb(test_date)
+                        adsb_by_date[test_date] = read_adsb(
+                            test_date,
+                            pia_or_american_ladd_only=pia_or_american_ladd_only,
+                        )
                     df_adsb = adsb_by_date[test_date]
                     df_gold = get_matching_icaos_in_flights(df_gold, df_adsb)
                     df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
@@ -138,7 +177,15 @@ def main(test_src: str | list[str], gold_src: str | list[str], test_dates: date 
                     df_gold = df_gold.filter(~is_helicopter_expr())
                 df, stats = flights_df_comparison(df_test, df_gold)
                 outputs.append([df,stats])
-                rows.append({"test_date": test_date.isoformat(), "test_src": src, "gold_src": gold, "use_all_icaos": use_all_icaos, "filter_rotorcraft": filter_rotorcraft, **stats})
+                rows.append({
+                    "test_date": test_date.isoformat(),
+                    "test_src": src,
+                    "gold_src": gold,
+                    "use_all_icaos": use_all_icaos,
+                    "filter_rotorcraft": filter_rotorcraft,
+                    "pia_or_american_ladd_only": pia_or_american_ladd_only,
+                    **stats,
+                })
                 print(f"Stats for {src}:{gold}: {stats}")
 
     stats_output = default_stats_path()
@@ -188,6 +235,7 @@ if __name__ == "__main__":
         date_group.add_argument(f"--{name}", action="store_const", const=value, dest="test_dates")
     parser.add_argument("--use_all_icaos", action="store_true", default=False)
     parser.add_argument("--filter_rotorcraft", action="store_true", default=False)
+    parser.add_argument("--pia-or-american-ladd-only", action="store_true", default=False)
     args = parser.parse_args()
 
     test_dates = args.test_dates
@@ -200,4 +248,5 @@ if __name__ == "__main__":
         test_dates=test_dates,
         use_all_icaos=args.use_all_icaos,
         filter_rotorcraft=args.filter_rotorcraft,
+        pia_or_american_ladd_only=args.pia_or_american_ladd_only,
     )
