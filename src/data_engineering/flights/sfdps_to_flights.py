@@ -146,7 +146,11 @@ def _adsb_registration_map(current_day: datetime, registrations: list[str]) -> p
         scan_adsb(current_day.date(), columns=["icao", "registration", "pia", "ladd", "time"])
         .filter((pl.col("registration") != "") & pl.col("registration").is_in(registrations))
         .group_by(["icao", "registration"])
-        .agg(pl.len().alias("len"))
+        .agg(
+            pl.len().alias("len"),
+            pl.col("pia").any().alias("pia"),
+            pl.col("ladd").any().alias("ladd"),
+        )
         .sort(["registration", "len", "icao"], descending=[False, True, False])
         .group_by("registration", maintain_order=True)
         .first()
