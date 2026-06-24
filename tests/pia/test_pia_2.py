@@ -45,7 +45,6 @@ def test_0():
     pia_icaos = df_mappings.get_column("pia_icao").unique().to_list()
     icaos = set(real_icaos_avaliable) | set(pia_icaos)
     df_flights = df_flights.filter(pl.col("icao").is_in(icaos))
-    # df_flights = df_flights.filter(pl.col("ladd") | pl.col("pia"))
 
     pia_to_real_icao_map = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     gold_dict = dict()
