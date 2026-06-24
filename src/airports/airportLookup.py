@@ -15,6 +15,8 @@ Airport_Size_Ranking = { # TODO: move this inside class but python is being anno
     "LARGE_AIRPORT": 3
 }
 US_FAA_AIRSPACE_ISO_COUNTRIES = {"US", "PR", "GU", "VI", "AS", "MP", "UM"}
+US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES = {"PR", "GU", "VI", "AS", "MP", "UM"}
+US_FAA_ISLAND_AIRSPACE_ISO_REGIONS = {"US-HI", "US-AK"}
 
 # "small_airport, medium_airport, large_airport, seaplane_base, heliport, closed, balloonport"
 class Airport_Types(StrEnum):
@@ -177,6 +179,17 @@ class AirportLookup:
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_ident(airport_ident)
         return airport is not None and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+
+    def airport_ident_is_in_us_faa_island_airspace(self, airport_ident: str) -> bool:
+        airport = self.get_Airport_from_airport_ident(airport_ident)
+        return (
+            airport is not None
+            and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+            and (
+                airport.iso_country in US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES
+                or airport.iso_region in US_FAA_ISLAND_AIRSPACE_ISO_REGIONS
+            )
+        )
 
 def haversine(lat1, lon1, lat2, lon2):
     """
