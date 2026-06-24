@@ -283,6 +283,13 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
 
 OS_CPU_COUNT = os.cpu_count() or 1
 MAX_WORKERS = min(OS_CPU_COUNT, 4)
+SKIP_DAYS = {date(2026, 5, 5)}
+
+
+def _day_date(day: date | datetime) -> date:
+    if isinstance(day, datetime):
+        return day.date()
+    return day
 
 
 def download_and_extract(version_date: str) -> str | None:
@@ -423,6 +430,9 @@ def create_parquet_for_day(
     """
     if isinstance(day, str):
         day = datetime.strptime(day, "%Y-%m-%d")
+    if _day_date(day) in SKIP_DAYS:
+        print(f"Skipping {day.strftime('%Y-%m-%d')}")
+        return None
     
     version_date = f"v{day.strftime('%Y.%m.%d')}"
 
@@ -535,6 +545,10 @@ if __name__ == '__main__':
 
     processed_days = []
     for day in days:
+        if _day_date(day) in SKIP_DAYS:
+            print(f"\nSkipping {day.strftime('%Y-%m-%d')}")
+            continue
+
         result = create_parquet_for_day(
             day,
             keep_folders=args.keep_folders,
