@@ -976,7 +976,7 @@ def run_main(
                 scan_date,
                 columns=ADSB_ALGORITHM_COLUMNS,
                 icaos=icaos,
-                american_icaos_only=False,
+                pia_or_american_ladd_only=pia_or_american_ladd_only,
             )
             for scan_date in scan_dates
         ]
