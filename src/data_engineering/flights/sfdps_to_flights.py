@@ -3,7 +3,7 @@ import sys
 import os
 import polars as pl
 from datetime import date, datetime
-from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+from data_engineering.flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.adsb.read_adsb import scan_adsb
 from data_engineering.swim.utils import MISSING_SFDPS_DAYS
@@ -108,10 +108,8 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame: # This is golden fo
             pl.lit("").alias("aircraft_description"),
             pl.lit("").alias("category"),
         )
-        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
-        .cast(FLIGHT_POLARS_SCHEMA)
     )
-    return df
+    return with_flight_schema_columns(df)
 
 def filter_sfdps_flights(df, current_date: datetime):
     day_start = current_date.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -187,7 +185,7 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
         .last()
         .select(["icao", *ADSB_ICAO_INFO_COLUMNS])
     )
-    return (
+    df_flights = (
         df_flights
         .drop(ADSB_ICAO_INFO_COLUMNS)
         .join(df_icao_info, on="icao", how="left")
@@ -202,9 +200,8 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
             pl.col("military").fill_null(False),
             pl.col("interesting").fill_null(False),
         )
-        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
-        .cast(FLIGHT_POLARS_SCHEMA)
     )
+    return with_flight_schema_columns(df_flights)
 
 def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.DataFrame:
     # for each icao in df_adsb get the callsigns used, they have to be used in more than 5 consecutive messages
