@@ -69,10 +69,10 @@ class Flight:
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
-    last_lat: float
-    last_lon: float
-    last_baro_altitude_ft: int
-    last_geom_altitude_ft: int
+    # last_lat: float
+    # last_lon: float
+    # last_baro_altitude_ft: int
+    # last_geom_altitude_ft: int
     takeoff_airport_ident_distance_km: float | None = None
     landing_airport_ident_distance_km: float | None = None
     takeoff_airport_elevation_difference_ft: int | None = None
