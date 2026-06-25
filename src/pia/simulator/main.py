@@ -58,7 +58,7 @@ def simulate_pia_flights(df: pl.DataFrame):
             flight.icao = make_pia_icao(flight.flight_id)
             flight.ladd = False
             flight.pia = True
-            gold_mapping[flight.flight_id] = real_icao
+            gold_mapping[flight] = real_icao
 
         df = flights_to_flights_df(flights)
         return df

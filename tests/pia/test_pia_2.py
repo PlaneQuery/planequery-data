@@ -50,7 +50,7 @@ def test_0():
     gold_dict = dict()
     pia_flights = flights_df_to_flights(df_flights.filter(pl.col("pia") & pl.col("icao").is_in(pia_icaos)))
     for flight in pia_flights:
-        gold_dict[flight.flight_id] = pia_to_real_icao_map[flight.icao]
+        gold_dict[flight] = pia_to_real_icao_map[flight.icao]
 
     icaos=list(gold_dict.values()) + pia_icaos 
     mappings, g = run_pia_algorithm(df_flights, date(2026,6,1))

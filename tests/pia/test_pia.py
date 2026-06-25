@@ -36,10 +36,10 @@ class TestPIA(unittest.TestCase):
         mapping_dict, graph = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
         correct = 0
         total = 0
-        for flight_id, real_icao in gold_mapping.items():
-            if flight_id in mapping_dict:
+        for flight, real_icao in gold_mapping.items():
+            if flight in mapping_dict:
                 total += 1
-                if mapping_dict[flight_id] == real_icao:
+                if mapping_dict[flight] == real_icao:
                     correct += 1
         print(mapping_dict)
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
@@ -52,10 +52,10 @@ class TestPIAReal(unittest.TestCase):
         mapping_dict,g = run_pia_algorithm(date(2025,5,15), date(2025,5,21))
         correct = 0
         total = 0
-        for flight_id, real_icao in mapping_dict_0.items():
-            if flight_id in mapping_dict:
+        for flight, real_icao in mapping_dict_0.items():
+            if flight in mapping_dict:
                 total += 1
-                if mapping_dict[flight_id] == real_icao:
+                if mapping_dict[flight] == real_icao:
                     correct += 1
         print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
@@ -64,19 +64,19 @@ class TestPIAReal(unittest.TestCase):
         end_date = date(2025,5,21)
         mappings, g = run_pia_algorithm(start_date, end_date)
         check_value = None
-        keys = sorted(mappings.keys())
+        keys = sorted(mappings.keys(), key=lambda flight: flight.flight_id)
         for key in keys:
-            if key.startswith(a039a2_flights[0].icao):
+            if key.flight_id.startswith(a039a2_flights[0].icao):
                 print(key, mappings[key])
         for node in keys:
-             if node.startswith(a039a2_flights[0].icao):
-                incoming = list(g.in_edges(node, data=True))
-                outgoing = list(g.out_edges(node, data=True))
+             if node.flight_id.startswith(a039a2_flights[0].icao):
+                incoming = list(g.in_edges(node.flight_id, data=True))
+                outgoing = list(g.out_edges(node.flight_id, data=True))
                 all_edges = incoming + outgoing
                 print(node, all_edges)
 
         for key in keys:
-            if key.startswith(a039a2_flights[0].icao):
+            if key.flight_id.startswith(a039a2_flights[0].icao):
                 value = mappings[key]
                 if check_value is None:
                     check_value = value

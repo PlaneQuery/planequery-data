@@ -60,7 +60,7 @@ complete_flight_path_3 = [
 ]
 
 flights_0 = start + complete_flight_path_1 + complete_flight_path_2 + complete_flight_path_3
-test_mapping_dict_0 = {'pia_0_2026-01-01_05-00': '0', 'pia_1_2026-01-01_05-00': '1'}
+test_mapping_dict_0 = {complete_flight_path_1[0]: "0", complete_flight_path_2[0]: "1"}
 
 flights_2 = [
     test_flight(icao="3"),
@@ -91,4 +91,4 @@ more = [
 ]
 
 flights_3 = start + complete_flight_path_1 + more
-test_mapping_dict_3 = {'pia_0_2026-01-01_05-00': '2'}
+test_mapping_dict_3 = {complete_flight_path_1[0]: "2"}
