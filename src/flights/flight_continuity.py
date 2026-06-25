@@ -9,6 +9,7 @@ airport_lookup = AirportLookup()
 
 def make_flights_continuous(flights:list[Flight]):    
     previous_flight: Flight | None = None
+    teleports = []
     for flight in flights:
         if previous_flight is None:
             previous_flight = flight
@@ -28,10 +29,13 @@ def make_flights_continuous(flights:list[Flight]):
 
         takeoff_airport_in_island = airport_lookup.airport_ident_is_in_us_faa_island_airspace(flight.takeoff_airport_ident)
         landing_airport_in_island = airport_lookup.airport_ident_is_in_us_faa_island_airspace(previous_flight.landing_airport_ident)
-        
+        takeoff_airport_us_airspace = airport_lookup.airport_ident_is_in_us_faa_airspace(flight.takeoff_airport_ident)
+        landing_airport_us_airspace = airport_lookup.airport_ident_is_in_us_faa_airspace(previous_flight.landing_airport_ident)
+        if takeoff_airport_us_airspace == False or landing_airport_us_airspace == False:
         distance_between_airports = haversine(takeoff_airport.lat, takeoff_airport.lon, landing_airport.lat, landing_airport.lon)
 
         if distance_between_airports > 100 and takeoff_airport_in_island == landing_airport_in_island == False:
+            teleports.append((previous_flight, flight))
             previous_flight = flight
             continue
         score = 50 # if score <= 50 then use takeoff, if score > 50 then use landing
@@ -58,5 +62,5 @@ def make_flights_continuous(flights:list[Flight]):
             flight.takeoff_airport_ident = previous_flight.landing_airport_ident
         
         previous_flight = flight
-
+    return teleports
 # things to consider: airport distance, airport elevation diffrernece( future), is island, airport_size
