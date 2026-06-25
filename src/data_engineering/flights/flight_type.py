@@ -62,7 +62,7 @@ def add_flight_duration_col(df: pl.DataFrame):
     df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
     return df
 
-@dataclass
+@dataclass(eq=False)
 class Flight:
     icao: str
     takeoff_time: datetime
@@ -92,6 +92,14 @@ class Flight:
     @property
     def flight_id(self) -> str:
         return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
+
+    def __hash__(self) -> int:
+        return hash(self.flight_id)
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, Flight):
+            return NotImplemented
+        return self.flight_id == other.flight_id
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])

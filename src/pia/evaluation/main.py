@@ -374,6 +374,11 @@ def main(flights = flights_3):
     visualize_graph(G, output_path)
     print(f"outputed to {output_path}")
 
+def _mapping_key_flight_id(key) -> str:
+    if isinstance(key, Flight):
+        return key.flight_id
+    return key
+
 def evaluation(mapping_dict, gold_dict):
     comparison_schema = {
         "flight_id": pl.String,
@@ -384,11 +389,15 @@ def evaluation(mapping_dict, gold_dict):
         "extra_prediction": pl.Boolean,
     }
     comparison_rows = []
-    for flight_id in sorted(set(gold_dict) | set(mapping_dict)):
-        expected_icao = gold_dict.get(flight_id)
-        predicted_icao = mapping_dict.get(flight_id)
+    mapping_keys = sorted(
+        set(gold_dict) | set(mapping_dict),
+        key=_mapping_key_flight_id,
+    )
+    for flight in mapping_keys:
+        expected_icao = gold_dict.get(flight)
+        predicted_icao = mapping_dict.get(flight)
         comparison_rows.append({
-            "flight_id": flight_id,
+            "flight_id": _mapping_key_flight_id(flight),
             "expected_icao": expected_icao,
             "predicted_icao": predicted_icao,
             "correct": expected_icao == predicted_icao,
