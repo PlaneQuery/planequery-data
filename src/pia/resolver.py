@@ -3,6 +3,7 @@ from datetime import timedelta
 from itertools import combinations
 import networkx as nx
 from ortools.sat.python import cp_model
+from itertools import groupby
 
 from data_engineering.flights.flight_type import Flight
 
@@ -63,17 +64,26 @@ def path_between_icao_flights(flights: list[Flight], g: nx.DiGraph):
 
 MAX_CONNECTION_GAP = timedelta(days=30)
 def build_graph(flights: list[Flight]) -> nx.DiGraph:
-    flights = sorted(flights, key=lambda f: (f.takeoff_time, f.icao))
+    flights = sorted(flights, key=lambda f: (f.icao, f.takeoff_time))
     G = nx.DiGraph()
     for flight in flights:
         G.add_node(flight.flight_id, flight=flight)
 
+    for icao, icao_flights_iter in groupby(flights, key=lambda f: f.icao):
+        icao_flights = list(icao_flights_iter)
+        previous_flight = None
+        for flight in icao_flights:
+            if previous_flight is not None:
+                G.add_edge(previous_flight.flight_id, flight.flight_id)
+            previous_flight = flight
     for flight_i, flight_j in combinations(flights, 2):
+        if flight_i.icao == flight_j.icao:
+            continue
         is_connected = (
             flight_i.landing_airport_ident == flight_j.takeoff_airport_ident
             and flight_i.landing_time < flight_j.takeoff_time
             and flight_j.takeoff_time - flight_i.landing_time <= MAX_CONNECTION_GAP
-            and ((flight_i.icao ==flight_j.icao) or flight_j.pia == True or flight_i.pia == True)
+            and (flight_j.pia == True or flight_i.pia == True)
         )
         if is_connected:
             G.add_edge(flight_i.flight_id, flight_j.flight_id)
@@ -223,6 +233,8 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 
 
     x: dict[tuple[str, str, str], cp_model.IntVar] = {}
+    incoming_by_node = {node: [] for node in g.nodes}
+    outgoing_by_node = {node: [] for node in g.nodes}
 
     for i, j in g.edges: # basically a flight_id
         fi = g.nodes[i]["flight"]
@@ -234,17 +246,13 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 
             model.add(var <= y[i,real_icao])
             model.add(var <= y[j,real_icao])
+            outgoing_by_node[i].append(var)
+            incoming_by_node[j].append(var)
 
 
     for j in g.nodes:
-        incoming_vars = []
-        outgoing_vars = []
-        for (i2,j2,real_icao), var in x.items():
-            if j2 == j:
-                incoming_vars.append(var)
-            
-            if i2 == j:
-                outgoing_vars.append(var)
+        incoming_vars = incoming_by_node[j]
+        outgoing_vars = outgoing_by_node[j]
         if incoming_vars:
             model.add(sum(incoming_vars) <= 1)
         if outgoing_vars:
@@ -261,17 +269,8 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
         start_vars[fid] = start_var
         end_vars[fid] = end_var
 
-        incoming_vars = [
-            var
-            for (i2, j2, real_icao), var in x.items()
-            if j2 == fid
-        ]
-
-        outgoing_vars = [
-            var
-            for (i2, j2, real_icao), var in x.items()
-            if i2 == fid
-        ]
+        incoming_vars = incoming_by_node[fid]
+        outgoing_vars = outgoing_by_node[fid]
 
         model.add(start_var + sum(incoming_vars) == 1)
         model.add(end_var + sum(outgoing_vars) == 1)
@@ -292,12 +291,12 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
 
     model.maximize(sum(objective_terms))
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 30
+    solver.parameters.max_time_in_seconds = 60
     print("start Solver")
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print_graph(g)
-        raise RuntimeError("No feasible solution found")
+        raise RuntimeError(f"Solution not found. Status: {status}")
     
 
     pia_mapping_dict: dict[Flight, str] = {}

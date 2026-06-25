@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
+from flights.flight_continuity import make_flights_continuous
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 from pia.resolver import get_canidate_icaos, resolve_pia_mappings
 
@@ -31,14 +32,16 @@ def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: da
         .sort(flight_key)
     )
 
-def run_pia_algorithm(df_flights, start_date: date):
+def run_pia_algorithm(df_flights):
     '''
     start_date inclusive
     end_date exclusive
     '''
+    start_date = date(2026,6,1)
     # df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
     # df_flights = fix_route_mismatches(df_flights)
     flights = flights_df_to_flights(df_flights)
+    make_flights_continuous(flights)
     print("start resolver")
     mappings,g = resolve_pia_mappings(flights)
     return mappings,g
