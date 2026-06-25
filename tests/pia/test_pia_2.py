@@ -39,7 +39,7 @@ def test_0():
 
     df_mappings = df_mappings.filter(pl.col("real_icao").is_not_null())
     df_mappings = df_mappings.filter(pl.col("date") > date(2026,6,1))
-    df_flights = get_flights(date(2026, 6, 1), date(2026, 6, 9))
+    df_flights = get_flights(date(2026, 5, 8), date(2026, 6, 9))
     real_icaos_avaliable = df_flights.filter(pl.col("icao").is_in(df_mappings.get_column("real_icao").unique().to_list())).get_column("icao").unique().to_list()
     df_mappings = df_mappings.filter(pl.col("real_icao").is_in(real_icaos_avaliable))
     pia_icaos = df_mappings.get_column("pia_icao").unique().to_list()
