@@ -375,6 +375,14 @@ def main(flights = flights_3):
     print(f"outputed to {output_path}")
 
 def evaluation(mapping_dict, gold_dict):
+    comparison_schema = {
+        "flight_id": pl.String,
+        "expected_icao": pl.String,
+        "predicted_icao": pl.String,
+        "correct": pl.Boolean,
+        "missing_prediction": pl.Boolean,
+        "extra_prediction": pl.Boolean,
+    }
     comparison_rows = []
     for flight_id in sorted(set(gold_dict) | set(mapping_dict)):
         expected_icao = gold_dict.get(flight_id)
@@ -388,7 +396,7 @@ def evaluation(mapping_dict, gold_dict):
             "extra_prediction": expected_icao is None and predicted_icao is not None,
         })
 
-    df_mapping_comparison = pl.DataFrame(comparison_rows)
+    df_mapping_comparison = pl.DataFrame(comparison_rows, schema=comparison_schema)
 
     expected_count = len(gold_dict)
     predicted_count = len(mapping_dict)
