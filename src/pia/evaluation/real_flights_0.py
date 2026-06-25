@@ -56,7 +56,7 @@ def _load_flights_0():
         _mapping_dict_0 = {}
         for flight in _flights_0:
             if flight.icao in elon_pia_icaos:
-                _mapping_dict_0[flight.flight_id] = "a835af"
+                _mapping_dict_0[flight] = "a835af"
     return _flights_0, _mapping_dict_0
 
 def __getattr__(name: str):

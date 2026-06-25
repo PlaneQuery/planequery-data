@@ -300,7 +300,7 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
         raise RuntimeError("No feasible solution found")
     
 
-    pia_mapping_dict = {}
+    pia_mapping_dict: dict[Flight, str] = {}
     def construct_results():
         result_g = nx.DiGraph()
         for node in g.nodes:
@@ -310,7 +310,7 @@ def process_graph(g: nx.DiGraph, flights: list[Flight]):
             if flight.pia:
                 for mapped_icao in canidates_icaos_dict[flight.flight_id]:
                     if solver.Value(y[(flight.flight_id, mapped_icao)]) == 1:
-                        pia_mapping_dict[flight.flight_id] = mapped_icao
+                        pia_mapping_dict[flight] = mapped_icao
                         result_g.nodes[flight.flight_id]["mapped_icao"] = mapped_icao
                         break
             else:
@@ -338,7 +338,7 @@ def resolve_pia_mappings(flights: list[Flight]):
 
     # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
     # compute_edge_scores_for_node(g)
-    mappings_dict = {}
+    mappings_dict: dict[Flight, str] = {}
     result_g = nx.DiGraph()
     for g in subgraphs:
         if not _get_pia_nodes(g):
