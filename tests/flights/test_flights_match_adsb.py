@@ -66,6 +66,19 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
         self.assertFalse(flights_match_adsb(df_flights, df_adsb))
 
+        icao = "a1e5b5"
+        df_flights = flights_to_flights_df([
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 15, 37),
+                takeoff_airport_ident="KCIU",
+                landing_time=datetime(2026, 3, 1, 18, 13),
+                landing_airport_ident="KUGN",
+            )
+        ])
+        df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
+        self.assertFalse(flights_match_adsb(df_flights, df_adsb))
+
     # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
 
     #a7f63d on 2026-03-01 in BTS is accurate and very hard to verify. Alaska flights. Also a6ce36 on 2026-03-01. Similiarly an Alaska flight. BTS is accurate.
