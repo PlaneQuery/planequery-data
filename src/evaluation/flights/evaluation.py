@@ -1,11 +1,15 @@
 import argparse
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, get_flights
+from data_engineering.flights.flight_type import (
+    get_flights,
+    with_flight_schema_columns,
+)
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
+from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import current_commit_hash
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
@@ -82,10 +86,8 @@ def fr24_flights_parquet_path(target_date: date) -> Path:
     )
 
 def read_fr24_flights(target_date: date) -> pl.DataFrame:
-    return (
+    return with_flight_schema_columns(
         pl.read_parquet(fr24_flights_parquet_path(target_date))
-        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
-        .cast(FLIGHT_POLARS_SCHEMA)
     )
 
 def source_flights_reader(src: str):
@@ -175,7 +177,8 @@ def main(
                 if filter_rotorcraft:
                     df_test = df_test.filter(~is_helicopter_expr())
                     df_gold = df_gold.filter(~is_helicopter_expr())
-                df, stats = flights_df_comparison(df_test, df_gold)
+                df = df_flights_comparision(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
+                stats = df_flights_comparison_stats(df)
                 outputs.append([df,stats])
                 rows.append({
                     "test_date": test_date.isoformat(),
