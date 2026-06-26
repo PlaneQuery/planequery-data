@@ -103,6 +103,25 @@ def test_flights_match_adsb(icao: str, expected_match: bool, flight_rows):
     assert flights_match_adsb(df_flights, df_adsb) is expected_match
 
 
+def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
+    icao = "a233f0"
+    target_date = date(2026, 6, 1)
+    df_flights = flights_df(
+        icao,
+        [
+            (
+                datetime(2026, 6, 1, 19, 10),
+                "KVNY",
+                datetime(2026, 6, 1, 23, 30),
+                "KIAD",
+            ),
+        ],
+    )
+    df_adsb = read_adsb(target_date, icaos=[icao]).filter(pl.col("icao") == icao)
+
+    assert flights_match_adsb(df_flights, df_adsb) is False
+
+
 '''
 # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
 
