@@ -52,6 +52,7 @@ def adsb_row_matches_airport(
     row: _AdsbRow,
     airport_ident: str,
     target_times: list[datetime],
+    use_time_grace: bool = True,
 ) -> bool:
     airport_coordinates = airport_lookup.get_airport_coordinates(airport_ident)
     if airport_coordinates is None:
@@ -59,15 +60,21 @@ def adsb_row_matches_airport(
 
     airport_lat, airport_lon = airport_coordinates
     distance_km = haversine(row.lat, row.lon, airport_lat, airport_lon)
-    return distance_km <= allowed_airport_distance_km(row.time, target_times)
+    allowed_distance_km = (
+        allowed_airport_distance_km(row.time, target_times)
+        if use_time_grace
+        else MAX_AIRPORT_DISTANCE_KM
+    )
+    return distance_km <= allowed_distance_km
 
 def adsb_rows_match_airport(
     adsb_rows: list[_AdsbRow],
     airport_ident: str,
     target_times: list[datetime],
+    use_time_grace: bool = True,
 ) -> bool:
     return all(
-        adsb_row_matches_airport(row, airport_ident, target_times)
+        adsb_row_matches_airport(row, airport_ident, target_times, use_time_grace)
         for row in adsb_rows
     )
 
@@ -152,6 +159,7 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
             [flight.takeoff_time]
             if previous_flight is None
             else [previous_flight.landing_time, flight.takeoff_time],
+            use_time_grace=previous_flight is not None,
         ):
             return False
 
