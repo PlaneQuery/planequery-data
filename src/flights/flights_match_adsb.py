@@ -3,10 +3,11 @@ import polars as pl
 from dataclasses import dataclass
 from datetime import datetime
 from airports.airportLookup import AirportLookup
-import math
 from utils import haversine
 
 MAX_AIRPORT_DISTANCE_KM = 10
+MAX_AIRPORT_DISTANCE_WITH_TIME_GRACE_KM = 100
+AIRPORT_DISTANCE_GRACE_KM_PER_MINUTE = 8
 airport_lookup = AirportLookup()
 @dataclass
 class _AdsbRow:
@@ -29,6 +30,40 @@ def closest_time_row_idx(adsb_rows, target_time, lte=True):
         return None
 
     return idx
+
+def allowed_airport_distance_km(row_time: datetime, target_times: list[datetime]) -> float:
+    time_gap_minutes = min(
+        abs((row_time - target_time).total_seconds()) / 60
+        for target_time in target_times
+    )
+    return min(
+        MAX_AIRPORT_DISTANCE_WITH_TIME_GRACE_KM,
+        MAX_AIRPORT_DISTANCE_KM
+        + time_gap_minutes * AIRPORT_DISTANCE_GRACE_KM_PER_MINUTE,
+    )
+
+def adsb_row_matches_airport(
+    row: _AdsbRow,
+    airport_ident: str,
+    target_times: list[datetime],
+) -> bool:
+    airport_coordinates = airport_lookup.get_airport_coordinates(airport_ident)
+    if airport_coordinates is None:
+        return False
+
+    airport_lat, airport_lon = airport_coordinates
+    distance_km = haversine(row.lat, row.lon, airport_lat, airport_lon)
+    return distance_km <= allowed_airport_distance_km(row.time, target_times)
+
+def adsb_rows_match_airport(
+    adsb_rows: list[_AdsbRow],
+    airport_ident: str,
+    target_times: list[datetime],
+) -> bool:
+    return all(
+        adsb_row_matches_airport(row, airport_ident, target_times)
+        for row in adsb_rows
+    )
 
 def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
     if df_flights.is_empty() or df_adsb.is_empty():
@@ -58,20 +93,25 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         takeoff_row_idx = closest_time_row_idx(adsb_rows, flight.takeoff_time, False)
         if takeoff_row_idx is None:
             return False
-    
-        airport_lat = adsb_rows[takeoff_row_idx].lat
-        airport_lon = adsb_rows[takeoff_row_idx].lon
 
-        if previous_flight:
-            landing_row = adsb_rows[landing_row_idx]
-            airport_lat = landing_row.lat
-            airport_lon = landing_row.lon
+        if not adsb_rows_match_airport(
+            adsb_rows[landing_row_idx : takeoff_row_idx + 1],
+            flight.takeoff_airport_ident,
+            [flight.takeoff_time]
+            if previous_flight is None
+            else [previous_flight.landing_time, flight.takeoff_time],
+        ):
+            return False
 
-        in_between_rows = adsb_rows[landing_row_idx:takeoff_row_idx]
-        for row in in_between_rows:
-            distance = haversine(row.lat, row.lon, airport_lat, airport_lon)
-            if distance > MAX_AIRPORT_DISTANCE_KM:
-                return False
+        current_landing_row_idx = closest_time_row_idx(adsb_rows, flight.landing_time, True)
+        if current_landing_row_idx is None:
+            return False
+        if not adsb_rows_match_airport(
+            [adsb_rows[current_landing_row_idx]],
+            flight.landing_airport_ident,
+            [flight.landing_time],
+        ):
+            return False
 
         previous_flight =  flight
 
@@ -80,15 +120,11 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
     if landing_row_idx is None:
         return False
 
-    landing_row = adsb_rows[landing_row_idx]
-    airport_lat = landing_row.lat
-    airport_lon = landing_row.lon
-
-    for row in adsb_rows[landing_row_idx:]:
-        distance = haversine(row.lat, row.lon, airport_lat, airport_lon)
-        if distance > MAX_AIRPORT_DISTANCE_KM:
-            return False
-    return True
+    return adsb_rows_match_airport(
+        adsb_rows[landing_row_idx:],
+        last_flight.landing_airport_ident,
+        [last_flight.landing_time],
+    )
     # 1. check that all takeoff_landing airport idents equal each other
 
 def get_matching_icaos_in_flights(df_flights_full: pl.DataFrame, df_adsb_full: pl.DataFrame):
