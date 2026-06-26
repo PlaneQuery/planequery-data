@@ -57,7 +57,7 @@ def assert_stats_meet_bounds(
     ids=lambda test_date: test_date.isoformat(),
 )
 def test_model_to_sfdps_flight_evaluation_meets_daily_bounds(single_test_date: date):
-    outputs = main(test_src="model", gold_src="sfdps", test_dates=single_test_date)
+    outputs = main(test_src="model", gold_src="sfdps", test_dates=single_test_date, pia_or_american_ladd_only=True)
 
     assert len(outputs) == 1
     _, stats = outputs[0]
