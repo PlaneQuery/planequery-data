@@ -67,7 +67,23 @@ ADSB_ALGORITHM_COLUMNS = [
     "ladd",
     "military",
     "interesting",
+    "aircraft_type",
+    "owner",
+    "aircraft_description",
+    "category",
 ]
+AIRCRAFT_METADATA_COLUMNS = (
+    "aircraft_type",
+    "owner",
+    "aircraft_description",
+    "category",
+)
+AIRCRAFT_METADATA_ALIASES = {
+    "aircraft_type": ("aircraft_type", "t"),
+    "owner": ("owner", "ownOp"),
+    "aircraft_description": ("aircraft_description", "desc"),
+    "category": ("category",),
+}
 
 
 class FlightState(Enum):
@@ -90,6 +106,10 @@ class AdsbPositionMessage:
     ladd: bool | None = None
     military: bool | None = None
     interesting: bool | None = None
+    aircraft_type: str | None = None
+    owner: str | None = None
+    aircraft_description: str | None = None
+    category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +134,10 @@ class FlightSegment:
     landing_message: AdsbMessageRow | AdsbPositionMessage
     distance_travelled_km: float = 0.0
     db_flags_counts: tuple[tuple[int, int], ...] = ()
+    aircraft_metadata_counts: tuple[
+        tuple[str, tuple[tuple[str, int], ...]],
+        ...,
+    ] = ()
 
 
 @dataclass(frozen=True)
@@ -238,6 +262,67 @@ def _db_flags_to_flight_flags(db_flags: int | None) -> dict[str, bool]:
         "military": bool(db_flags & DB_FLAG_MILITARY),
         "interesting": bool(db_flags & DB_FLAG_INTERESTING),
     }
+
+
+def _non_empty_string(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    value = str(value).strip()
+    return value if value else None
+
+
+def _message_aircraft_metadata(
+    message: AdsbMessageRow | AdsbPositionMessage,
+    column: str,
+) -> str | None:
+    for attr in AIRCRAFT_METADATA_ALIASES[column]:
+        value = _non_empty_string(getattr(message, attr, None))
+        if value is not None:
+            return value
+    return None
+
+
+def _aircraft_metadata_counts_for_messages(
+    messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
+) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
+    return tuple(
+        (
+            column,
+            tuple(
+                Counter(
+                    value
+                    for message in messages
+                    if (value := _message_aircraft_metadata(message, column)) is not None
+                ).items()
+            ),
+        )
+        for column in AIRCRAFT_METADATA_COLUMNS
+    )
+
+
+def _merge_aircraft_metadata_counts(
+    *counts_by_segment: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
+    counters = {column: Counter() for column in AIRCRAFT_METADATA_COLUMNS}
+    for counts in counts_by_segment:
+        for column, value_counts in counts:
+            counters[column].update(dict(value_counts))
+    return tuple(
+        (column, tuple(counters[column].items()))
+        for column in AIRCRAFT_METADATA_COLUMNS
+    )
+
+
+def _aircraft_metadata_mode_from_counts(
+    aircraft_metadata_counts: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+) -> dict[str, str]:
+    modes = {column: "" for column in AIRCRAFT_METADATA_COLUMNS}
+    for column, value_counts in aircraft_metadata_counts:
+        if value_counts:
+            modes[column] = max(value_counts, key=lambda item: item[1])[0]
+    return modes
 
 
 def _reported_ground_speed_kt(message: AdsbMessageRow | AdsbPositionMessage) -> float | None:
@@ -459,6 +544,9 @@ def _maybe_add_segment(
             landing_message=landing_message,
             distance_travelled_km=distance_travelled_km,
             db_flags_counts=_db_flags_counts_for_messages(segment_messages),
+            aircraft_metadata_counts=_aircraft_metadata_counts_for_messages(
+                segment_messages
+            ),
         )
     )
 
@@ -591,6 +679,10 @@ def stitch_flight_segments(segments: Sequence[FlightSegment]) -> list[FlightSegm
                     current.db_flags_counts,
                     segment.db_flags_counts,
                 ),
+                aircraft_metadata_counts=_merge_aircraft_metadata_counts(
+                    current.aircraft_metadata_counts,
+                    segment.aircraft_metadata_counts,
+                ),
             )
         else:
             stitched.append(current)
@@ -622,6 +714,10 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
             ladd=row.get("ladd"),
             military=row.get("military"),
             interesting=row.get("interesting"),
+            aircraft_type=row.get("aircraft_type"),
+            owner=row.get("owner"),
+            aircraft_description=row.get("aircraft_description"),
+            category=row.get("category"),
         )
         for row in df.iter_rows(named=True)
     ]
@@ -786,6 +882,9 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
         flight_flags = _db_flags_to_flight_flags(
             _db_flags_mode_from_counts(segment.db_flags_counts)
         )
+        aircraft_metadata = _aircraft_metadata_mode_from_counts(
+            segment.aircraft_metadata_counts
+        )
         rows.append(
             {
                 "icao": segment.icao,
@@ -814,10 +913,7 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                     landing_guess,
                 ),
                 **flight_flags,
-                "aircraft_type": "",
-                "owner": "",
-                "aircraft_description": "",
-                "category": "",
+                **aircraft_metadata,
             }
         )
     return (
