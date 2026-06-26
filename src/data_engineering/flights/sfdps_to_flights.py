@@ -223,7 +223,12 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_adsb_registration_map = _adsb_registration_map(current_day, registrations)
     df_sfdps_flights_0 = (
         df_sfdps_flights_with_registration
-        .join(df_adsb_registration_map, on="registration", how="inner", suffix="_adsb")
+        .join(
+            df_adsb_registration_map.select("registration", "icao"),
+            on="registration",
+            how="inner",
+            suffix="_adsb",
+        )
         .with_columns(
             pl.col("icao_adsb").alias("icao"),
         )
@@ -238,7 +243,7 @@ def sfdps_flights_derive_icao(df_sfdps_flights, current_day: datetime) -> pl.Dat
     df_sfdps_flights_1 = ( # TODO: could fill in registration too from icao. 
     df_sfdps_flights_without_registration
     .with_row_index("_row_idx")
-    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time", "pia", "ladd"), on="callsign", how="left")
+    .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time"), on="callsign", how="left")
     .with_columns(
         (
             (pl.col("takeoff_time") >= pl.col("start_time")) &
