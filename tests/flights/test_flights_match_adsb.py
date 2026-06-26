@@ -5,9 +5,6 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-
-os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
-
 from data_engineering.adsb.read_adsb import read_adsb  # noqa: E402
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df  # noqa: E402
 from flights.flights_match_adsb import flights_match_adsb  # noqa: E402
