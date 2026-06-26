@@ -259,7 +259,7 @@ def _baro_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> float | 
     )
 
 
-def _last_baro_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | None:
+def _baro_altitude_int_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | None:
     return _optional_int(
         getattr(message, "baro_altitude_ft", getattr(message, "alt_baro", None))
     )
@@ -277,7 +277,7 @@ def _airport_elevation_difference_ft(
 ) -> int | None:
     altitude_ft = _geom_altitude_ft(message)
     if altitude_ft is None:
-        altitude_ft = _last_baro_altitude_ft(message)
+        altitude_ft = _baro_altitude_int_ft(message)
     if altitude_ft is None or airport_guess.elevation_ft is None:
         return None
     return altitude_ft - airport_guess.elevation_ft
@@ -797,9 +797,13 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "landing_time": segment.landing_time,
                 "landing_airport_ident": landing_guess.ident,
                 "landing_airport_ident_distance_km": landing_guess.distance_km,
+                "first_lat": segment.takeoff_message.lat,
+                "first_lon": segment.takeoff_message.lon,
+                "first_baro_altitude_ft": _baro_altitude_int_ft(segment.takeoff_message),
+                "first_geom_altitude_ft": _geom_altitude_ft(segment.takeoff_message),
                 "last_lat": segment.landing_message.lat,
                 "last_lon": segment.landing_message.lon,
-                "last_baro_altitude_ft": _last_baro_altitude_ft(segment.landing_message),
+                "last_baro_altitude_ft": _baro_altitude_int_ft(segment.landing_message),
                 "last_geom_altitude_ft": _geom_altitude_ft(segment.landing_message),
                 "takeoff_airport_elevation_difference_ft": _airport_elevation_difference_ft(
                     segment.takeoff_message,

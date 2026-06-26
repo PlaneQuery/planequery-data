@@ -4,7 +4,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import polars as pl
 from timezonefinder import TimezoneFinder
-from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+from data_engineering.flights.flight_type import with_flight_schema_columns
 from airports.airportLookup import AirportLookup
 from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
 from data_engineering.adsb.read_adsb import read_adsb
@@ -213,9 +213,7 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
         pl.lit("A3").cast(pl.String).alias("category"),
     )
     df = df.rename({"time_takeoff": "takeoff_time", "time_landing": "landing_time"})
-    df = df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
-    for col_name, dtype in FLIGHT_POLARS_SCHEMA.items():
-        df = df.with_columns(pl.col(col_name).cast(dtype))
+    df = with_flight_schema_columns(df)
     df = df.with_columns(pl.col("icao").str.to_lowercase())
     flights_output_path = _bts_flights_parquet_path(year, month)
     os.makedirs(flights_output_path.parent, exist_ok=True)

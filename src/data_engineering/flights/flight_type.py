@@ -16,6 +16,10 @@ FLIGHT_POLARS_SCHEMA = {
     "landing_time": pl.Datetime("ms"),
     "landing_airport_ident": pl.String,
     "landing_airport_ident_distance_km": pl.Float64,
+    "first_lat": pl.Float64,
+    "first_lon": pl.Float64,
+    "first_baro_altitude_ft": pl.Int64,
+    "first_geom_altitude_ft": pl.Int64,
     "last_lat": pl.Float64,
     "last_lon": pl.Float64,
     "last_baro_altitude_ft": pl.Int64,
@@ -69,6 +73,10 @@ class Flight:
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    first_lat: float | None = None
+    first_lon: float | None = None
+    first_baro_altitude_ft: int | None = None
+    first_geom_altitude_ft: int | None = None
     last_lat: float | None = None
     last_lon: float | None = None
     last_baro_altitude_ft: int | None = None

@@ -17,6 +17,10 @@ def test_flights_df_to_flights_accepts_full_schema_columns():
             "landing_time": [datetime(2026, 1, 1, 2)],
             "landing_airport_ident": ["KBOS"],
             "landing_airport_ident_distance_km": [2.5],
+            "first_lat": [40.0],
+            "first_lon": [-73.0],
+            "first_baro_altitude_ft": [50],
+            "first_geom_altitude_ft": [60],
             "last_lat": [42.0],
             "last_lon": [-71.0],
             "last_baro_altitude_ft": [100],
@@ -37,6 +41,10 @@ def test_flights_df_to_flights_accepts_full_schema_columns():
 
     [flight] = flights_df_to_flights(df)
 
+    assert flight.first_lat == 40.0
+    assert flight.first_lon == -73.0
+    assert flight.first_baro_altitude_ft == 50
+    assert flight.first_geom_altitude_ft == 60
     assert flight.last_lat == 42.0
     assert flight.last_lon == -71.0
     assert flight.last_baro_altitude_ft == 100
