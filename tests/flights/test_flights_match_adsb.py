@@ -54,6 +54,15 @@ FLIGHT_MATCH_CASES = [
         ],
         id="a1e5b5-airports-wrong",
     ),
+    pytest.param(
+        "a07b98",
+        False,
+        [
+            (datetime(2026, 3, 1, 14, 55), "KHPN", datetime(2026, 3, 1, 17, 22), "KMQY"),
+            (datetime(2026, 3, 1, 17, 45), "KMQY", datetime(2026, 3, 1, 18, 54), "KPNS"),
+        ],
+        id="a07b98-airports-wrong",
+    ),
 ]
 
 
