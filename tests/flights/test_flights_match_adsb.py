@@ -1,14 +1,9 @@
 from datetime import date, datetime
-import os
-from pathlib import Path
-
 import polars as pl
 import pytest
-
 from data_engineering.adsb.read_adsb import read_adsb  # noqa: E402
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df  # noqa: E402
 from flights.flights_match_adsb import flights_match_adsb  # noqa: E402
-
 
 TARGET_DATE = date(2026, 3, 1)
 
