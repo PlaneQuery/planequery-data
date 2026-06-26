@@ -27,6 +27,10 @@ def _row(
     ladd: bool | None = None,
     military: bool | None = None,
     interesting: bool | None = None,
+    aircraft_type: str | None = None,
+    owner: str | None = None,
+    aircraft_description: str | None = None,
+    category: str | None = None,
 ):
     return SimpleNamespace(
         time=time,
@@ -41,6 +45,10 @@ def _row(
         ladd=ladd,
         military=military,
         interesting=interesting,
+        aircraft_type=aircraft_type,
+        owner=owner,
+        aircraft_description=aircraft_description,
+        category=category,
     )
 
 
@@ -267,6 +275,75 @@ def test_segments_to_flights_df_uses_mode_db_flags(monkeypatch):
     assert row["ladd"] is True
     assert row["military"] is False
     assert row["interesting"] is False
+
+
+def test_segments_to_flights_df_uses_most_common_non_empty_aircraft_metadata(monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", "/tmp")
+    import flights_algorithm.main as flights_algorithm_main
+
+    monkeypatch.setattr(flights_algorithm_main, "_get_airport_lookup", lambda: None)
+
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(
+            start,
+            0.00,
+            on_ground=True,
+            ground_speed_kt=0.0,
+            aircraft_type="",
+            owner="Plane Co",
+            aircraft_description="",
+            category="",
+        ),
+        _row(
+            start + timedelta(minutes=1),
+            0.02,
+            on_ground=False,
+            ground_speed_kt=100.0,
+            aircraft_type="C172",
+            owner="Plane Co",
+            aircraft_description="Piston Single",
+            category="A1",
+        ),
+        _row(
+            start + timedelta(minutes=8),
+            0.20,
+            on_ground=False,
+            ground_speed_kt=180.0,
+            aircraft_type="BE20",
+            owner="Plane Co",
+            aircraft_description="Twin Turboprop",
+            category="A2",
+        ),
+        _row(
+            start + timedelta(minutes=12),
+            0.205,
+            on_ground=True,
+            ground_speed_kt=20.0,
+            aircraft_type="BE20",
+            owner="Plane Co",
+            aircraft_description="Twin Turboprop",
+            category="A2",
+        ),
+        _row(
+            start + timedelta(minutes=15),
+            0.205,
+            on_ground=True,
+            ground_speed_kt=0.0,
+            aircraft_type=None,
+            owner="",
+            aircraft_description=None,
+            category="",
+        ),
+    ]
+
+    df = _segments_to_flights_df(identify_flight_segments(messages))
+    row = df.row(0, named=True)
+
+    assert row["aircraft_type"] == "BE20"
+    assert row["owner"] == "Plane Co"
+    assert row["aircraft_description"] == "Twin Turboprop"
+    assert row["category"] == "A2"
 
 
 def test_segment_filter_keeps_only_flights_that_take_off_on_target_day():
