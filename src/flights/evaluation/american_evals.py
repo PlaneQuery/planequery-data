@@ -20,9 +20,6 @@ def add_airspace_columns(df: pl.DataFrame):
     )
     return df
 
-
-
-
 # Flight Sequencing Continetal USA -> Continetal USA. With SFDPS I can use the idents
 def continental_usa_to_continental_usa(df: pl.DataFrame) -> pl.DataFrame:  # except Alaska?
     df = add_airspace_columns(df)
