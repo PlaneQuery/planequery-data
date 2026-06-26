@@ -1,56 +1,69 @@
 from datetime import date, datetime
-import os
 import unittest
 
 import polars as pl
 
-os.environ.setdefault("OUTPUT_DIR", "/tmp")
-
-from data_engineering.adsb.read_adsb import read_icaos_from_adsb
-from flights.flights_match_adsb import flights_match_adsb, get_matching_icaos_in_flights
-from data_engineering.flights.flight_type import get_flights
-from data_engineering.flights.flight_type import flights_to_flights_df, Flight
-
-
-AIRPORTS_CSV = """ident,type,name,latitude_deg,longitude_deg,elevation_ft,continent,iso_country,iso_region,municipality,scheduled_service,gps_code,iata_code,local_code,home_link,wikipedia_link,keywords
-TESTA,small_airport,Test Airport A,0.0,0.0,0,NA,US,US-TS,Test,no,TESTA,,TESTA,,,
-TESTB,small_airport,Test Airport B,0.0,2.0,0,NA,US,US-TS,Test,no,TESTB,,TESTB,,,
-"""
-
-
-def _write_test_airports_csv(output_dir):
-    airport_dir = output_dir / "data" / "interim"
-    airport_dir.mkdir(parents=True)
-    (airport_dir / "airports.csv").write_text(AIRPORTS_CSV)
-
-
-def _reset_airport_lookup_cache(monkeypatch, output_dir):
-    monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    import flights.flights_match_adsb as flights_match_adsb_module
-
-    flights_match_adsb_module._airport_lookup = None
-    flights_match_adsb_module._airport_lookup_loaded = False
-    try:
-        from airports.airportLookup import AirportLookup
-
-        AirportLookup._instance = None
-    except (ImportError, KeyError):
-        pass
-
+from data_engineering.adsb.read_adsb import read_adsb
+from flights.flights_match_adsb import flights_match_adsb
+from data_engineering.flights.flight_type import Flight, flights_to_flights_df
 
 class TestFlightsMatchAdsb(unittest.TestCase):
     def test_flights_match_adsb(self):
         target_date = date(2026, 3, 1)
 
         icao = "a63b3c"
-        df_flights = get_flights(target_date).filter(pl.col("icao") == icao)
-        df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
+        df_flights = flights_to_flights_df([
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 11, 38),
+                takeoff_airport_ident="KTEB",
+                landing_time=datetime(2026, 3, 1, 13, 15),
+                landing_airport_ident="KCHS",
+            ),
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 15, 19),
+                takeoff_airport_ident="KCHS",
+                landing_time=datetime(2026, 3, 1, 16, 26),
+                landing_airport_ident="KSUA",
+            ),
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 17, 2),
+                takeoff_airport_ident="KSUA",
+                landing_time=datetime(2026, 3, 1, 19, 23),
+                landing_airport_ident="KTEB",
+            ),
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 19, 48),
+                takeoff_airport_ident="KTEB",
+                landing_time=datetime(2026, 3, 1, 20, 21),
+                landing_airport_ident="KFOK",
+            ),
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 21, 3),
+                takeoff_airport_ident="KFOK",
+                landing_time=datetime(2026, 3, 1, 23, 36),
+                landing_airport_ident="KSTL",
+            ),
+        ])
+        df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
         self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
         icao = "a4ed4f" # The airports are wrong for this. 
-        df_flights = get_flights(target_date).filter(pl.col("icao") == icao)
+        df_flights = flights_to_flights_df([
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 21, 17),
+                takeoff_airport_ident="KCSV",
+                landing_time=datetime(2026, 3, 1, 21, 54),
+                landing_airport_ident="KTYS",
+            )
+        ])
         print(df_flights.select("takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident"))
-        df_adsb = read_icaos_from_adsb(target_date, [icao]).filter(pl.col("icao") == icao)
+        df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
         self.assertFalse(flights_match_adsb(df_flights, df_adsb))
 
     # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
