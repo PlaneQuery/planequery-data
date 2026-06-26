@@ -52,6 +52,26 @@ class TestFlightsMatchAdsb(unittest.TestCase):
         df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
         self.assertTrue(flights_match_adsb(df_flights, df_adsb))
 
+        icao = "a23406"
+        df_flights = flights_to_flights_df([
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 16, 32),
+                takeoff_airport_ident="KCOS",
+                landing_time=datetime(2026, 3, 1, 18, 15),
+                landing_airport_ident="KGGG",
+            ),
+            Flight(
+                icao=icao,
+                takeoff_time=datetime(2026, 3, 1, 18, 38),
+                takeoff_airport_ident="KGGG",
+                landing_time=datetime(2026, 3, 1, 20, 54),
+                landing_airport_ident="KISM",
+            ),
+        ])
+        df_adsb = read_adsb(target_date, icaos = [icao]).filter(pl.col("icao") == icao)
+        self.assertTrue(flights_match_adsb(df_flights, df_adsb))
+
         icao = "a4ed4f" # The airports are wrong for this. 
         df_flights = flights_to_flights_df([
             Flight(
