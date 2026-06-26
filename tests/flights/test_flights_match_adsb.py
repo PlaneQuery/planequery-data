@@ -39,6 +39,15 @@ FLIGHT_MATCH_CASES = [
         id="ab4b73-matches",
     ),
     pytest.param(
+        "a67084",
+        True,
+        [
+            (datetime(2026, 3, 1, 0, 21), "KCHO", datetime(2026, 3, 1, 1, 20), "KPHF"),
+            (datetime(2026, 3, 1, 1, 29), "KPHF", datetime(2026, 3, 1, 2, 52), "KHEF"),
+        ],
+        id="a67084-matches",
+    ),
+    pytest.param(
         "a4ed4f",
         False,
         [
