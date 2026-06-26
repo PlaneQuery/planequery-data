@@ -649,16 +649,9 @@ def _validate_max_workers(max_workers: int) -> None:
 
 
 def _get_airport_lookup():
-    try:
-        from airports.airportLookup import AirportLookup
+    from airports.airportLookup import AirportLookup
+    return AirportLookup()
 
-        return AirportLookup()
-    except (FileNotFoundError, KeyError):
-        try:
-            AirportLookup._instance = None
-        except (NameError, AttributeError):
-            pass
-        return None
 
 
 def _airport_rank(airport) -> int:
