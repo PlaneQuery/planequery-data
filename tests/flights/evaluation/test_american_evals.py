@@ -1,0 +1,1 @@
+# have a dataframe and then see what the resulting datafraem icaos are. and flight lenght assert. 
