@@ -361,18 +361,6 @@ def _geom_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | No
     )
 
 
-def _airport_elevation_difference_ft(
-    message: AdsbMessageRow | AdsbPositionMessage,
-    airport_guess: AirportIdentGuess,
-) -> int | None:
-    altitude_ft = _geom_altitude_ft(message)
-    if altitude_ft is None:
-        altitude_ft = _baro_altitude_int_ft(message)
-    if altitude_ft is None or airport_guess.elevation_ft is None:
-        return None
-    return altitude_ft - airport_guess.elevation_ft
-
-
 def _motion_edges(messages: Sequence[AdsbMessageRow | AdsbPositionMessage]) -> list[MessageMotion]:
     sorted_messages = sorted(messages, key=lambda row: row.time)
     edges = []
@@ -1008,26 +996,18 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "registration": "",
                 "takeoff_time": segment.takeoff_time,
                 "takeoff_airport_ident": takeoff_guess.ident,
-                "takeoff_airport_ident_distance_km": takeoff_guess.distance_km,
                 "landing_time": segment.landing_time,
                 "landing_airport_ident": landing_guess.ident,
-                "landing_airport_ident_distance_km": landing_guess.distance_km,
+                "first_message_time": segment.takeoff_message.time,
                 "first_lat": segment.takeoff_message.lat,
                 "first_lon": segment.takeoff_message.lon,
                 "first_baro_altitude_ft": _baro_altitude_int_ft(segment.takeoff_message),
                 "first_geom_altitude_ft": _geom_altitude_ft(segment.takeoff_message),
+                "last_message_time": segment.landing_message.time,
                 "last_lat": segment.landing_message.lat,
                 "last_lon": segment.landing_message.lon,
                 "last_baro_altitude_ft": _baro_altitude_int_ft(segment.landing_message),
                 "last_geom_altitude_ft": _geom_altitude_ft(segment.landing_message),
-                "takeoff_airport_elevation_difference_ft": _airport_elevation_difference_ft(
-                    segment.takeoff_message,
-                    takeoff_guess,
-                ),
-                "landing_airport_elevation_difference_ft": _airport_elevation_difference_ft(
-                    segment.landing_message,
-                    landing_guess,
-                ),
                 **flight_flags,
                 **aircraft_metadata,
             }

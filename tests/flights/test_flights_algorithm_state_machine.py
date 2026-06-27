@@ -310,6 +310,9 @@ def test_rejects_segment_when_distance_travelled_is_too_short():
 def test_segments_to_flights_df_uses_flight_schema_defaults(monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", "/tmp")
     from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+    import flights_algorithm.main as flights_algorithm_main
+
+    monkeypatch.setattr(flights_algorithm_main, "_get_airport_lookup", lambda: None)
 
     start = datetime(2026, 1, 1, 12, 0)
     message = _row(start, 0.0)
@@ -327,6 +330,8 @@ def test_segments_to_flights_df_uses_flight_schema_defaults(monkeypatch):
 
     assert df.columns == list(FLIGHT_POLARS_SCHEMA.keys())
     assert df.row(0, named=True)["icao"] == "abc123"
+    assert df.row(0, named=True)["first_message_time"] == start
+    assert df.row(0, named=True)["last_message_time"] == start
     assert df.row(0, named=True)["takeoff_airport_ident"] is None
     assert df.row(0, named=True)["pia"] is False
 
@@ -486,7 +491,11 @@ def test_segment_filter_keeps_only_flights_that_take_off_on_target_day():
     assert not _segment_takes_off_in_window(after_day, day_start, day_end)
 
 
-def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
+def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path, monkeypatch):
+    import flights_algorithm.main as flights_algorithm_main
+
+    monkeypatch.setattr(flights_algorithm_main, "_get_airport_lookup", lambda: None)
+
     target_date = date(2026, 3, 1)
     day_dir = tmp_path / "year=2026" / "month=03" / "day=01"
     day_dir.mkdir(parents=True)
@@ -517,6 +526,8 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
     assert df.row(0, named=True)["icao"] == "abc123"
     assert df.row(0, named=True)["takeoff_time"] == start + timedelta(minutes=1)
     assert df.row(0, named=True)["landing_time"] == start + timedelta(minutes=12)
+    assert df.row(0, named=True)["first_message_time"] == start
+    assert df.row(0, named=True)["last_message_time"] == start + timedelta(minutes=15)
     assert df.row(0, named=True)["first_lat"] == 0.0
     assert df.row(0, named=True)["last_lon"] == 0.205
     assert df.row(0, named=True)["pia"] is True
