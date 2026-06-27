@@ -108,6 +108,7 @@ class Adsb_Message_reapi:
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List, Literal
+import polars as pl
 
 
 # ---- Enums ----
@@ -131,6 +132,151 @@ NavMode = Literal[
 DataSource = Literal[
     '', 'adsb.lol', 'adsb.fi', 'other'
 ]
+
+
+@dataclass(frozen=True)
+class AdsbMessage: # TODO: Call this AdsbMessageRow
+    time: datetime
+    icao: str
+    lat: float
+    lon: float
+    callsign: Optional[str] = None
+    registration: Optional[str] = None
+    aircraft_type: Optional[str] = None
+    aircraft_year: Optional[int] = None
+    radius_of_containment_m: Optional[int] = None
+    on_ground: bool = False
+    baro_altitude_ft: Optional[int] = None
+    geom_altitude_ft: Optional[int] = None
+    baro_rate_fpm: Optional[int] = None
+    geom_rate_fpm: Optional[int] = None
+    ground_speed_kt: Optional[float] = None
+    indicated_airspeed_kt: Optional[float] = None
+    true_airspeed_kt: Optional[float] = None
+    mach: Optional[float] = None
+    track_deg: Optional[float] = None
+    track_rate_deg_s: Optional[float] = None
+    roll_deg: Optional[float] = None
+    magnetic_heading_deg: Optional[float] = None
+    true_heading_deg: Optional[float] = None
+    nav_qnh_hpa: Optional[float] = None
+    nav_altitude_mcp_ft: Optional[int] = None
+    nav_altitude_fms_ft: Optional[int] = None
+    nav_heading_deg: Optional[float] = None
+    nav_modes: Optional[List[str]] = None
+    squawk: Optional[str] = None
+    emergency: Optional[str] = None
+    alert: bool = False
+    spi: bool = False
+    version: Optional[int] = None
+    nic: Optional[int] = None
+    nic_baro: Optional[int] = None
+    nac_p: Optional[int] = None
+    nac_v: Optional[int] = None
+    sil: Optional[int] = None
+    sil_type: Optional[str] = None
+    gva: Optional[int] = None
+    sda: Optional[int] = None
+    type: Optional[str] = None
+    flags: Optional[int] = None
+    rssi_dbfs: Optional[float] = None
+    no_reg_data: bool = False
+    pia: bool = False
+    ladd: bool = False
+    military: bool = False
+    interesting: bool = False
+    owner: Optional[str] = None
+    aircraft_description: Optional[str] = None
+    category: Optional[str] = None
+    wind_direction_deg: Optional[float] = None
+    wind_speed_kt: Optional[float] = None
+    outside_air_temp_c: Optional[float] = None
+    total_air_temp_c: Optional[float] = None
+    mlat: Optional[List[str]] = None
+    tisb: Optional[List[str]] = None
+
+    @property
+    def dbFlags(self) -> int:
+        flags = 0
+        if self.military:
+            flags |= 1
+        if self.interesting:
+            flags |= 2
+        if self.pia:
+            flags |= 4
+        if self.ladd:
+            flags |= 8
+        return flags
+
+
+def _bool_or_false(value: bool | None) -> bool:
+    return False if value is None else bool(value)
+
+
+def adsb_messages_from_parquet_df(df: "pl.DataFrame") -> list[AdsbMessage]:
+    return [
+        AdsbMessage(
+            time=row["time"],
+            icao=row["icao"],
+            lat=row["lat"],
+            lon=row["lon"],
+            callsign=row.get("callsign"),
+            registration=row.get("registration"),
+            aircraft_type=row.get("aircraft_type"),
+            aircraft_year=row.get("aircraft-year"),
+            radius_of_containment_m=row.get("radius_of_containment_m"),
+            on_ground=_bool_or_false(row.get("on_ground")),
+            baro_altitude_ft=row.get("baro_altitude_ft"),
+            geom_altitude_ft=row.get("geom_altitude_ft"),
+            baro_rate_fpm=row.get("baro_rate_fpm"),
+            geom_rate_fpm=row.get("geom_rate_fpm"),
+            ground_speed_kt=row.get("ground_speed_kt"),
+            indicated_airspeed_kt=row.get("indicated_airspeed_kt"),
+            true_airspeed_kt=row.get("true_airspeed_kt"),
+            mach=row.get("mach"),
+            track_deg=row.get("track_deg"),
+            track_rate_deg_s=row.get("track_rate_deg_s"),
+            roll_deg=row.get("roll_deg"),
+            magnetic_heading_deg=row.get("magnetic_heading_deg"),
+            true_heading_deg=row.get("true_heading_deg"),
+            nav_qnh_hpa=row.get("nav_qnh_hpa"),
+            nav_altitude_mcp_ft=row.get("nav_altitude_mcp_ft"),
+            nav_altitude_fms_ft=row.get("nav_altitude_fms_ft"),
+            nav_heading_deg=row.get("nav_heading_deg"),
+            nav_modes=row.get("nav_modes"),
+            squawk=row.get("squawk"),
+            emergency=row.get("emergency"),
+            alert=_bool_or_false(row.get("alert")),
+            spi=_bool_or_false(row.get("spi")),
+            version=row.get("version"),
+            nic=row.get("nic"),
+            nic_baro=row.get("nic_baro"),
+            nac_p=row.get("nac_p"),
+            nac_v=row.get("nac_v"),
+            sil=row.get("sil"),
+            sil_type=row.get("sil_type"),
+            gva=row.get("gva"),
+            sda=row.get("sda"),
+            type=row.get("type"),
+            flags=row.get("flags"),
+            rssi_dbfs=row.get("rssi_dbfs"),
+            no_reg_data=_bool_or_false(row.get("no_reg_data")),
+            pia=_bool_or_false(row.get("pia")),
+            ladd=_bool_or_false(row.get("ladd")),
+            military=_bool_or_false(row.get("military")),
+            interesting=_bool_or_false(row.get("interesting")),
+            owner=row.get("owner"),
+            aircraft_description=row.get("aircraft_description"),
+            category=row.get("category"),
+            wind_direction_deg=row.get("wind_direction_deg"),
+            wind_speed_kt=row.get("wind_speed_kt"),
+            outside_air_temp_c=row.get("outside_air_temp_c"),
+            total_air_temp_c=row.get("total_air_temp_c"),
+            mlat=row.get("mlat"),
+            tisb=row.get("tisb"),
+        )
+        for row in df.iter_rows(named=True)
+    ]
 
 
 # ---- Row type ----
