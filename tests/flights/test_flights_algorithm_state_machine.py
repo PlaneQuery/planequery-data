@@ -68,6 +68,8 @@ def test_identifies_takeoff_and_landing_from_calculated_ground_speed():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(minutes=6)
+    assert segments[0].takeoff_message.time == start
+    assert segments[0].landing_message.time == start + timedelta(minutes=9)
 
 
 def test_large_message_gap_closes_current_segment():
@@ -85,6 +87,7 @@ def test_large_message_gap_closes_current_segment():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(minutes=10)
+    assert segments[0].takeoff_message.time == start
 
 
 def test_on_ground_state_can_identify_takeoff_and_landing():
@@ -102,6 +105,45 @@ def test_on_ground_state_can_identify_takeoff_and_landing():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(minutes=12)
+    assert segments[0].takeoff_message.time == start
+    assert segments[0].landing_message.time == start + timedelta(minutes=15)
+
+
+def test_first_endpoint_uses_earliest_continuous_ground_message():
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start - timedelta(minutes=5), 0.00, on_ground=True, ground_speed_kt=0.0),
+        _row(start, 0.001, on_ground=True, ground_speed_kt=5.0),
+        _row(start + timedelta(minutes=1), 0.02, on_ground=False, ground_speed_kt=100.0),
+        _row(start + timedelta(minutes=8), 0.20, on_ground=False, ground_speed_kt=180.0),
+        _row(start + timedelta(minutes=12), 0.205, on_ground=True, ground_speed_kt=20.0),
+        _row(start + timedelta(minutes=15), 0.205, on_ground=True, ground_speed_kt=0.0),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 1
+    assert segments[0].takeoff_time == start + timedelta(minutes=1)
+    assert segments[0].takeoff_message.time == start - timedelta(minutes=5)
+    assert segments[0].landing_time == start + timedelta(minutes=12)
+    assert segments[0].landing_message.time == start + timedelta(minutes=15)
+
+
+def test_open_landing_sequence_closes_at_last_available_message():
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start, 0.00, on_ground=True, ground_speed_kt=0.0),
+        _row(start + timedelta(minutes=1), 0.02, on_ground=False, ground_speed_kt=100.0),
+        _row(start + timedelta(minutes=8), 0.20, on_ground=False, ground_speed_kt=180.0),
+        _row(start + timedelta(minutes=12), 0.205, on_ground=True, ground_speed_kt=20.0),
+        _row(start + timedelta(minutes=13), 0.205, on_ground=True, ground_speed_kt=0.0),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 1
+    assert segments[0].landing_time == start + timedelta(minutes=12)
+    assert segments[0].landing_message.time == start + timedelta(minutes=13)
 
 
 def test_open_in_flight_segment_closes_at_last_message():
@@ -117,6 +159,7 @@ def test_open_in_flight_segment_closes_at_last_message():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(minutes=10)
+    assert segments[0].takeoff_message.time == start
 
 
 def test_continues_flight_across_plausible_airborne_gap():
@@ -135,6 +178,8 @@ def test_continues_flight_across_plausible_airborne_gap():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(hours=2, minutes=20)
+    assert segments[0].takeoff_message.time == start
+    assert segments[0].landing_message.time == start + timedelta(hours=2, minutes=23)
 
 
 def test_does_not_continue_across_implausibly_slow_airborne_gap():
@@ -154,6 +199,7 @@ def test_does_not_continue_across_implausibly_slow_airborne_gap():
     assert len(segments) == 2
     assert segments[0].landing_time == start + timedelta(minutes=10)
     assert segments[1].takeoff_time == start + timedelta(hours=2, minutes=10)
+    assert segments[1].takeoff_message.time == start + timedelta(hours=2)
 
 
 def test_stop_like_coverage_gap_splits_flights_without_ground_rows():
@@ -175,6 +221,8 @@ def test_stop_like_coverage_gap_splits_flights_without_ground_rows():
     assert segments[0].landing_time == start + timedelta(minutes=40)
     assert segments[1].takeoff_time == start + timedelta(minutes=55)
     assert segments[1].landing_time == start + timedelta(hours=1, minutes=40)
+    assert segments[0].takeoff_message.time == start
+    assert segments[1].landing_message.time == start + timedelta(hours=1, minutes=43)
 
 
 def test_continues_across_slow_gap_when_both_sides_are_high_altitude():
@@ -193,6 +241,8 @@ def test_continues_across_slow_gap_when_both_sides_are_high_altitude():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=1)
     assert segments[0].landing_time == start + timedelta(hours=2, minutes=20)
+    assert segments[0].takeoff_message.time == start
+    assert segments[0].landing_message.time == start + timedelta(hours=2, minutes=23)
 
 
 def test_backdates_takeoff_when_first_airborne_message_is_already_high():
@@ -209,6 +259,8 @@ def test_backdates_takeoff_when_first_airborne_message_is_already_high():
     assert len(segments) == 1
     assert segments[0].takeoff_time == start + timedelta(minutes=5)
     assert segments[0].landing_time == start + timedelta(minutes=20)
+    assert segments[0].takeoff_message.time == start
+    assert segments[0].landing_message.time == start + timedelta(minutes=23)
 
 
 def test_decelerating_approach_can_identify_landing_above_absolute_landing_speed():
@@ -225,6 +277,7 @@ def test_decelerating_approach_can_identify_landing_above_absolute_landing_speed
 
     assert len(segments) == 1
     assert segments[0].landing_time == start + timedelta(minutes=12)
+    assert segments[0].landing_message.time == start + timedelta(minutes=15)
 
 
 def test_open_segment_ending_high_and_fast_is_rejected():
@@ -464,6 +517,8 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path):
     assert df.row(0, named=True)["icao"] == "abc123"
     assert df.row(0, named=True)["takeoff_time"] == start + timedelta(minutes=1)
     assert df.row(0, named=True)["landing_time"] == start + timedelta(minutes=12)
+    assert df.row(0, named=True)["first_lat"] == 0.0
+    assert df.row(0, named=True)["last_lon"] == 0.205
     assert df.row(0, named=True)["pia"] is True
     assert df.row(0, named=True)["ladd"] is True
 
