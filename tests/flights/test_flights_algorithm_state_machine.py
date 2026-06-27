@@ -6,6 +6,7 @@ import polars as pl
 from flights_algorithm.main import (
     FlightSegment,
     _collect_segments_from_adsb_lf,
+    _filter_short_same_airport_flights,
     _pia_or_american_ladd_icao_filter,
     _segment_takes_off_in_window,
     _segments_to_flights_df,
@@ -155,6 +156,27 @@ def test_does_not_continue_across_implausibly_slow_airborne_gap():
     assert segments[1].takeoff_time == start + timedelta(hours=2, minutes=10)
 
 
+def test_stop_like_coverage_gap_splits_flights_without_ground_rows():
+    start = datetime(2026, 1, 1, 12, 0)
+    messages = [
+        _row(start, 0.00, on_ground=False, ground_speed_kt=120.0, baro_altitude_ft=1000),
+        _row(start + timedelta(minutes=20), 1.20, on_ground=False, ground_speed_kt=260.0, baro_altitude_ft=8000),
+        _row(start + timedelta(minutes=40), 1.25, on_ground=False, ground_speed_kt=110.0, baro_altitude_ft=900),
+        _row(start + timedelta(minutes=55), 1.26, on_ground=False, ground_speed_kt=150.0, baro_altitude_ft=1000),
+        _row(start + timedelta(hours=1, minutes=20), 2.00, on_ground=False, ground_speed_kt=260.0, baro_altitude_ft=8000),
+        _row(start + timedelta(hours=1, minutes=40), 2.10, on_ground=False, ground_speed_kt=95.0, baro_altitude_ft=700),
+        _row(start + timedelta(hours=1, minutes=43), 2.12, on_ground=False, ground_speed_kt=50.0, baro_altitude_ft=400),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 2
+    assert segments[0].takeoff_time == start + timedelta(minutes=10)
+    assert segments[0].landing_time == start + timedelta(minutes=40)
+    assert segments[1].takeoff_time == start + timedelta(minutes=55)
+    assert segments[1].landing_time == start + timedelta(hours=1, minutes=40)
+
+
 def test_continues_across_slow_gap_when_both_sides_are_high_altitude():
     start = datetime(2026, 1, 1, 12, 0)
     messages = [
@@ -254,6 +276,39 @@ def test_segments_to_flights_df_uses_flight_schema_defaults(monkeypatch):
     assert df.row(0, named=True)["icao"] == "abc123"
     assert df.row(0, named=True)["takeoff_airport_ident"] is None
     assert df.row(0, named=True)["pia"] is False
+
+
+def test_filter_short_same_airport_flights_removes_local_patterns():
+    start = datetime(2026, 1, 1, 12, 0)
+    df = pl.DataFrame(
+        [
+            {
+                "icao": "short1",
+                "takeoff_time": start,
+                "landing_time": start + timedelta(minutes=20),
+                "takeoff_airport_ident": "KAAA",
+                "landing_airport_ident": "KAAA",
+            },
+            {
+                "icao": "long1",
+                "takeoff_time": start,
+                "landing_time": start + timedelta(minutes=45),
+                "takeoff_airport_ident": "KAAA",
+                "landing_airport_ident": "KAAA",
+            },
+            {
+                "icao": "route1",
+                "takeoff_time": start,
+                "landing_time": start + timedelta(minutes=20),
+                "takeoff_airport_ident": "KAAA",
+                "landing_airport_ident": "KBBB",
+            },
+        ]
+    )
+
+    filtered = _filter_short_same_airport_flights(df)
+
+    assert filtered.get_column("icao").to_list() == ["long1", "route1"]
 
 
 def test_segments_to_flights_df_uses_mode_db_flags(monkeypatch):
