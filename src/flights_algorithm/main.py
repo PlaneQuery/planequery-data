@@ -36,9 +36,14 @@ MAX_LANDING_ALTITUDE_FT = 20_000
 HIGH_ALTITUDE_APPROACH_SPEED_DROP_KT = 80.0
 AIRBORNE_GAP_MIN_SPEED_KT = 90.0
 AIRBORNE_GAP_MIN_ALTITUDE_FT = 1_000
-MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT = 70.0
+MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT = 30.0
 MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT = 700.0
 HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT = 30_000
+MIN_STOP_LIKE_GAP = timedelta(minutes=7)
+MAX_STOP_LIKE_GAP_DISTANCE_KM = 20.0
+MAX_STOP_LIKE_GAP_AVERAGE_SPEED_KT = 25.0
+MAX_STOP_LIKE_GAP_ALTITUDE_FT = 7_750
+MAX_SHORT_SAME_AIRPORT_DURATION = timedelta(minutes=25)
 TAKEOFF_BACKDATE_MIN_ALTITUDE_FT = 3_000
 TAKEOFF_BACKDATE_CLIMB_RATE_FT_PER_MIN = 800.0
 TAKEOFF_BACKDATE_MAX_SPEED_KT = 520.0
@@ -460,6 +465,30 @@ def _gap_average_speed_kt(motion: MessageMotion) -> float | None:
     return motion.distance_km * 1943.844492 / dt_s
 
 
+def _message_is_low_for_stop_gap(message: AdsbMessageRow | AdsbPositionMessage) -> bool:
+    if _on_ground(message) is True:
+        return True
+
+    altitude_ft = _baro_altitude_ft(message)
+    if altitude_ft is None:
+        return True
+    return altitude_ft <= MAX_STOP_LIKE_GAP_ALTITUDE_FT
+
+
+def _is_stop_like_gap(motion: MessageMotion) -> bool:
+    if motion.time_gap < MIN_STOP_LIKE_GAP:
+        return False
+
+    average_speed_kt = _gap_average_speed_kt(motion)
+    if average_speed_kt is None:
+        return False
+    if average_speed_kt > MAX_STOP_LIKE_GAP_AVERAGE_SPEED_KT:
+        return False
+    if motion.distance_km > MAX_STOP_LIKE_GAP_DISTANCE_KM:
+        return False
+    return _message_is_low_for_stop_gap(motion.prev) and _message_is_low_for_stop_gap(motion.curr)
+
+
 def _message_looks_airborne_for_gap(message: AdsbMessageRow | AdsbPositionMessage) -> bool:
     if _on_ground(message) is True:
         return False
@@ -477,6 +506,8 @@ def _message_looks_airborne_for_gap(message: AdsbMessageRow | AdsbPositionMessag
 
 def _should_continue_across_gap(motion: MessageMotion) -> bool:
     if motion.time_gap > MAX_AIRBORNE_GAP:
+        return False
+    if _is_stop_like_gap(motion):
         return False
     if not _message_looks_airborne_for_gap(motion.prev):
         return False
@@ -569,6 +600,22 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
             continue
 
         gap_was_continued = False
+        if state == FlightState.IN_FLIGHT and _is_stop_like_gap(motion):
+            _maybe_add_segment(
+                segments,
+                takeoff_message,
+                motion.prev,
+                distance_travelled_km,
+                max_speed_kt,
+                segment_messages,
+            )
+            state = FlightState.GROUND
+            takeoff_message = None
+            landing_candidate = None
+            distance_travelled_km = 0.0
+            max_speed_kt = None
+            segment_messages = []
+
         if motion.time_gap > MAX_MESSAGE_GAP:
             if state == FlightState.IN_FLIGHT and _should_continue_across_gap(motion):
                 landing_candidate = None
@@ -746,7 +793,15 @@ def _validate_max_workers(max_workers: int) -> None:
 
 def _get_airport_lookup():
     from airports.airportLookup import AirportLookup
-    return AirportLookup()
+    try:
+        airport_lookup = AirportLookup()
+    except (FileNotFoundError, KeyError):
+        AirportLookup._instance = None
+        return None
+    if not getattr(airport_lookup, "_ball_tree", None):
+        AirportLookup._instance = None
+        return None
+    return airport_lookup
 
 
 
@@ -923,6 +978,19 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
     )
 
 
+def _filter_short_same_airport_flights(flights_df: pl.DataFrame) -> pl.DataFrame:
+    same_named_airport = (
+        pl.col("takeoff_airport_ident").is_not_null()
+        & pl.col("landing_airport_ident").is_not_null()
+        & (pl.col("takeoff_airport_ident") != "")
+        & (pl.col("takeoff_airport_ident") == pl.col("landing_airport_ident"))
+    )
+    short_flight = (
+        pl.col("landing_time") - pl.col("takeoff_time")
+    ) <= MAX_SHORT_SAME_AIRPORT_DURATION
+    return flights_df.filter(~(same_named_airport & short_flight))
+
+
 def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
     start = datetime.combine(target_date, datetime.min.time())
     return start, start + timedelta(days=1)
@@ -1092,6 +1160,7 @@ def run_main(
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     flights_df = _segments_to_flights_df(segments)
+    flights_df = _filter_short_same_airport_flights(flights_df)
     if pia_or_american_ladd_only:
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
     output_path = adsblol_flights_output_path(target_date)
@@ -1117,7 +1186,7 @@ def run_main_2(
         for segment in segments
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
-    return _segments_to_flights_df(segments)
+    return _filter_short_same_airport_flights(_segments_to_flights_df(segments))
 
 
 def _date_arg(value: str) -> date:
