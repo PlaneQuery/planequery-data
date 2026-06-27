@@ -135,7 +135,7 @@ def adsblol_flights_output_path(target_date: date):
         / "data"
         / "flights"
         / "trad-model"
-        / "v4"
+        / "v5"
         / "adsblol"
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"

@@ -556,21 +556,30 @@ def _maybe_add_segment(
     distance_travelled_km: float,
     max_speed_kt: float | None,
     segment_messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
+    *,
+    takeoff_time_message: AdsbMessageRow | AdsbPositionMessage | None = None,
+    landing_time_message: AdsbMessageRow | AdsbPositionMessage | None = None,
 ) -> None:
     if takeoff_message is None:
         return
-    if landing_message.time - takeoff_message.time < MIN_FLIGHT_DURATION:
+    if takeoff_time_message is None:
+        takeoff_time_message = takeoff_message
+    if landing_time_message is None:
+        landing_time_message = landing_message
+
+    takeoff_time = _estimated_takeoff_time(takeoff_time_message)
+    landing_time = landing_time_message.time
+    if landing_time - takeoff_time < MIN_FLIGHT_DURATION:
         return
     if distance_travelled_km < MIN_FLIGHT_DISTANCE_KM:
         return
     if not _landing_endpoint_makes_sense(landing_message, max_speed_kt):
         return
-    takeoff_time = _estimated_takeoff_time(takeoff_message)
     segments.append(
         FlightSegment(
             icao=takeoff_message.icao,
             takeoff_time=takeoff_time,
-            landing_time=landing_message.time,
+            landing_time=landing_time,
             takeoff_message=takeoff_message,
             landing_message=landing_message,
             distance_travelled_km=distance_travelled_km,
@@ -585,11 +594,14 @@ def _maybe_add_segment(
 def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMessage]) -> list[FlightSegment]:
     state = FlightState.GROUND
     takeoff_message = None
+    takeoff_time_message = None
     landing_candidate = None
     distance_travelled_km = 0.0
     max_speed_kt = None
     last_message = None
     segment_messages = []
+    ground_messages = []
+    ground_distance_travelled_km = 0.0
     segments = []
 
     for motion in _motion_edges(messages):
@@ -608,13 +620,31 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 distance_travelled_km,
                 max_speed_kt,
                 segment_messages,
+                takeoff_time_message=takeoff_time_message,
+                landing_time_message=motion.prev,
             )
             state = FlightState.GROUND
             takeoff_message = None
+            takeoff_time_message = None
             landing_candidate = None
             distance_travelled_km = 0.0
             max_speed_kt = None
             segment_messages = []
+            ground_messages = []
+            ground_distance_travelled_km = 0.0
+            if motion.time_gap > MAX_MESSAGE_GAP:
+                ground_messages = [motion.curr]
+            elif _is_takeoff_motion(motion):
+                state = FlightState.IN_FLIGHT
+                takeoff_message = motion.curr
+                takeoff_time_message = motion.curr
+                landing_candidate = None
+                distance_travelled_km = 0.0
+                max_speed_kt = speed
+                segment_messages = [motion.curr]
+            else:
+                ground_messages = [motion.curr]
+            continue
 
         if motion.time_gap > MAX_MESSAGE_GAP:
             if state == FlightState.IN_FLIGHT and _should_continue_across_gap(motion):
@@ -629,31 +659,53 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                     distance_travelled_km,
                     max_speed_kt,
                     segment_messages,
+                    takeoff_time_message=takeoff_time_message,
+                    landing_time_message=motion.prev,
                 )
                 state = FlightState.GROUND
                 takeoff_message = None
+                takeoff_time_message = None
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
                 segment_messages = []
+                ground_messages = []
+                ground_distance_travelled_km = 0.0
                 continue
             else:
                 state = FlightState.GROUND
                 takeoff_message = None
+                takeoff_time_message = None
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
                 segment_messages = []
+                ground_messages = [motion.curr]
+                ground_distance_travelled_km = 0.0
                 continue
 
         if state == FlightState.GROUND:
+            if not ground_messages:
+                ground_messages = [motion.prev]
+            elif ground_messages[-1].time != motion.prev.time:
+                ground_messages.append(motion.prev)
+
             if _is_takeoff_motion(motion):
+                if ground_messages[-1].time != motion.curr.time:
+                    ground_messages.append(motion.curr)
                 state = FlightState.IN_FLIGHT
-                takeoff_message = motion.curr
+                takeoff_message = ground_messages[0]
+                takeoff_time_message = motion.curr
                 landing_candidate = None
-                distance_travelled_km = 0.0
+                distance_travelled_km = ground_distance_travelled_km + motion.distance_km
                 max_speed_kt = speed
-                segment_messages = [motion.curr]
+                segment_messages = ground_messages
+                ground_messages = []
+                ground_distance_travelled_km = 0.0
+            else:
+                if ground_messages[-1].time != motion.curr.time:
+                    ground_messages.append(motion.curr)
+                ground_distance_travelled_km += motion.distance_km
             continue
 
         if speed is not None:
@@ -668,28 +720,35 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 _maybe_add_segment(
                     segments,
                     takeoff_message,
-                    landing_candidate,
+                    motion.curr,
                     distance_travelled_km,
                     max_speed_kt,
                     segment_messages,
+                    takeoff_time_message=takeoff_time_message,
+                    landing_time_message=landing_candidate,
                 )
                 state = FlightState.GROUND
                 takeoff_message = None
+                takeoff_time_message = None
                 landing_candidate = None
                 distance_travelled_km = 0.0
                 max_speed_kt = None
                 segment_messages = []
+                ground_messages = [motion.curr]
+                ground_distance_travelled_km = 0.0
         else:
             landing_candidate = None
 
-    if state == FlightState.IN_FLIGHT and landing_candidate is not None:
+    if state == FlightState.IN_FLIGHT and landing_candidate is not None and last_message is not None:
         _maybe_add_segment(
             segments,
             takeoff_message,
-            landing_candidate,
+            last_message,
             distance_travelled_km,
             max_speed_kt,
             segment_messages,
+            takeoff_time_message=takeoff_time_message,
+            landing_time_message=landing_candidate,
         )
     elif state == FlightState.IN_FLIGHT and last_message is not None:
         _maybe_add_segment(
@@ -699,6 +758,8 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
             distance_travelled_km,
             max_speed_kt,
             segment_messages,
+            takeoff_time_message=takeoff_time_message,
+            landing_time_message=last_message,
         )
 
     return segments
