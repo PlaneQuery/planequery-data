@@ -12,20 +12,18 @@ FLIGHT_POLARS_SCHEMA = {
     "registration": pl.String,
     "takeoff_time": pl.Datetime("ms"),
     "takeoff_airport_ident": pl.String,
-    "takeoff_airport_ident_distance_km": pl.Float64,
     "landing_time": pl.Datetime("ms"),
     "landing_airport_ident": pl.String,
-    "landing_airport_ident_distance_km": pl.Float64,
+    "first_message_time": pl.Datetime("ms"),
     "first_lat": pl.Float64,
     "first_lon": pl.Float64,
     "first_baro_altitude_ft": pl.Int64,
     "first_geom_altitude_ft": pl.Int64,
+    "last_message_time": pl.Datetime("ms"),
     "last_lat": pl.Float64,
     "last_lon": pl.Float64,
     "last_baro_altitude_ft": pl.Int64,
     "last_geom_altitude_ft": pl.Int64,
-    "takeoff_airport_elevation_difference_ft": pl.Int64,
-    "landing_airport_elevation_difference_ft": pl.Int64,
     "pia": pl.Boolean,
     "ladd": pl.Boolean,
     "military": pl.Boolean,
@@ -73,18 +71,16 @@ class Flight:
     landing_time: datetime
     takeoff_airport_ident: str
     landing_airport_ident: str
+    first_message_time: datetime | None = None
     first_lat: float | None = None
     first_lon: float | None = None
     first_baro_altitude_ft: int | None = None
     first_geom_altitude_ft: int | None = None
+    last_message_time: datetime | None = None
     last_lat: float | None = None
     last_lon: float | None = None
     last_baro_altitude_ft: int | None = None
     last_geom_altitude_ft: int | None = None
-    takeoff_airport_ident_distance_km: float | None = None
-    landing_airport_ident_distance_km: float | None = None
-    takeoff_airport_elevation_difference_ft: int | None = None
-    landing_airport_elevation_difference_ft: int | None = None
     callsign: str = ""
     registration: str = ""
     pia: bool = False
@@ -135,7 +131,7 @@ def adsblol_flights_output_path(target_date: date):
         / "data"
         / "flights"
         / "trad-model"
-        / "v5"
+        / "v6"
         / "adsblol"
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
@@ -186,3 +182,39 @@ def get_flights(start_date: date, end_date: date | None = None):
     if end_date <= start_date:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
     return pl.concat([_get_flights_for_day(target_date) for target_date in _date_range(start_date, end_date)])
+
+def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
+    from airports.airportLookup import AirportLookup
+
+    airport_lookup = AirportLookup()
+
+    def add_airport_coords(df: pl.DataFrame, prefix: str) -> pl.DataFrame:
+        ident_col = f"{prefix}_airport_ident"
+        lat_col = f"{prefix}_airport_lat"
+        lon_col = f"{prefix}_airport_lon"
+
+        def get_coords(airport_ident: str | None) -> dict[str, float | None]:
+            coords = airport_lookup.get_airport_coordinates(airport_ident)
+            if coords is None:
+                return {lat_col: None, lon_col: None}
+
+            lat, lon = coords
+            return {lat_col: lat, lon_col: lon}
+
+        return (
+            df.with_columns(
+                pl.col(ident_col)
+                .map_elements(
+                    get_coords,
+                    return_dtype=pl.Struct({
+                        lat_col: pl.Float64,
+                        lon_col: pl.Float64,
+                    }),
+                )
+                .alias("_airport_coords")
+            )
+            .unnest("_airport_coords")
+        )
+
+    df = add_airport_coords(df, "takeoff")
+    return add_airport_coords(df, "landing")

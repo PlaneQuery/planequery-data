@@ -2,7 +2,11 @@ from datetime import datetime
 
 import polars as pl
 
-from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, flights_df_to_flights
+from data_engineering.flights.flight_type import (
+    FLIGHT_POLARS_SCHEMA,
+    add_lat_lon_to_airport_ident_columns,
+    flights_df_to_flights,
+)
 
 
 def test_flights_df_to_flights_accepts_full_schema_columns():
@@ -13,20 +17,18 @@ def test_flights_df_to_flights_accepts_full_schema_columns():
             "registration": ["N1"],
             "takeoff_time": [datetime(2026, 1, 1, 1)],
             "takeoff_airport_ident": ["KJFK"],
-            "takeoff_airport_ident_distance_km": [1.5],
             "landing_time": [datetime(2026, 1, 1, 2)],
             "landing_airport_ident": ["KBOS"],
-            "landing_airport_ident_distance_km": [2.5],
+            "first_message_time": [datetime(2026, 1, 1, 0, 55)],
             "first_lat": [40.0],
             "first_lon": [-73.0],
             "first_baro_altitude_ft": [50],
             "first_geom_altitude_ft": [60],
+            "last_message_time": [datetime(2026, 1, 1, 2, 5)],
             "last_lat": [42.0],
             "last_lon": [-71.0],
             "last_baro_altitude_ft": [100],
             "last_geom_altitude_ft": [200],
-            "takeoff_airport_elevation_difference_ft": [10],
-            "landing_airport_elevation_difference_ft": [20],
             "pia": [False],
             "ladd": [True],
             "military": [False],
@@ -41,11 +43,52 @@ def test_flights_df_to_flights_accepts_full_schema_columns():
 
     [flight] = flights_df_to_flights(df)
 
+    assert flight.first_message_time == datetime(2026, 1, 1, 0, 55)
     assert flight.first_lat == 40.0
     assert flight.first_lon == -73.0
     assert flight.first_baro_altitude_ft == 50
     assert flight.first_geom_altitude_ft == 60
+    assert flight.last_message_time == datetime(2026, 1, 1, 2, 5)
     assert flight.last_lat == 42.0
     assert flight.last_lon == -71.0
     assert flight.last_baro_altitude_ft == 100
     assert flight.last_geom_altitude_ft == 200
+
+
+def test_add_lat_lon_to_airport_ident_columns(monkeypatch):
+    class FakeAirportLookup:
+        def get_airport_coordinates(self, airport_ident):
+            return {
+                "KJFK": (40.639801, -73.7789),
+                "KBOS": (42.3643, -71.005203),
+            }.get(airport_ident)
+
+    import airports.airportLookup as airport_lookup_module
+
+    monkeypatch.setattr(airport_lookup_module, "AirportLookup", FakeAirportLookup)
+
+    df = pl.DataFrame({
+        "takeoff_airport_ident": ["KJFK", "UNKNOWN"],
+        "landing_airport_ident": ["KBOS", "UNKNOWN"],
+    })
+
+    df = add_lat_lon_to_airport_ident_columns(df)
+
+    assert df.to_dicts() == [
+        {
+            "takeoff_airport_ident": "KJFK",
+            "landing_airport_ident": "KBOS",
+            "takeoff_airport_lat": 40.639801,
+            "takeoff_airport_lon": -73.7789,
+            "landing_airport_lat": 42.3643,
+            "landing_airport_lon": -71.005203,
+        },
+        {
+            "takeoff_airport_ident": "UNKNOWN",
+            "landing_airport_ident": "UNKNOWN",
+            "takeoff_airport_lat": None,
+            "takeoff_airport_lon": None,
+            "landing_airport_lat": None,
+            "landing_airport_lon": None,
+        },
+    ]
