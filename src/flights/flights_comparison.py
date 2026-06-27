@@ -84,6 +84,7 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
             )
             .filter(~pl.col("discard"))
         )
+        df1 = add_lat_lon_to_airport_ident_columns(df1)
         df = df0.join(
             df1,
             left_on="idx",
@@ -91,6 +92,7 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
             how="full",
             suffix="_df1"
         )
+        df = df.rename({"takeoff_airport_lat": "takeoff_airport_lat_df1", "takeoff_airport_lon": "takeoff_airport_lon_df1", "landing_airport_lat": "landing_airport_lat_df1", "landing_airport_lon": "landing_airport_lon_df1"})
         df = df.with_columns(
             pl.when(pl.col("row_map").is_not_null())
             .then(pl.lit("both"))
