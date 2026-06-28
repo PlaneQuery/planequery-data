@@ -15,6 +15,7 @@ BEST_STATS = {
     "precision",
     "recall",
     "f1",
+    "airport_ident_match_pct"
 }
 WORST_STATS = {"false_positive", "false_negative"}
 
