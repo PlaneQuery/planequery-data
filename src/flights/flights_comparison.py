@@ -4,6 +4,50 @@ from enum import Enum, unique
 from data_engineering.flights.flight_type import Flight, add_lat_lon_to_airport_ident_columns, flights_df_to_flights
 import polars as pl
 from itertools import zip_longest
+from utils import haversine
+
+
+COMPARISON_ENDPOINT_SCHEMA = {
+    "first_message_time": pl.Datetime("ms"),
+    "first_lat": pl.Float64,
+    "first_lon": pl.Float64,
+    "last_message_time": pl.Datetime("ms"),
+    "last_lat": pl.Float64,
+    "last_lon": pl.Float64,
+}
+
+
+def _with_comparison_endpoint_columns(df: pl.DataFrame) -> pl.DataFrame:
+    missing_columns = [
+        pl.lit(None, dtype=dtype).alias(column_name)
+        for column_name, dtype in COMPARISON_ENDPOINT_SCHEMA.items()
+        if column_name not in df.columns
+    ]
+    if missing_columns:
+        return df.with_columns(missing_columns)
+    return df
+
+
+def _haversine_expr(
+    lat_col: str,
+    lon_col: str,
+    airport_lat_col: str,
+    airport_lon_col: str,
+) -> pl.Expr:
+    cols = [lat_col, lon_col, airport_lat_col, airport_lon_col]
+    return pl.struct(cols).map_elements(
+        lambda row: haversine(
+            row[lat_col],
+            row[lon_col],
+            row[airport_lat_col],
+            row[airport_lon_col],
+        )
+        if all(row[col] is not None for col in cols)
+        else None,
+        return_dtype=pl.Float64,
+    )
+
+
 class Match(Enum):
     FALSE = 0
     TRUE = 1
@@ -55,6 +99,8 @@ def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_d
 
 # we return the maps of what they map to and then.... we create both, df0, df1. in the dataframe I'll keep the original order those rows will just haven null for i.e the df1 columns
 def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True): # TODO: Add the distnace comaprision between the last_lat, last_lon and last_message_time of df_1 and the true SFDPS data. 
+    df_0 = _with_comparison_endpoint_columns(df_0)
+    df_1 = _with_comparison_endpoint_columns(df_1)
     icaos = sorted(set(df_0.get_column("icao").unique().to_list()) | set(df_1.get_column("icao").unique().to_list()))
     dfs = []
     for icao in icaos:
@@ -133,6 +179,45 @@ def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end
     .then(True)
     .otherwise(False)
     .alias("same_airport_ident")
+    )
+
+        # last/first message diffrence and takeoff/landing airport ident distance from last/first lat/lon from df1 (gold) 
+    expr_0 = pl.col("first_message_time") - pl.col("takeoff_time_df1")
+    expr_1 = pl.col("last_message_time") - pl.col("landing_time_df1")
+    df = df.with_columns(
+        pl.when(pl.col("match_status") == "both")
+        .then(expr_0)
+        .otherwise(None)
+        .alias("first_message_time_diff"),
+        pl.when(pl.col("match_status") == "both")
+        .then(expr_1)
+        .otherwise(None)
+        .alias("last_message_time_diff"),
+    )
+
+    df = df.with_columns(
+        pl.when(pl.col("match_status") == "both")
+        .then(
+            _haversine_expr(
+                "first_lat",
+                "first_lon",
+                "takeoff_airport_lat_df1",
+                "takeoff_airport_lon_df1",
+            )
+        )
+        .otherwise(None)
+        .alias("first_message_distance_to_takeoff_airport_km"),
+        pl.when(pl.col("match_status") == "both")
+        .then(
+            _haversine_expr(
+                "last_lat",
+                "last_lon",
+                "landing_airport_lat_df1",
+                "landing_airport_lon_df1",
+            )
+        )
+        .otherwise(None)
+        .alias("last_message_distance_to_landing_airport_km"),
     )
     return df
 
