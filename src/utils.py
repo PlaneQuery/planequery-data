@@ -2,6 +2,7 @@ import math
 import subprocess
 
 def haversine(lat1, lon1, lat2, lon2):
+    '''Returned distance in km'''
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
