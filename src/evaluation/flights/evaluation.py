@@ -4,13 +4,11 @@ from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from data_engineering.flights.flight_type import (
-    get_flights,
-    with_flight_schema_columns,
-)
+
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
+from flights_ai_model_airport.inference import get_airport_model_flights
 from utils import current_commit_hash
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
@@ -86,6 +84,9 @@ def fr24_flights_parquet_path(target_date: date) -> Path:
     )
 
 def read_fr24_flights(target_date: date) -> pl.DataFrame:
+    from data_engineering.flights.flight_type import (
+    with_flight_schema_columns,
+    )
     return with_flight_schema_columns(
         pl.read_parquet(fr24_flights_parquet_path(target_date))
     )
@@ -94,7 +95,7 @@ def source_flights_reader(src: str):
     if src == "adsbx":
         return get_adsbx_flights_for_day
     if src == "model":
-        return get_flights
+        return get_airport_model_flights
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
