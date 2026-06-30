@@ -124,6 +124,16 @@ def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
     )
     return df
 
+def add_flight_id_col(df: pl.DataFrame) -> pl.DataFrame:
+    df = df.with_columns(
+    (
+        pl.col("icao").cast(pl.Utf8)
+        + "_"
+        + pl.col("takeoff_time").dt.strftime("%Y-%m-%d_%H-%M")
+    ).alias("flight_id")
+    )
+    return df
+
 
 def adsblol_flights_output_path(target_date: date):
     return (
