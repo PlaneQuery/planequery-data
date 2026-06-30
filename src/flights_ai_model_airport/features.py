@@ -21,6 +21,9 @@ def create_flight_airport_features(flight: Flight):
         rows.append((airport_features, label, airport.ident))
     return rows
 
+def create_features_from_adsb_for_flight():
+    pass
+
 def build_training_data(flights: list[Flight]):
     X_rows = []
     Y_rows = []
@@ -40,3 +43,15 @@ def build_training_data(flights: list[Flight]):
     airport_idents = np.asarray(airport_ident_rows)
     
     return X, Y, groups, airport_idents
+
+def build_inference_data(flights: list[Flight]):
+    rows = []
+    flight_ids = []
+    for flight in flights:
+        airport_features = create_flight_airport_features(flight)
+        rows.extend(airport_features)
+        flight_ids.extend([flight.flight_id] * len(airport_features))
+    X = np.asarray([row[0] for row in rows])
+    flight_ids = np.asarray(flight_ids)
+    airport_idents = np.asarray([row[2] for row in rows]) # this is for now when I'm doing testing on known data.
+    return X, flight_ids, airport_idents
