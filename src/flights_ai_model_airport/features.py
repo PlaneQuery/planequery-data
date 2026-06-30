@@ -1,42 +1,83 @@
+from datetime import timedelta
 import math
 import polars as pl
 import numpy as np
+from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
 from airports.airportLookup import AirportLookup
-from data_engineering.flights.flight_type import Flight
+from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.flights.flight_type import Flight, flights_df_to_flights
 from utils import haversine
 
-AIRPORT_RADIUS_KM = 50.0
+AIRPORT_RADIUS_KM = 150.0
 airport_lookup = AirportLookup()
 
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
-def create_flight_airport_features(flight: Flight):
-    assert flight.first_lat is not None and flight.first_lon is not None, "Flight must have first_lat and first_lon"
+def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, takeoff_airport_ident = None):
     rows = []
-    potential_airports = airport_lookup.getAirportsWithinRadius(flight.first_lat, flight.first_lon, AIRPORT_RADIUS_KM)
+    potential_airports = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
+    if len(potential_airports) == 0:
+        assert takeoff_airport_ident is not None
+        potential_airports = [airport_lookup.get_Airport_from_airport_ident(takeoff_airport_ident)]
     for airport in potential_airports:
-        distance_km = haversine(flight.first_lat, flight.first_lon, airport.lat, airport.lon)
-        # elevation_diff = flight.first_baro_altitude_ft - airport.elevation_ft
-        airport_features = [distance_km]
-        label = 1 if airport.ident == flight.takeoff_airport_ident else 0
+        distance_km = haversine(first_lat, first_lon, airport.lat, airport.lon)
+        elevation_above_airport = max(first_baro_altitude_ft - airport.elevation_ft, 0)
+        # elevation_diff = first_baro_altitude_ft - airport.elevation_ft
+        airport_features = [distance_km, elevation_above_airport]
+        label = 1 if airport.ident == takeoff_airport_ident else 0
         rows.append((airport_features, label, airport.ident))
+    assert len(rows) > 0, f"No airports found within radius for first_lat: {first_lat}, first_lon: {first_lon}, first_baro_altitude_ft: {first_baro_altitude_ft}, takeoff_airport_ident: {takeoff_airport_ident}"
     return rows
 
-def create_features_from_adsb_for_flight():
-    pass
 
-def build_training_data(flights: list[Flight]):
+def extract_from_messages(messages: list[AdsbMessage]):
+    # need to get first non null track, baro_altitude_ft, veritcal_rate
+    i = 0
+    first_time = messages[0].time
+    first_lat = messages[0].lat
+    first_lon = messages[0].lon
+    first_baro_altitude_ft = None
+    while i < len(messages):
+        m = messages[i]
+        if m.baro_altitude_ft is not None:
+            first_baro_altitude_ft = m.baro_altitude_ft
+            break
+        if m.time - first_time > timedelta(minutes=5):
+            pass
+
+
+        i += 1
+    assert first_baro_altitude_ft is not None, f"No baro_altitude_ft found in {len(messages)} messages"
+    return first_time, first_lat, first_lon, first_baro_altitude_ft
+
+def create_features_for_flight(flight: Flight):
+    pass
+def build_training_data(df_flights: pl.DataFrame):
+    target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
+    icaos = df_flights.get_column("icao").unique().to_list()
+    df_adsb_full = read_adsb(target_date, icaos=icaos)
+    flights = flights_df_to_flights(df_flights)
     X_rows = []
     Y_rows = []
-    group_rows = []
     airport_ident_rows = []
+    group_rows = []
+
     for flight in flights:
-        flight_features = create_flight_airport_features(flight)
-        for row in flight_features:
+        assert flight.first_message_time is not None and flight.last_message_time is not None, f"Flight {flight.flight_id} has no first_message_time"
+        assert flight.last_message_time is not None, f"Flight {flight.flight_id} has no last_message_time"
+        df_adsb = df_adsb_full.filter((pl.col("icao") == flight.icao) & (pl.col("time") >= flight.first_message_time) & (pl.col("time") <= flight.last_message_time))
+        if len(df_adsb) < 2:
+            continue
+        adsb_messages = adsb_messages_from_parquet_df(df_adsb)
+        if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
+            continue
+        first_time, first_lat, first_lon, first_baro_altitude_ft = extract_from_messages(adsb_messages)
+        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, flight.takeoff_airport_ident)
+        for row in rows:
             X_rows.append(row[0])
             Y_rows.append(row[1])
             airport_ident_rows.append(row[2])
             group_rows.append(flight.flight_id)
-
+    assert len(X_rows) == len(Y_rows) == len(airport_ident_rows) == len(group_rows) > 1, "Lengths of X, Y, airport_idents, and groups do not match"
     X = np.asarray(X_rows)
     Y = np.asarray(Y_rows)
     groups = np.asarray(group_rows)
@@ -55,3 +96,18 @@ def build_inference_data(flights: list[Flight]):
     flight_ids = np.asarray(flight_ids)
     airport_idents = np.asarray([row[2] for row in rows]) # this is for now when I'm doing testing on known data.
     return X, flight_ids, airport_idents
+
+'''
+ground_speed_first
+vertical_rate_first
+bearing_from_airport_to_first_point: diffrence between track and bearing. Track being direction plane is pointed. Bearing being the degree from current point it needs to be to land. 
+canidate_ahead as biniary version of previous. 
+required_descent_ft_per_min
+
+Maybe:
+distance_projected_1min_to_airport_km
+distance_projected_2min_to_airport_km
+distance_projected_5min_to_airport_km
+distance_projected_10min_to_airport_km
+
+'''
