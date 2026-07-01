@@ -5,6 +5,7 @@ import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 
+from data_engineering.flights.flight_type import get_flights
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
@@ -94,7 +95,9 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
 def source_flights_reader(src: str):
     if src == "adsbx":
         return get_adsbx_flights_for_day
-    if src == "model":
+    if src == "trad":
+        return get_flights
+    if src == "trad-airport-model":
         return get_airport_model_flights
     if src == "sfdps":
         return get_sfdps_flights_day
