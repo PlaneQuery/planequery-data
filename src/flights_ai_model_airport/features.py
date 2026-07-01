@@ -6,13 +6,15 @@ from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
 from airports.airportLookup import AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight, flights_df_to_flights
+from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights
+
 from utils import haversine
 
 AIRPORT_RADIUS_KM = 150.0
 airport_lookup = AirportLookup()
 
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
-def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, takeoff_airport_ident = None):
+def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, takeoff_airport_ident):
     rows = []
     potential_airports = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
     if len(potential_airports) == 0:
@@ -85,17 +87,39 @@ def build_training_data(df_flights: pl.DataFrame):
     
     return X, Y, groups, airport_idents
 
-def build_inference_data(flights: list[Flight]):
-    rows = []
-    flight_ids = []
+def build_inference_data(df_flights: pl.DataFrame):
+    df_flights = add_flight_id_col(df_flights)
+    print(df_flights.get_column("takeoff_airport_ident").is_null().sum())
+
+    target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
+    icaos = df_flights.get_column("icao").unique().to_list()
+    df_adsb_full = read_adsb(target_date, icaos=icaos)
+    flights = flights_df_to_flights(df_flights)
+    X_rows = []
+    flight_id_rows = []
+    airport_ident_rows = []
     for flight in flights:
-        airport_features = create_flight_airport_features(flight)
-        rows.extend(airport_features)
-        flight_ids.extend([flight.flight_id] * len(airport_features))
-    X = np.asarray([row[0] for row in rows])
-    flight_ids = np.asarray(flight_ids)
-    airport_idents = np.asarray([row[2] for row in rows]) # this is for now when I'm doing testing on known data.
-    return X, flight_ids, airport_idents
+        if flight.first_message_time is None or flight.last_message_time is None:
+            continue
+        df_adsb = df_adsb_full.filter(
+            (pl.col("icao") == flight.icao)
+            & (pl.col("time") >= flight.first_message_time)
+            & (pl.col("time") <= flight.last_message_time)
+        )
+        if len(df_adsb) < 2:
+            continue
+        if df_adsb.get_column("baro_altitude_ft").is_not_null().sum() < 2:
+            continue
+        adsb_messages = adsb_messages_from_parquet_df(df_adsb)
+        if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
+            continue
+        _first_time, first_lat, first_lon, first_baro_altitude_ft = extract_from_messages(adsb_messages) # TODO: Use some sort of features type.
+        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, flight.takeoff_airport_ident)
+        for row in rows:
+            X_rows.append(row[0])
+            airport_ident_rows.append(row[2])
+            flight_id_rows.append(flight.flight_id)
+    return X_rows, flight_id_rows, airport_ident_rows
 
 '''
 ground_speed_first
