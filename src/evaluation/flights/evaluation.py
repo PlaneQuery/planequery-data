@@ -92,13 +92,14 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
         pl.read_parquet(fr24_flights_parquet_path(target_date))
     )
 
-def source_flights_reader(src: str):
+def source_flights_reader(src: str, airport_model_path: Path | None = None):
     if src == "adsbx":
         return get_adsbx_flights_for_day
     if src == "trad":
         return get_flights
     if src == "trad-airport-model":
-        return get_airport_model_flights
+        assert airport_model_path is not None, "airport_model_path must be provided for 'trad-airport-model' source"
+        return lambda date: get_airport_model_flights(date, model_path=airport_model_path)
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
@@ -140,6 +141,7 @@ def main(
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
+    airport_model_path: Path | None = None,
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
@@ -155,7 +157,7 @@ def main(
     outputs = []
     adsb_by_date: dict[date, pl.DataFrame] = {}
     for src in test_src:
-        get_source_flights = source_flights_reader(src)
+        get_source_flights = source_flights_reader(src, airport_model_path=airport_model_path)
         for gold in gold_src:
             get_gold_flights = source_flights_reader(gold)
             for test_date in test_dates:
@@ -202,7 +204,7 @@ def main(
         df_stats = add_average_rows(df_stats)
     df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
-    return outputs
+    return outputs, df_stats # TODO: Probably change this to make df_stats from outputs in another function.
 
 TEST_DATES_2 = [
     date(2026,3,1),
