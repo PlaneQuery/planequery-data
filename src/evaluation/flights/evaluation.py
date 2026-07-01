@@ -141,7 +141,7 @@ def main(
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
-    airport_model_path: Path | None = None,
+    airport_model_path: Path = Path("/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-07-01_14-44_cae3447_5days/model.pkl"),
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
