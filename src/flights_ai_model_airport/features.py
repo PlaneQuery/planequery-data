@@ -59,8 +59,6 @@ def build_training_data(df_flights: pl.DataFrame):
 
 def process_flights(df_flights: pl.DataFrame):
     df_flights = add_flight_id_col(df_flights)
-    print(df_flights.get_column("takeoff_airport_ident").is_null().sum())
-
     target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
     icaos = df_flights.get_column("icao").unique().to_list()
     df_adsb_full = read_adsb(target_date, icaos=icaos)

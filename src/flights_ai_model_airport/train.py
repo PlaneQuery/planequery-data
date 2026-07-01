@@ -45,22 +45,10 @@ def train(training_dates, validation_date = date(2026,3,15)):
     outputs, df_stats = main(test_src="trad-airport-model", gold_src="sfdps", test_dates=validation_date, pia_or_american_ladd_only=True, airport_model_path=path)
     df_stats.write_csv(path.parent / "validation_stats.csv")
 
-
-def evalaution(eval_date = date(2026,6,1)):
-    df_test = run_inference(eval_date)
-    df_sfpds_flights = get_sfdps_flights_day(eval_date)
-    df_adsb = read_adsb(eval_date, icaos=df_sfpds_flights.get_column("icao").to_list())
-    df_gold = get_matching_icaos_in_flights(df_sfpds_flights, df_adsb)
-    df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
-    df = df_flights_comparision(df_test, df_gold, datetime(eval_date.year, eval_date.month, eval_date.day), datetime(eval_date.year, eval_date.month, eval_date.day) + timedelta(days=1), compare_airports=False)
-    stats = df_flights_comparison_stats(df)
-    print(stats)
-
-
 if __name__ == "__main__":
-    # training_dates = [
-    #     date(2026, 6, 1) + timedelta(days=i)
-    #     for i in range((date(2026, 6, 10) - date(2026, 6, 1)).days + 1)
-    # ]
-    training_dates = [date(2026,3,1), date(2026,6,1), date(2026,6,2), date(2026,6,3), date(2026,6,4)]
+    training_dates = [
+        date(2026, 6, 1) + timedelta(days=i)
+        for i in range((date(2026, 6, 8) - date(2026, 6, 1)).days + 1)
+    ]
+    training_dates = training_dates + [date(2026,3,15)]
     train(training_dates)
