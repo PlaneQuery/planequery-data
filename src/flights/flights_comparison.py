@@ -233,8 +233,12 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
     recall = true_positive / recall_denominator if recall_denominator else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
+    takeoff_airport_ident_match = df.filter(pl.col("same_takeoff_airport_ident")).height
+    landing_airport_ident_match = df.filter(pl.col("same_landing_airport_ident")).height
     airport_ident_match = df.filter(pl.col("same_airport_ident")).height
-    airport_ident_match_pct = airport_ident_match / true_positive
+    takeoff_airport_ident_match_pct = takeoff_airport_ident_match / true_positive if true_positive else 0.0
+    landing_airport_ident_match_pct = landing_airport_ident_match / true_positive if true_positive else 0.0
+    airport_ident_match_pct = airport_ident_match / true_positive if true_positive else 0.0
     return {
         "true_positive": true_positive,
         "false_positive": false_positive,
@@ -242,5 +246,7 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "takeoff_airport_ident_match_pct": takeoff_airport_ident_match_pct,
+        "landing_airport_ident_match_pct": landing_airport_ident_match_pct,
         "airport_ident_match_pct": airport_ident_match_pct,
     }
