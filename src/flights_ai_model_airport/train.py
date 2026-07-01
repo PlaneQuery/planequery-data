@@ -6,10 +6,11 @@ from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from flights_ai_model_airport.features import build_training_data
+from flights_ai_model_airport.inference import run_inference
 from flights_ai_model_airport.model import model_training
-from flights_ai_model_airport.flights_ai_model_utils import get_model_save_path
-
-def train(training_dates, inference_date = date(2026,3,15)):
+from flights_ai_model_airport.flights_ai_model_utils import get_model_path
+from evaluation.flights.evaluation import main
+def train(training_dates, validation_date = date(2026,3,15)):
     # test_dates = [date(2026,3,1), date(2026,3,15)]
     df = pl.DataFrame()
     for dt in training_dates:
@@ -34,11 +35,16 @@ def train(training_dates, inference_date = date(2026,3,15)):
     df = df.filter(pl.col("first_message_time").is_not_null() & pl.col("last_message_time").is_not_null())
     X, y, groups, airport_idents = build_training_data(df)
     model = model_training(X, y, groups, airport_idents)
+
+    # do val
     import joblib
-    path = get_model_save_path(num_days=len(training_dates))
+    path = get_model_path(num_days=len(training_dates)) / "model.pkl"
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, str(path))
     print(f"  -> saved to {path}")
+    outputs, df_stats = main(test_src="trad-airport-model", gold_src="sfdps", test_dates=validation_date, pia_or_american_ladd_only=True, airport_model_path=path)
+    df_stats.write_csv(path.parent / "validation_stats.csv")
+
 
 def evalaution(eval_date = date(2026,6,1)):
     df_test = run_inference(eval_date)
