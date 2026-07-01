@@ -12,4 +12,4 @@ def get_model_save_path(num_days: int, dt: datetime | None = None) -> Path:
         ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
     ).decode().strip()
     folder = f"{date_str}_{commit}_{num_days}days"
-    return OUTPUT_DIR / "models" / "flights_ai_model_airport" / "runs" / folder / "model.pkl"
+    return OUTPUT_DIR / "data" / "models" / "flights_ai_model_airport" / "runs" / folder / "model.pkl"
