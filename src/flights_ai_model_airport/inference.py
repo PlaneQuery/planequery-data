@@ -44,13 +44,13 @@ def run_inference(run_date: date, model_path: Path):
     df_flights = inference(df_flights, model)
     return df_flights
 
-def get_airport_model_flights(target_date: date, model_path: Path):
-    df_flights = get_flights(target_date)
-    model = load_model(model_path)
-    df_flights = inference(df_flights, model)
-    return df_flights
+def get_airport_model_flights(target_date: date, model_path: Path = Path('/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-06-30_22-23_46212ea_1days/model.pkl')):
+    df = run_inference(target_date, model_path)
+    return df
+
 # probably a run_inference with a date
 
 if __name__ == "__main__":
-    df_flights = run_inference(date(2026,3,15), Path('/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-06-30_22-23_46212ea_1days/model.pkl'))
-    print(df_flights)
+    pass
+    # df_flights = run_inference(date(2026,3,15), )
+    # print(df_flights)
