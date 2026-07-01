@@ -44,7 +44,8 @@ def run_inference(run_date: date, model_path: Path):
     df_flights = inference(df_flights, model)
     return df_flights
 
-def get_airport_model_flights(target_date: date, model_path: Path = Path('/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-06-30_22-23_46212ea_1days/model.pkl')):
+MODEL_PATH = '/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-07-01_13-35_c02a24e_5days/model.pkl'
+def get_airport_model_flights(target_date: date, model_path: Path = Path(MODEL_PATH)):
     df = run_inference(target_date, model_path)
     return df
 

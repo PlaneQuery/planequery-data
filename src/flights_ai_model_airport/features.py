@@ -54,40 +54,10 @@ def extract_from_messages(messages: list[AdsbMessage]):
 def create_features_for_flight(flight: Flight):
     pass
 def build_training_data(df_flights: pl.DataFrame):
-    target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
-    icaos = df_flights.get_column("icao").unique().to_list()
-    df_adsb_full = read_adsb(target_date, icaos=icaos)
-    flights = flights_df_to_flights(df_flights)
-    X_rows = []
-    Y_rows = []
-    airport_ident_rows = []
-    group_rows = []
+    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
+    return X, Y, flight_id_rows, airport_ident_rows
 
-    for flight in flights:
-        assert flight.first_message_time is not None and flight.last_message_time is not None, f"Flight {flight.flight_id} has no first_message_time"
-        assert flight.last_message_time is not None, f"Flight {flight.flight_id} has no last_message_time"
-        df_adsb = df_adsb_full.filter((pl.col("icao") == flight.icao) & (pl.col("time") >= flight.first_message_time) & (pl.col("time") <= flight.last_message_time))
-        if len(df_adsb) < 2:
-            continue
-        adsb_messages = adsb_messages_from_parquet_df(df_adsb)
-        if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
-            continue
-        first_time, first_lat, first_lon, first_baro_altitude_ft = extract_from_messages(adsb_messages)
-        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, flight.takeoff_airport_ident)
-        for row in rows:
-            X_rows.append(row[0])
-            Y_rows.append(row[1])
-            airport_ident_rows.append(row[2])
-            group_rows.append(flight.flight_id)
-    assert len(X_rows) == len(Y_rows) == len(airport_ident_rows) == len(group_rows) > 1, "Lengths of X, Y, airport_idents, and groups do not match"
-    X = np.asarray(X_rows)
-    Y = np.asarray(Y_rows)
-    groups = np.asarray(group_rows)
-    airport_idents = np.asarray(airport_ident_rows)
-    
-    return X, Y, groups, airport_idents
-
-def build_inference_data(df_flights: pl.DataFrame):
+def process_flights(df_flights: pl.DataFrame):
     df_flights = add_flight_id_col(df_flights)
     print(df_flights.get_column("takeoff_airport_ident").is_null().sum())
 
@@ -96,6 +66,7 @@ def build_inference_data(df_flights: pl.DataFrame):
     df_adsb_full = read_adsb(target_date, icaos=icaos)
     flights = flights_df_to_flights(df_flights)
     X_rows = []
+    Y_rows = []
     flight_id_rows = []
     airport_ident_rows = []
     for flight in flights:
@@ -117,9 +88,19 @@ def build_inference_data(df_flights: pl.DataFrame):
         rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, flight.takeoff_airport_ident)
         for row in rows:
             X_rows.append(row[0])
+            Y_rows.append(row[1])
             airport_ident_rows.append(row[2])
             flight_id_rows.append(flight.flight_id)
-    return X_rows, flight_id_rows, airport_ident_rows
+
+    X = np.asarray(X_rows)
+    Y = np.asarray(Y_rows)
+    flight_id_rows = np.asarray(flight_id_rows)
+    airport_ident_rows = np.asarray(airport_ident_rows)
+    return X, Y, flight_id_rows, airport_ident_rows
+
+def build_inference_data(df_flights: pl.DataFrame):
+    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
+    return X, flight_id_rows, airport_ident_rows
 
 '''
 ground_speed_first
