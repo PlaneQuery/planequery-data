@@ -10,32 +10,57 @@ from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
 from flights_ai_model_airport.features import build_inference_data, create_flight_airport_features, extract_from_messages
 
+FEATURE_NAMES = [
+    "distance_km",
+    "elevation_above_airport_ft",
+    "bearing_airport_to_first_deg",
+    "bearing_first_to_airport_deg",
+    "takeoff_track_error_deg",
+    "airport_behind_error_deg",
+    "along_track_from_airport_km",
+    "cross_track_from_airport_km",
+    "candidate_is_behind",
+]
+
 def load_model(model_path: Path) -> LGBMClassifier:
     print(f"Loading airport model from {model_path}")
     return joblib.load(str(model_path))
 
 
-def inference(df_flights: pl.DataFrame, model: LGBMClassifier):
+def score_airport_candidates(df_flights: pl.DataFrame, model: LGBMClassifier):
     df_flights = add_flight_id_col(df_flights)
     X, flight_ids, airport_idents = build_inference_data(df_flights)
-    scores = model.predict_proba(X)[:,1]
-    results = pl.DataFrame({
-        "flight_id": flight_ids,
-        "airport_ident": airport_idents,
-        "score": scores
-    })
 
-    predictions = (
-    results
-    .sort(["flight_id", "score"], descending=[False, True])
-    .group_by("flight_id", maintain_order=True)
-    .head(1)
+    scores = model.predict_proba(X)[:, 1]
+
+    return (
+        pl.concat(
+            [
+                pl.DataFrame({
+                    "flight_id": flight_ids,
+                    "airport_ident": airport_idents,
+                    "score": scores,
+                }),
+                pl.DataFrame(X, schema=FEATURE_NAMES),
+            ],
+            how="horizontal",
+        )
+        .with_columns(
+            pl.col("score")
+            .rank("ordinal", descending=True)
+            .over("flight_id")
+            .alias("rank")
+        )
+        .sort(["flight_id", "rank"])
     )
+
+def inference(df_flights: pl.DataFrame, model: LGBMClassifier):
+    results = score_airport_candidates(df_flights, model)
+    df_flights = add_flight_id_col(df_flights)
+    predictions = (results.filter(pl.col("rank") == 1).select("flight_id", "airport_ident", "score"))
     df_flights = df_flights.join(predictions, on="flight_id", how="left")
     df_flights = df_flights.with_columns(pl.col("airport_ident").alias("takeoff_airport_ident"))
     return df_flights
-
-
 
 def run_inference(run_date: date, model_path: Path):
     df_flights = get_flights(run_date)
