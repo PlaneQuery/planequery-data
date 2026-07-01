@@ -1,19 +1,23 @@
-from datetime import date
+from datetime import date, timedelta
+from pathlib import Path
+
 import polars as pl
 import joblib
 from lightgbm import LGBMClassifier
 
-from data_engineering.flights.flight_type import Flight, add_flight_id_col, flights_df_to_flights, get_flights
-from flights_ai_model_airport.features import build_inference_data
-from data_engineering.utils import OUTPUT_DIR
-path = OUTPUT_DIR / "tmp" / "flights_ai_model_airport.txt"
-from data_engineering.utils import OUTPUT_DIR
-MODEL_PATH =  OUTPUT_DIR / "tmp" / "flights_ai_model_airport.pkl"
+from adsb.adsb_messages_types import adsb_messages_from_parquet_df
+from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
+from flights_ai_model_airport.features import build_inference_data, create_flight_airport_features, extract_from_messages
 
-def inference(df_flights: pl.DataFrame, model:  LGBMClassifier = joblib.load(str(MODEL_PATH))):
+def load_model(model_path: Path) -> LGBMClassifier:
+    print(f"Loading airport model from {model_path}")
+    return joblib.load(str(model_path))
+
+
+def inference(df_flights: pl.DataFrame, model: LGBMClassifier):
     df_flights = add_flight_id_col(df_flights)
-    flights = flights_df_to_flights(df_flights)
-    X, flight_ids, airport_idents = build_inference_data(flights)
+    X, flight_ids, airport_idents = build_inference_data(df_flights)
     scores = model.predict_proba(X)[:,1]
     results = pl.DataFrame({
         "flight_id": flight_ids,
@@ -33,17 +37,20 @@ def inference(df_flights: pl.DataFrame, model:  LGBMClassifier = joblib.load(str
 
 
 
-def run_inference(run_date: date = date(2026,6,1)):
+def run_inference(run_date: date, model_path: Path):
     df_flights = get_flights(run_date)
-    model = joblib.load(str(MODEL_PATH))
+    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    model = load_model(model_path)
     df_flights = inference(df_flights, model)
     return df_flights
 
-def get_airport_model_flights(target_date: date):
+def get_airport_model_flights(target_date: date, model_path: Path):
     df_flights = get_flights(target_date)
-    df_flights = inference(df_flights)
+    model = load_model(model_path)
+    df_flights = inference(df_flights, model)
     return df_flights
 # probably a run_inference with a date
 
 if __name__ == "__main__":
-    run_inference()
+    df_flights = run_inference(date(2026,3,15), Path('/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-06-30_22-23_46212ea_1days/model.pkl'))
+    print(df_flights)
