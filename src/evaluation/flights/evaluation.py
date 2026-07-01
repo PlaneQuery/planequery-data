@@ -9,6 +9,7 @@ from data_engineering.flights.flight_type import get_flights
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
+from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
 from flights_ai_model_airport.inference import get_airport_model_flights
 from utils import current_commit_hash
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
@@ -141,7 +142,7 @@ def main(
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
-    airport_model_path: Path = Path("/Volumes/T2-SSD/planequery/data/models/flights_ai_model_airport/runs/2026-07-01_14-44_cae3447_5days/model.pkl"),
+    airport_model_path = get_latest_airport_model_path(),
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
