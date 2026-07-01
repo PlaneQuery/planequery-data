@@ -3,7 +3,7 @@ import math
 import polars as pl
 import numpy as np
 from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
-from airports.airportLookup import AirportLookup
+from airports.airportLookup import Airport, AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight, flights_df_to_flights
 from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights
@@ -16,10 +16,13 @@ airport_lookup = AirportLookup()
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
 def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, takeoff_airport_ident):
     rows = []
-    potential_airports = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
+    potential_airports: list[Airport] = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
     if len(potential_airports) == 0:
         assert takeoff_airport_ident is not None
-        potential_airports = [airport_lookup.get_Airport_from_airport_ident(takeoff_airport_ident)]
+        airport = airport_lookup.get_Airport_from_airport_ident(takeoff_airport_ident)
+        assert airport is not None
+        potential_airports = [airport]
+        assert len(potential_airports) > 0, f"Could not find airport for takeoff_airport_ident: {takeoff_airport_ident}"
     for airport in potential_airports:
         distance_km = haversine(first_lat, first_lon, airport.lat, airport.lon)
         elevation_above_airport = max(first_baro_altitude_ft - airport.elevation_ft, 0)
