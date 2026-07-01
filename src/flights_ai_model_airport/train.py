@@ -33,7 +33,6 @@ def train(training_dates, inference_date = date(2026,3,15)):
     print(len(df), "flights for training")
     df = df.filter(pl.col("first_message_time").is_not_null() & pl.col("last_message_time").is_not_null())
     X, y, groups, airport_idents = build_training_data(df)
-    print(X)
     model = model_training(X, y, groups, airport_idents)
     import joblib
     path = get_model_save_path(num_days=len(training_dates))
@@ -57,5 +56,5 @@ if __name__ == "__main__":
     #     date(2026, 6, 1) + timedelta(days=i)
     #     for i in range((date(2026, 6, 10) - date(2026, 6, 1)).days + 1)
     # ]
-    training_dates = [date(2026,3,1)]
+    training_dates = [date(2026,3,1), date(2026,6,1), date(2026,6,2), date(2026,6,3), date(2026,6,4)]
     train(training_dates)
