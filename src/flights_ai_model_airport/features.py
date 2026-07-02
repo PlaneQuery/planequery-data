@@ -1,17 +1,33 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 import math
 import polars as pl
 import numpy as np
 from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
 from airports.airportLookup import Airport, AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
-from data_engineering.flights.flight_type import Flight, flights_df_to_flights
+from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, Flight, flights_df_to_flights, pia_or_american_ladd_icao_filter
 from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights
-
+from datetime import date
+from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+from flights.flights_comparison import df_flights_comparision
+from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import angle_diff_deg, haversine, initial_bearing_deg, normalize_deg
 
 AIRPORT_RADIUS_KM = 150.0
 airport_lookup = AirportLookup()
+
+
+def get_training_flights(dt: date):
+    df_sfdps_flights = get_sfdps_flights_day(dt)
+    df_sfdps_flights = df_sfdps_flights.filter(pia_or_american_ladd_icao_filter())
+    df_adsb = read_adsb(dt, icaos=df_sfdps_flights.get_column("icao").to_list())
+    df_sfdps_flights = get_matching_icaos_in_flights(df_sfdps_flights, df_adsb)
+    df_flights = get_flights(dt)
+    df = df_flights_comparision(df_flights, df_sfdps_flights, datetime(dt.year, dt.month, dt.day), datetime(dt.year, dt.month, dt.day) + timedelta(days=1), compare_airports=False)
+    df = df.filter(pl.col("match_status") == "both")
+    df = df.with_columns(pl.col("takeoff_airport_ident_df1").alias("takeoff_airport_ident"))
+    df = df.select(FLIGHT_POLARS_SCHEMA.keys())
+    return df
 
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
 def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, first_track, takeoff_airport_ident):
@@ -79,9 +95,29 @@ def extract_from_messages(messages: list[AdsbMessage]):
 
 def create_features_for_flight(flight: Flight):
     pass
-def build_training_data(df_flights: pl.DataFrame):
-    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
-    return X, Y, flight_id_rows, airport_ident_rows
+def build_training_data(training_dates: list[date]):
+    X_parts = []
+    Y_parts = []
+    flight_id_parts = []
+    airport_ident_parts = []
+    for dt in training_dates:
+        df_flights = get_training_flights(dt)
+        df_flights = add_flight_id_col(df_flights)
+        df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+        X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
+        if len(X) == 0:
+            continue
+        X_parts.append(X)
+        Y_parts.append(Y)
+        flight_id_parts.append(flight_id_rows)
+        airport_ident_parts.append(airport_ident_rows)
+
+    return (
+        np.concatenate(X_parts),
+        np.concatenate(Y_parts),
+        np.concatenate(flight_id_parts),
+        np.concatenate(airport_ident_parts),
+    )
 
 def process_flights(df_flights: pl.DataFrame):
     df_flights = add_flight_id_col(df_flights)
