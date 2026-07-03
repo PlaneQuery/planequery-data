@@ -3,7 +3,7 @@ import math
 import polars as pl
 import numpy as np
 from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
-from airports.airportLookup import Airport, AirportLookup
+from airports.airportLookup import Airport, Airport_Size_Ranking, AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, Flight, flights_df_to_flights, pia_or_american_ladd_icao_filter
 from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights
@@ -14,7 +14,27 @@ from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import angle_diff_deg, haversine, initial_bearing_deg, normalize_deg
 
 AIRPORT_RADIUS_KM = 150.0
+AIRCRAFT_CATEGORY_RANKING = {
+    "A1": 1,
+    "A2": 2,
+    "A3": 3,
+    "A4": 4,
+    "A5": 5,
+    "A6": 6,
+    "A7": 7,
+    "B1": 8,
+    "B2": 9,
+    "B3": 10,
+    "B4": 11,
+    "B5": 12,
+    "B6": 13,
+    "B7": 14,
+}
 airport_lookup = AirportLookup()
+
+
+def aircraft_category_to_int(category: str) -> int:
+    return AIRCRAFT_CATEGORY_RANKING.get(category, 0)
 
 
 def get_training_flights(dt: date):
@@ -30,7 +50,8 @@ def get_training_flights(dt: date):
     return df
 
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
-def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, first_track, takeoff_airport_ident):
+def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, first_track, flight: Flight):
+    takeoff_airport_ident = flight.takeoff_airport_ident
     rows = []
     potential_airports: list[Airport] = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
     if len(potential_airports) == 0:
@@ -44,7 +65,9 @@ def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft:
         elevation_above_airport = max(first_baro_altitude_ft - airport.elevation_ft, 0)
         airport_track_features = create_airport_track_features(first_lat, first_lon, first_track, airport.lat, airport.lon, distance_km)
         # elevation_diff = first_baro_altitude_ft - airport.elevation_ft
-        airport_features = [distance_km, elevation_above_airport] + list(airport_track_features)
+        airport_type = Airport_Size_Ranking[airport.type.name]
+        aircraft_category = aircraft_category_to_int(flight.category)
+        airport_features = [distance_km, elevation_above_airport, aircraft_category, airport_type] + list(airport_track_features)
         label = 1 if airport.ident == takeoff_airport_ident else 0
         rows.append((airport_features, label, airport.ident))
     assert len(rows) > 0, f"No airports found within radius for first_lat: {first_lat}, first_lon: {first_lon}, first_baro_altitude_ft: {first_baro_altitude_ft}, takeoff_airport_ident: {takeoff_airport_ident}"
@@ -147,7 +170,7 @@ def process_flights(df_flights: pl.DataFrame):
         if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
             continue
         first_time, first_lat, first_lon, first_baro_altitude_ft, first_track = extract_from_messages(adsb_messages) # TODO: Use some sort of features type.
-        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, first_track, flight.takeoff_airport_ident)
+        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, first_track, flight)
         for row in rows:
             X_rows.append(row[0])
             Y_rows.append(row[1])
