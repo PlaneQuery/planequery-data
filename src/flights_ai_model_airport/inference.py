@@ -13,6 +13,8 @@ from flights_ai_model_airport.features import build_inference_data, create_fligh
 FEATURE_NAMES = [
     "distance_km",
     "elevation_above_airport_ft",
+    "aircraft_category",
+    "airport_type",
     "bearing_airport_to_first_deg",
     "bearing_first_to_airport_deg",
     "takeoff_track_error_deg",
