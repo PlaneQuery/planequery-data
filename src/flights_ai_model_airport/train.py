@@ -30,6 +30,10 @@ if __name__ == "__main__":
         date(2026, 6, 1) + timedelta(days=i)
         for i in range((date(2026, 6, 8) - date(2026, 6, 1)).days + 1)
     ]
+    training_dates_2 = [
+        date(2026, 2, 1) + timedelta(days=i)
+        for i in range((date(2026, 2, 28) - date(2026, 2, 1)).days + 1)
+    ]
     training_dates = training_dates + [date(2026,3,1)]
     print(training_dates)
     train(training_dates)
