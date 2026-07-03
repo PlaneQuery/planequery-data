@@ -56,7 +56,9 @@ def score_airport_candidates(df_flights: pl.DataFrame, model: LGBMClassifier):
         .sort(["flight_id", "rank"])
     )
 
-def inference(df_flights: pl.DataFrame, model: LGBMClassifier):
+def inference(df_flights: pl.DataFrame, model: LGBMClassifier | Path):
+    if isinstance(model, Path):
+        model = load_model(model)
     results = score_airport_candidates(df_flights, model)
     df_flights = add_flight_id_col(df_flights)
     predictions = (results.filter(pl.col("rank") == 1).select("flight_id", "airport_ident", "score"))
