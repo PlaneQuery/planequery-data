@@ -13,6 +13,8 @@ import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.flights.flight_type import adsblol_flights_output_path
+from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
+from flights_ai_model_airport.inference import inference
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -1204,6 +1206,8 @@ def run_main(
     flights_df = _filter_short_same_airport_flights(flights_df)
     if pia_or_american_ladd_only:
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
+    
+    flights_df = inference(flights_df, get_latest_airport_model_path())
     output_path = adsblol_flights_output_path(target_date)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
