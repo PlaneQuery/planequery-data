@@ -12,7 +12,10 @@ from typing import Sequence
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
-from data_engineering.flights.flight_type import adsblol_flights_airport_model_output_path
+from data_engineering.flights.flight_type import (
+    adsblol_flights_airport_model_output_path,
+    adsbx_flights_airport_model_output_path,
+)
 from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
 from flights_ai_model_airport.inference import inference
 
@@ -1160,10 +1163,11 @@ def run_main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
+    use_adsbx: bool = False,
     max_workers: int | None = None,
     segment_chunk_size: int | None = None,
 ) -> pl.DataFrame:
-    from data_engineering.adsb.read_adsb import scan_adsb
+    from data_engineering.adsb.read_adsb import read_adsbx, scan_adsb
 
     if max_workers is None:
         max_workers = _default_max_workers()
@@ -1174,17 +1178,32 @@ def run_main(
     window_end = day_end + RUN_MAIN_CONTEXT
     scan_dates = [target_date - timedelta(days=1), target_date, target_date + timedelta(days=1)]
 
-    lf_adsb = pl.concat(
-        [
-            scan_adsb(
-                scan_date,
-                columns=ADSB_ALGORITHM_COLUMNS,
-                icaos=icaos,
-                pia_or_american_ladd_only=pia_or_american_ladd_only,
-            )
-            for scan_date in scan_dates
-        ]
-    ).filter(
+    if use_adsbx:
+        lf_adsb = pl.concat(
+            [
+                read_adsbx(
+                    scan_date,
+                    columns=ADSB_ALGORITHM_COLUMNS,
+                    icaos=icaos,
+                    pia_or_american_ladd_only=pia_or_american_ladd_only,
+                )
+                for scan_date in scan_dates
+            ]
+        ).lazy()
+    else:
+        lf_adsb = pl.concat(
+            [
+                scan_adsb(
+                    scan_date,
+                    columns=ADSB_ALGORITHM_COLUMNS,
+                    icaos=icaos,
+                    pia_or_american_ladd_only=pia_or_american_ladd_only,
+                )
+                for scan_date in scan_dates
+            ]
+        )
+
+    lf_adsb = lf_adsb.filter(
         (pl.col("time") >= window_start)
         & (pl.col("time") < window_end)
     )
@@ -1208,30 +1227,14 @@ def run_main(
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
     
     flights_df = inference(flights_df, get_latest_airport_model_path())
-    output_path = adsblol_flights_airport_model_output_path(target_date)
+    output_path = (
+        adsbx_flights_airport_model_output_path(target_date)
+        if use_adsbx
+        else adsblol_flights_airport_model_output_path(target_date)
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
     return flights_df
-
-
-def run_main_2(
-    target_date: date = date(2026, 3, 1),
-    icaos: Sequence[str] | None = None,
-    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
-) -> pl.DataFrame:
-    day_start, day_end = _day_bounds(target_date)
-    lf_adsb = _scan_readsb_hist_day_parquet(target_date, parquet_root).filter(
-        (pl.col("time") >= day_start)
-        & (pl.col("time") < day_end)
-    )
-
-    segments = _collect_segments_from_adsb_lf(lf_adsb, icaos=icaos)
-    segments = [
-        segment
-        for segment in segments
-        if _segment_takes_off_in_window(segment, day_start, day_end)
-    ]
-    return _filter_short_same_airport_flights(_segments_to_flights_df(segments))
 
 
 def _date_arg(value: str) -> date:
@@ -1268,6 +1271,11 @@ def cli() -> None:
         help="only segment and output PIA ICAOs or American LADD aircraft",
     )
     parser.add_argument(
+        "--use-adsbx",
+        action="store_true",
+        help="read ADSBExchange trace parquet instead of ADSB.lol parquet",
+    )
+    parser.add_argument(
         "--max-workers",
         type=_positive_int_arg,
         help="ICAO segmentation worker processes (default: min(os.cpu_count(), 32))",
@@ -1282,6 +1290,7 @@ def cli() -> None:
         flights_df = run_main(
             target_date=target_date,
             pia_or_american_ladd_only=args.pia_or_american_ladd_only,
+            use_adsbx=args.use_adsbx,
             max_workers=args.max_workers,
         )
         print(flights_df)
