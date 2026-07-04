@@ -93,6 +93,26 @@ def scan_latest_icao_info_for_join(
     return df
 
 
+def add_latest_icao_info(
+    df: pl.DataFrame,
+    path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
+) -> pl.DataFrame:
+    info_columns = ["pia", "ladd", "military", "interesting"]
+    df = df.drop([col for col in info_columns if col in df.columns])
+    df_openairframes = (
+        scan_latest_icao_info_for_join(path)
+        .select(["icao", *info_columns])
+        .with_columns(pl.col("icao").str.to_lowercase())
+    )
+    return (
+        df.lazy()
+        .with_columns(pl.col("icao").str.to_lowercase())
+        .join(df_openairframes, on="icao", how="left")
+        .with_columns(pl.col(info_columns).fill_null(False))
+        .collect()
+    )
+
+
 def scan_latest_registration_icao_for_join(
     path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
     real_icao_column: str = "real_icao",
