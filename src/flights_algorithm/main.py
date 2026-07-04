@@ -16,8 +16,6 @@ from data_engineering.flights.flight_type import (
     adsblol_flights_airport_model_output_path,
     adsbx_flights_airport_model_output_path,
 )
-from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
-from flights_ai_model_airport.inference import inference
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -1182,6 +1180,13 @@ def _limit_icaos_to_sfdps_or_bts(
     return [icao for icao in icaos if icao in source_icaos]
 
 
+def _run_airport_model_inference(flights_df: pl.DataFrame) -> pl.DataFrame:
+    from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
+    from flights_ai_model_airport.inference import inference
+
+    return inference(flights_df, get_latest_airport_model_path())
+
+
 def run_main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
@@ -1252,7 +1257,7 @@ def run_main(
     if pia_or_american_ladd_only:
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
     
-    flights_df = inference(flights_df, get_latest_airport_model_path())
+    flights_df = _run_airport_model_inference(flights_df)
     output_path = (
         adsbx_flights_airport_model_output_path(target_date)
         if use_adsbx
