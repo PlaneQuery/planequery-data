@@ -7,6 +7,7 @@ import polars as pl
 from data_engineering.utils import OUTPUT_DIR
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+ADSBLOL_LEGACY_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v5"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
 EMPTY_COLUMN_DTYPES = {
@@ -62,8 +63,23 @@ def _parquet_day_dir(current_day: date) -> Path:
     return _day_partition_dir(ADSBLOL_PARQUET_ROOT, current_day)
 
 
+def _legacy_parquet_day_dir(current_day: date) -> Path:
+    return _day_partition_dir(ADSBLOL_LEGACY_PARQUET_ROOT, current_day)
+
+
+def _legacy_parquet_path(current_day: date) -> Path:
+    return _legacy_parquet_day_dir(current_day) / "part-00000.parquet"
+
+
 def _parquet_partition_has_data(partition_dir: Path) -> bool:
     return any(partition_dir.glob("icao_bucket=*/data.parquet"))
+
+
+def _parquet_day_has_data(current_day: date) -> bool:
+    return (
+        _parquet_partition_has_data(_parquet_day_dir(current_day))
+        or _legacy_parquet_path(current_day).exists()
+    )
 
 
 def _icao_bucket(icao: str) -> int:
@@ -78,13 +94,20 @@ def _parquet_read_paths(
     icao_buckets: Sequence[int] | None = None,
 ) -> str | list[str]:
     day_dir = _parquet_day_dir(current_day)
-    if icao_buckets is None:
-        return str(day_dir / "icao_bucket=*" / "data.parquet")
-    paths = [
-        day_dir / f"icao_bucket={bucket}" / "data.parquet"
-        for bucket in sorted(set(icao_buckets))
-    ]
-    return [str(path) for path in paths if path.exists()]
+    if _parquet_partition_has_data(day_dir):
+        if icao_buckets is None:
+            return str(day_dir / "icao_bucket=*" / "data.parquet")
+        paths = [
+            day_dir / f"icao_bucket={bucket}" / "data.parquet"
+            for bucket in sorted(set(icao_buckets))
+        ]
+        return [str(path) for path in paths if path.exists()]
+
+    legacy_path = _legacy_parquet_path(current_day)
+    if legacy_path.exists():
+        return str(legacy_path)
+
+    return []
 
 
 def _query_buckets(
@@ -114,8 +137,7 @@ def create_adsb_parquet_for_day(
     *,
     pia_or_american_ladd_only: bool = False,
 ):
-    parquet_day_dir = _parquet_day_dir(current_day)
-    if _parquet_partition_has_data(parquet_day_dir):
+    if _parquet_day_has_data(current_day):
         return
 
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day

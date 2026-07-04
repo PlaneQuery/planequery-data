@@ -9,6 +9,7 @@ from data_engineering.adsb import read_adsb
 def test_create_adsb_parquet_for_day_passes_pia_or_american_ladd_only(monkeypatch):
     create_parquet_for_day = Mock()
     monkeypatch.setattr(read_adsb, "_parquet_partition_has_data", lambda _: False)
+    monkeypatch.setattr(read_adsb, "_legacy_parquet_path", lambda _: Mock(exists=lambda: False))
     monkeypatch.setattr(
         "data_engineering.adsb.download_adsb_to_parquet.create_parquet_for_day",
         create_parquet_for_day,
@@ -25,6 +26,38 @@ def test_create_adsb_parquet_for_day_passes_pia_or_american_ladd_only(monkeypatc
         target_date,
         pia_or_american_ladd_only=True,
     )
+
+
+def test_create_adsb_parquet_for_day_skips_creation_when_legacy_v5_exists(monkeypatch):
+    create_parquet_for_day = Mock()
+    monkeypatch.setattr(read_adsb, "_parquet_partition_has_data", lambda _: False)
+    monkeypatch.setattr(read_adsb, "_legacy_parquet_path", lambda _: Mock(exists=lambda: True))
+    monkeypatch.setattr(
+        "data_engineering.adsb.download_adsb_to_parquet.create_parquet_for_day",
+        create_parquet_for_day,
+    )
+
+    read_adsb.create_adsb_parquet_for_day(date(2026, 3, 1))
+
+    create_parquet_for_day.assert_not_called()
+
+
+def test_parquet_read_paths_falls_back_to_legacy_v5_when_v6_is_empty(
+    tmp_path,
+    monkeypatch,
+):
+    target_date = date(2026, 3, 1)
+    v6_day_dir = tmp_path / "v6" / "year=2026" / "month=03" / "day=01"
+    (v6_day_dir / "icao_bucket=0").mkdir(parents=True)
+    v5_day_dir = tmp_path / "v5" / "year=2026" / "month=03" / "day=01"
+    v5_day_dir.mkdir(parents=True)
+    legacy_path = v5_day_dir / "part-00000.parquet"
+    legacy_path.touch()
+    monkeypatch.setattr(read_adsb, "ADSBLOL_PARQUET_ROOT", tmp_path / "v6")
+    monkeypatch.setattr(read_adsb, "ADSBLOL_LEGACY_PARQUET_ROOT", tmp_path / "v5")
+
+    assert read_adsb._parquet_read_paths(target_date) == str(legacy_path)
+    assert read_adsb._parquet_read_paths(target_date, [0]) == str(legacy_path)
 
 
 def test_scan_adsb_pia_or_american_ladd_only_keeps_all_rows_for_matching_icaos(
