@@ -177,6 +177,7 @@ def _legacy_flights_output_path(target_date: date, version: str):
 
 def _flight_parquet_paths(target_date: date):
     return [
+        adsblol_flights_airport_model_output_path(target_date),
         adsblol_flights_output_path(target_date),
         _legacy_flights_output_path(target_date, "v2"),
         _legacy_flights_output_path(target_date, "v1"),
