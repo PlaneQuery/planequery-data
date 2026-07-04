@@ -1,7 +1,11 @@
 import polars as pl
 from datetime import date
 import os
+from data_engineering.openairframes.read import add_latest_icao_info
+
 OUTPUT_DIR = os.environ["OUTPUT_DIR"]
+
+
 def get_adsbx_flights_for_day(current_date: date) -> pl.DataFrame:
     '''
     returns with takeoff_times on previous day. arrivals on current_date
@@ -16,11 +20,8 @@ def get_adsbx_flights_for_day(current_date: date) -> pl.DataFrame:
             pl.lit(None).cast(pl.String).alias("callsign"),
             pl.col("depTime").str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms").alias("takeoff_time"),
             pl.col("arrTime").str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms").alias("landing_time"),
-            pl.lit(False).alias("pia"),
-            pl.lit(False).alias("ladd"),
-            pl.lit(False).alias("military"),
-            pl.lit(False).alias("interesting"),
         )
-        .select(["icao", "callsign", "registration", "takeoff_time", "takeoff_airport_ident", "landing_time", "landing_airport_ident", "pia", "ladd", "military", "interesting"])
     )
+    df = add_latest_icao_info(df)
+    df = df.select(["icao", "callsign", "registration", "takeoff_time", "takeoff_airport_ident", "landing_time", "landing_airport_ident", "pia", "ladd", "military", "interesting"])
     return df

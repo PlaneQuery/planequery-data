@@ -7,6 +7,7 @@ from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_
 
 from data_engineering.flights.flight_type import get_flights
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
+from data_engineering.openairframes.read import add_latest_icao_info
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
@@ -20,7 +21,8 @@ from data_engineering.utils import OUTPUT_DIR
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
 
 def read_opensky_flights(target_date: date) -> pl.DataFrame:
-    return pl.read_parquet(f"/Volumes/T2-SSD/planequery/data/flights/opensky/v1/{target_date:%Y-%m-%d}.parquet")
+    df = pl.read_parquet(f"/Volumes/T2-SSD/planequery/data/flights/opensky/v1/{target_date:%Y-%m-%d}.parquet")
+    return add_latest_icao_info(df)
 
 def default_stats_path() -> Path:
     run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M")
