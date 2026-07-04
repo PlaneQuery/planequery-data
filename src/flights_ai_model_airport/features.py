@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import math
+
 import polars as pl
 import numpy as np
 from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
@@ -14,6 +15,19 @@ from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import angle_diff_deg, haversine, initial_bearing_deg, normalize_deg
 
 AIRPORT_RADIUS_KM = 150.0
+FEATURE_NAMES = [
+    "distance_km",
+    "elevation_above_airport_ft",
+    "aircraft_category",
+    "airport_type",
+    "bearing_airport_to_point_deg",
+    "bearing_point_to_airport_deg",
+    "track_error_deg",
+    "direction_error_deg",
+    "along_track_km",
+    "cross_track_km",
+    "candidate_in_expected_direction",
+]
 AIRCRAFT_CATEGORY_RANKING = {
     "A1": 1,
     "A2": 2,
@@ -45,35 +59,45 @@ def get_training_flights(dt: date):
     df_flights = get_flights(dt)
     df = df_flights_comparision(df_flights, df_sfdps_flights, datetime(dt.year, dt.month, dt.day), datetime(dt.year, dt.month, dt.day) + timedelta(days=1), compare_airports=False)
     df = df.filter(pl.col("match_status") == "both")
-    df = df.with_columns(pl.col("takeoff_airport_ident_df1").alias("takeoff_airport_ident"))
+    df = df.with_columns(
+        pl.col("takeoff_airport_ident_df1").alias("takeoff_airport_ident"),
+        pl.col("landing_airport_ident_df1").alias("landing_airport_ident"),
+    )
     df = df.select(FLIGHT_POLARS_SCHEMA.keys())
     return df
 
 # For a given flight ( I can take in flight object) I output all the possible airports and their distances etc.. the features then return
-def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft: int, first_track, flight: Flight):
-    takeoff_airport_ident = flight.takeoff_airport_ident
+def create_flight_airport_features(
+    lat: float,
+    lon: float,
+    baro_altitude_ft: int,
+    track: float,
+    flight: Flight,
+    endpoint: str = "takeoff",
+):
+    target_airport_ident = _flight_airport_ident(flight, endpoint)
     rows = []
-    potential_airports: list[Airport] = airport_lookup.getAirportsWithinRadius(first_lat, first_lon, AIRPORT_RADIUS_KM)
+    potential_airports: list[Airport] = airport_lookup.getAirportsWithinRadius(lat, lon, AIRPORT_RADIUS_KM)
     if len(potential_airports) == 0:
-        assert takeoff_airport_ident is not None
-        airport = airport_lookup.get_Airport_from_airport_ident(takeoff_airport_ident)
+        assert target_airport_ident is not None
+        airport = airport_lookup.get_Airport_from_airport_ident(target_airport_ident)
         assert airport is not None
         potential_airports = [airport]
-        assert len(potential_airports) > 0, f"Could not find airport for takeoff_airport_ident: {takeoff_airport_ident}"
+        assert len(potential_airports) > 0, f"Could not find airport for {endpoint}_airport_ident: {target_airport_ident}"
     for airport in potential_airports:
-        distance_km = haversine(first_lat, first_lon, airport.lat, airport.lon)
-        elevation_above_airport = max(first_baro_altitude_ft - airport.elevation_ft, 0)
-        airport_track_features = create_airport_track_features(first_lat, first_lon, first_track, airport.lat, airport.lon, distance_km)
+        distance_km = haversine(lat, lon, airport.lat, airport.lon)
+        elevation_above_airport = max(baro_altitude_ft - airport.elevation_ft, 0)
+        airport_track_features = create_airport_track_features(lat, lon, track, airport.lat, airport.lon, distance_km, endpoint)
         # elevation_diff = first_baro_altitude_ft - airport.elevation_ft
         airport_type = Airport_Size_Ranking[airport.type.name]
         aircraft_category = aircraft_category_to_int(flight.category)
         airport_features = [distance_km, elevation_above_airport, aircraft_category, airport_type] + list(airport_track_features)
-        label = 1 if airport.ident == takeoff_airport_ident else 0
+        label = 1 if airport.ident == target_airport_ident else 0
         rows.append((airport_features, label, airport.ident))
-    assert len(rows) > 0, f"No airports found within radius for first_lat: {first_lat}, first_lon: {first_lon}, first_baro_altitude_ft: {first_baro_altitude_ft}, takeoff_airport_ident: {takeoff_airport_ident}"
+    assert len(rows) > 0, f"No airports found within radius for lat: {lat}, lon: {lon}, baro_altitude_ft: {baro_altitude_ft}, {endpoint}_airport_ident: {target_airport_ident}"
     return rows
 
-def create_airport_track_features(lat, lon, track, airport_lat, airport_lon, distance_km, phase = "takeoff"):
+def create_airport_track_features(lat, lon, track, airport_lat, airport_lon, distance_km, phase: str = "takeoff"):
 
     bearing_airport_to_point_deg = initial_bearing_deg(airport_lat, airport_lon, lat, lon)
     bearing_point_to_airport_deg = initial_bearing_deg(lat, lon, airport_lat, airport_lon)
@@ -82,9 +106,11 @@ def create_airport_track_features(lat, lon, track, airport_lat, airport_lon, dis
         expected_track_deg = bearing_airport_to_point_deg
         reverse_track_deg = normalize_deg(track + 180.0)
         direction_error_deg = angle_diff_deg(reverse_track_deg, bearing_point_to_airport_deg)
-    else:
+    elif phase == "landing":
         expected_track_deg = bearing_point_to_airport_deg
         direction_error_deg = angle_diff_deg(track, bearing_point_to_airport_deg)
+    else:
+        raise ValueError(f"Unsupported airport model endpoint: {phase}")
 
     track_error_deg = angle_diff_deg(track, expected_track_deg)
     error_rad = math.radians(track_error_deg)
@@ -96,35 +122,36 @@ def create_airport_track_features(lat, lon, track, airport_lat, airport_lon, dis
 
     return bearing_airport_to_point_deg, bearing_point_to_airport_deg, track_error_deg, direction_error_deg, along_track_km, cross_track_km, candidate_in_expected_direction
 
-def extract_from_messages(messages: list[AdsbMessage]):
+def _flight_airport_ident(flight: Flight, endpoint: str) -> str:
+    if endpoint == "takeoff":
+        return flight.takeoff_airport_ident
+    if endpoint == "landing":
+        return flight.landing_airport_ident
+    raise ValueError(f"Unsupported airport model endpoint: {endpoint}")
+
+def extract_from_messages(messages: list[AdsbMessage], endpoint: str = "takeoff"):
     # need to get first non null track, baro_altitude_ft, veritcal_rate
-    i = 0
-    first_time = messages[0].time
-    first_lat = messages[0].lat
-    first_lon = messages[0].lon
-    first_baro_altitude_ft = None
-    first_track = None
-    while i < len(messages):
-        m = messages[i]
+    endpoint_message = messages[0] if endpoint == "takeoff" else messages[-1]
+    endpoint_baro_altitude_ft = None
+    endpoint_track = None
+    messages_to_scan = messages if endpoint == "takeoff" else reversed(messages)
+
+    for m in messages_to_scan:
         if m.baro_altitude_ft is not None:
-            first_baro_altitude_ft = m.baro_altitude_ft
+            endpoint_baro_altitude_ft = m.baro_altitude_ft
         if m.track_deg is not None:
             assert m.track_deg >= 0 and m.track_deg <= 360, f"Invalid track_deg: {m.track_deg}"
-            first_track = m.track_deg  
-        if first_baro_altitude_ft is not None and first_track is not None:
+            endpoint_track = m.track_deg
+        if endpoint_baro_altitude_ft is not None and endpoint_track is not None:
             break
-        if m.time - first_time > timedelta(minutes=5):
-            pass
 
-
-        i += 1
-    assert first_baro_altitude_ft is not None, f"No baro_altitude_ft found in {len(messages)} messages"
-    assert first_track is not None, f"No track_deg found in {len(messages)} messages"
-    return first_time, first_lat, first_lon, first_baro_altitude_ft, first_track
+    assert endpoint_baro_altitude_ft is not None, f"No baro_altitude_ft found in {len(messages)} messages"
+    assert endpoint_track is not None, f"No track_deg found in {len(messages)} messages"
+    return endpoint_message.time, endpoint_message.lat, endpoint_message.lon, endpoint_baro_altitude_ft, endpoint_track
 
 def create_features_for_flight(flight: Flight):
     pass
-def build_training_data(training_dates: list[date]):
+def build_training_data(training_dates: list[date], endpoint: str = "takeoff"):
     X_parts = []
     Y_parts = []
     flight_id_parts = []
@@ -133,7 +160,7 @@ def build_training_data(training_dates: list[date]):
         df_flights = get_training_flights(dt)
         df_flights = add_flight_id_col(df_flights)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
-        X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
+        X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights, endpoint)
         X_parts.append(X)
         Y_parts.append(Y)
         flight_id_parts.append(flight_id_rows)
@@ -146,7 +173,7 @@ def build_training_data(training_dates: list[date]):
         np.concatenate(airport_ident_parts),
     )
 
-def process_flights(df_flights: pl.DataFrame):
+def process_flights(df_flights: pl.DataFrame, endpoint: str = "takeoff"):
     df_flights = add_flight_id_col(df_flights)
     target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
     icaos = df_flights.get_column("icao").unique().to_list()
@@ -174,22 +201,22 @@ def process_flights(df_flights: pl.DataFrame):
         adsb_messages = adsb_messages_from_parquet_df(df_adsb)
         if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
             continue
-        first_time, first_lat, first_lon, first_baro_altitude_ft, first_track = extract_from_messages(adsb_messages) # TODO: Use some sort of features type.
-        rows = create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft, first_track, flight)
+        _endpoint_time, lat, lon, baro_altitude_ft, track = extract_from_messages(adsb_messages, endpoint) # TODO: Use some sort of features type.
+        rows = create_flight_airport_features(lat, lon, baro_altitude_ft, track, flight, endpoint)
         for row in rows:
             X_rows.append(row[0])
             Y_rows.append(row[1])
             airport_ident_rows.append(row[2])
             flight_id_rows.append(flight.flight_id)
 
-    X = np.asarray(X_rows)
+    X = np.asarray(X_rows, dtype=np.float64)
     Y = np.asarray(Y_rows)
     flight_id_rows = np.asarray(flight_id_rows)
     airport_ident_rows = np.asarray(airport_ident_rows)
     return X, Y, flight_id_rows, airport_ident_rows
 
-def build_inference_data(df_flights: pl.DataFrame):
-    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
+def build_inference_data(df_flights: pl.DataFrame, endpoint: str = "takeoff"):
+    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights, endpoint)
     return X, flight_id_rows, airport_ident_rows
 
 '''
