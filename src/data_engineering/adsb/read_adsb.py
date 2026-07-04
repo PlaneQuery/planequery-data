@@ -8,6 +8,7 @@ from data_engineering.utils import OUTPUT_DIR
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ADSBLOL_LEGACY_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v5"
+ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
 EMPTY_COLUMN_DTYPES = {
@@ -61,6 +62,14 @@ def _day_partition_dir(root: Path, current_day: date) -> Path:
 
 def _parquet_day_dir(current_day: date) -> Path:
     return _day_partition_dir(ADSBLOL_PARQUET_ROOT, current_day)
+
+
+def _adsbx_parquet_day_dir(current_day: date) -> Path:
+    return _day_partition_dir(ADSBX_PARQUET_ROOT, current_day)
+
+
+def _adsbx_parquet_path(current_day: date) -> str:
+    return str(_adsbx_parquet_day_dir(current_day) / "icao_bucket=*" / "data.parquet")
 
 
 def _legacy_parquet_day_dir(current_day: date) -> Path:
@@ -162,6 +171,33 @@ def read_adsb(
         icaos=icaos,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     ).collect()
+
+
+def read_adsbx(
+    current_day: date,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: Sequence[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+):
+    columns = _column_list(columns, additional_columns)
+    filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
+    read_columns = list(dict.fromkeys(columns + ["time", "icao", *filter_columns]))
+    if not _parquet_partition_has_data(_adsbx_parquet_day_dir(current_day)):
+        return pl.DataFrame(
+            schema={column: EMPTY_COLUMN_DTYPES.get(column, pl.Null) for column in columns}
+        )
+
+    df = pl.read_parquet(_adsbx_parquet_path(current_day), columns=read_columns)
+    df = df.filter(pl.col("time").dt.date() == current_day)
+    if icaos is not None:
+        df = df.filter(pl.col("icao").is_in(list(icaos)))
+    if pia_or_american_ladd_only:
+        df = df.filter(pia_or_american_ladd_icao())
+    if "callsign" in columns:
+        df = df.with_columns(pl.col("callsign").str.replace_all(" ","").alias("callsign"))
+    return df.select(columns)
 
 
 def scan_adsb(
