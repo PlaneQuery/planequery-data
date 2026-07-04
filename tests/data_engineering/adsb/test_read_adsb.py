@@ -60,6 +60,46 @@ def test_parquet_read_paths_falls_back_to_legacy_v5_when_v6_is_empty(
     assert read_adsb._parquet_read_paths(target_date, [0]) == str(legacy_path)
 
 
+def test_read_adsbx_reads_whole_day_then_filters_icaos(
+    tmp_path,
+    monkeypatch,
+):
+    target_date = date(2026, 3, 1)
+    bucket_0_dir = tmp_path / "year=2026" / "month=03" / "day=01" / "icao_bucket=0"
+    bucket_1_dir = tmp_path / "year=2026" / "month=03" / "day=01" / "icao_bucket=1"
+    bucket_0_dir.mkdir(parents=True)
+    bucket_1_dir.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "time": [
+                datetime(2026, 3, 1, 12, 0),
+            ],
+            "icao": ["010001"],
+            "callsign": ["OTHER"],
+        }
+    ).write_parquet(bucket_0_dir / "data.parquet")
+    pl.DataFrame(
+        {
+            "time": [
+                datetime(2026, 3, 1, 12, 0),
+                datetime(2026, 3, 2, 12, 0),
+            ],
+            "icao": ["200001", "200001"],
+            "callsign": [" TEST 1 ", "TEST2"],
+        }
+    ).write_parquet(bucket_1_dir / "data.parquet")
+    monkeypatch.setattr(read_adsb, "ADSBX_PARQUET_ROOT", tmp_path)
+
+    df = read_adsb.read_adsbx(
+        target_date,
+        columns=["time", "icao", "callsign"],
+        icaos=["200001"],
+    )
+
+    assert df["icao"].to_list() == ["200001"]
+    assert df["callsign"].to_list() == ["TEST1"]
+
+
 def test_scan_adsb_pia_or_american_ladd_only_keeps_all_rows_for_matching_icaos(
     tmp_path,
     monkeypatch,
