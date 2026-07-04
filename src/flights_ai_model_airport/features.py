@@ -73,22 +73,28 @@ def create_flight_airport_features(first_lat, first_lon, first_baro_altitude_ft:
     assert len(rows) > 0, f"No airports found within radius for first_lat: {first_lat}, first_lon: {first_lon}, first_baro_altitude_ft: {first_baro_altitude_ft}, takeoff_airport_ident: {takeoff_airport_ident}"
     return rows
 
-def create_airport_track_features(first_lat, first_lon, first_track, airport_lat, airport_lon, distance_km):
-    bearing_airport_to_first_deg = initial_bearing_deg(airport_lat, airport_lon, first_lat, first_lon)
-    bearing_first_to_airport_deg = initial_bearing_deg(first_lat, first_lon, airport_lat, airport_lon)
+def create_airport_track_features(lat, lon, track, airport_lat, airport_lon, distance_km, phase = "takeoff"):
 
-    takeoff_track_error_deg = angle_diff_deg(first_track, bearing_first_to_airport_deg)
-    reverse_track_deg = normalize_deg(first_track + 180.0)
-    airport_behind_error_deg = angle_diff_deg(reverse_track_deg, bearing_airport_to_first_deg)
+    bearing_airport_to_point_deg = initial_bearing_deg(airport_lat, airport_lon, lat, lon)
+    bearing_point_to_airport_deg = initial_bearing_deg(lat, lon, airport_lat, airport_lon)
 
-    error_rad = math.radians(takeoff_track_error_deg)
+    if phase == "takeoff":
+        expected_track_deg = bearing_airport_to_point_deg
+        reverse_track_deg = normalize_deg(track + 180.0)
+        direction_error_deg = angle_diff_deg(reverse_track_deg, bearing_point_to_airport_deg)
+    else:
+        expected_track_deg = bearing_point_to_airport_deg
+        direction_error_deg = angle_diff_deg(track, bearing_point_to_airport_deg)
 
-    along_track_from_airport_km = distance_km * math.cos(error_rad)
-    cross_track_from_airport_km = abs(distance_km * math.sin(error_rad))
+    track_error_deg = angle_diff_deg(track, expected_track_deg)
+    error_rad = math.radians(track_error_deg)
 
-    candidate_is_behind = int(airport_behind_error_deg <= 60.0)
+    along_track_km = distance_km * math.cos(error_rad)
+    cross_track_km = abs(distance_km * math.sin(error_rad))
 
-    return bearing_airport_to_first_deg, bearing_first_to_airport_deg, takeoff_track_error_deg, airport_behind_error_deg, along_track_from_airport_km, cross_track_from_airport_km, candidate_is_behind
+    candidate_in_expected_direction = int(direction_error_deg <= 60.0)
+
+    return bearing_airport_to_point_deg, bearing_point_to_airport_deg, track_error_deg, direction_error_deg, along_track_km, cross_track_km, candidate_in_expected_direction
 
 def extract_from_messages(messages: list[AdsbMessage]):
     # need to get first non null track, baro_altitude_ft, veritcal_rate
@@ -128,8 +134,6 @@ def build_training_data(training_dates: list[date]):
         df_flights = add_flight_id_col(df_flights)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
         X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights)
-        if len(X) == 0:
-            continue
         X_parts.append(X)
         Y_parts.append(Y)
         flight_id_parts.append(flight_id_rows)
@@ -147,6 +151,7 @@ def process_flights(df_flights: pl.DataFrame):
     target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
     icaos = df_flights.get_column("icao").unique().to_list()
     df_adsb_full = read_adsb(target_date, icaos=icaos)
+    assert len(df_flights) > 0, f"No flights found for date: {target_date}"
     flights = flights_df_to_flights(df_flights)
     X_rows = []
     Y_rows = []
