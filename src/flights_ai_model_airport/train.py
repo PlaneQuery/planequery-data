@@ -31,7 +31,7 @@ def train(training_dates, validation_date = date(2026,3,15)):
         str(path),
     )
     print(f"  -> saved to {path}")
-    outputs, df_stats = main(test_src="trad-airport-model", gold_src="sfdps", test_dates=validation_date, pia_or_american_ladd_only=True, airport_model_path=path)
+    outputs, df_stats = main(test_src="model", gold_src="sfdps", test_dates=validation_date, pia_or_american_ladd_only=True, airport_model_path=path)
     df_stats.write_csv(path.parent / "validation_stats.csv")
 
 if __name__ == "__main__":
