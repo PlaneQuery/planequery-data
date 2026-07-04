@@ -23,6 +23,7 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
     target_date = date(2026, 3, 1)
     read_calls = []
     scan_calls = []
+    inference_adsb_heights = []
 
     def fake_read_adsbx(current_day, columns, icaos=None, pia_or_american_ladd_only=False):
         read_calls.append(
@@ -43,7 +44,7 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
                 "on_ground": [True],
                 "baro_altitude_ft": [0],
                 "geom_altitude_ft": [0],
-                "pia": [False],
+                "pia": [True],
                 "ladd": [False],
                 "military": [False],
                 "interesting": [False],
@@ -86,11 +87,13 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
         "_filter_short_same_airport_flights",
         lambda df: df,
     )
-    monkeypatch.setattr(flights_algorithm_main, "inference", lambda df, _model_path: df)
     monkeypatch.setattr(
         flights_algorithm_main,
-        "get_latest_airport_model_path",
-        lambda: "model.path",
+        "_run_airport_model_inference",
+        lambda df, df_adsb_full: (
+            inference_adsb_heights.append(df_adsb_full.height),
+            df,
+        )[1],
     )
     monkeypatch.setattr(
         flights_algorithm_main,
@@ -114,6 +117,7 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
         date(2026, 3, 1),
         date(2026, 3, 2),
     ]
+    assert inference_adsb_heights == [2]
     assert all(call["icaos"] == ["abc123"] for call in read_calls)
     assert all(call["pia_or_american_ladd_only"] for call in read_calls)
 
@@ -126,6 +130,7 @@ def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
 
     target_date = date(2026, 3, 1)
     read_calls = []
+    inference_adsb_heights = []
 
     def fake_read_adsbx(current_day, columns, icaos=None, pia_or_american_ladd_only=False):
         read_calls.append(
@@ -187,11 +192,13 @@ def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
         "_filter_short_same_airport_flights",
         lambda df: df,
     )
-    monkeypatch.setattr(flights_algorithm_main, "inference", lambda df, _model_path: df)
     monkeypatch.setattr(
         flights_algorithm_main,
-        "get_latest_airport_model_path",
-        lambda: "model.path",
+        "_run_airport_model_inference",
+        lambda df, df_adsb_full: (
+            inference_adsb_heights.append(df_adsb_full.height),
+            df,
+        )[1],
     )
     monkeypatch.setattr(
         flights_algorithm_main,
@@ -212,4 +219,5 @@ def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
         date(2026, 3, 1),
         date(2026, 3, 2),
     ]
+    assert inference_adsb_heights == [2]
     assert all(call["icaos"] == ["abc123"] for call in read_calls)

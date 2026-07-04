@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 
+import numpy as np
 import polars as pl
 
 os.environ.setdefault("OUTPUT_DIR", "/tmp/planequery-test-output")
@@ -92,3 +93,48 @@ def test_set_consecutive_airport_idents_keeps_different_airports_when_scores_dis
 
     assert result["landing_airport_ident"][0] == "KAAA"
     assert result["takeoff_airport_ident"][1] == "KBBB"
+
+
+def test_inference_passes_preloaded_adsb_to_both_endpoint_feature_builders(monkeypatch):
+    import flights_ai_model_airport.inference as inference_module
+
+    df_flights = flights_to_flights_df(
+        [
+            Flight(
+                icao="abc123",
+                takeoff_time=datetime(2026, 3, 1, 10, 0),
+                landing_time=datetime(2026, 3, 1, 11, 0),
+                takeoff_airport_ident="",
+                landing_airport_ident="",
+            ),
+        ]
+    )
+    df_adsb_full = pl.DataFrame({"icao": ["abc123"]})
+    calls = []
+
+    def fake_build_inference_data(df, df_adsb_full, endpoint="takeoff"):
+        calls.append((endpoint, df_adsb_full))
+        return (
+            np.ones((1, len(inference_module.FEATURE_NAMES))),
+            np.array(["abc123_2026-03-01_10-00"]),
+            np.array(["KAAA"]),
+        )
+
+    class FakeModel:
+        def predict_proba(self, X):
+            return np.array([[0.1, 0.9] for _ in range(len(X))])
+
+    monkeypatch.setattr(
+        inference_module,
+        "build_inference_data",
+        fake_build_inference_data,
+    )
+
+    inference_module.inference(
+        df_flights,
+        {"takeoff": FakeModel(), "landing": FakeModel()},
+        df_adsb_full=df_adsb_full,
+    )
+
+    assert [endpoint for endpoint, _df_adsb in calls] == ["takeoff", "landing"]
+    assert all(df_adsb is df_adsb_full for _endpoint, df_adsb in calls)
