@@ -3,7 +3,7 @@ from sklearn.model_selection import GroupShuffleSplit
 import lightgbm as lgb
 
 
-def model_training(X, y, groups, airport_idents):
+def model_training(X, y, groups, airport_idents, endpoint: str = "airport"):
     splitter = GroupShuffleSplit(
         n_splits=1,
         test_size=0.2,
@@ -45,6 +45,6 @@ def model_training(X, y, groups, airport_idents):
         .head(1)
     )
 
-    print("Top-1 airport accuracy:", top1["label"].mean())
+    print(f"Top-1 {endpoint} airport accuracy:", top1["label"].mean())
 
     return model
