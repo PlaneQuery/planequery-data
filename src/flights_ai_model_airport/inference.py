@@ -34,10 +34,19 @@ def _model_for_endpoint(model_or_bundle: Any, endpoint: str) -> LGBMClassifier:
     raise ValueError("Landing airport inference requires an endpoint model bundle")
 
 
-def score_airport_candidates(df_flights: pl.DataFrame, model: LGBMClassifier | dict | Path, endpoint: str = "takeoff"):
+def score_airport_candidates(
+    df_flights: pl.DataFrame,
+    model: LGBMClassifier | dict | Path,
+    df_adsb_full: pl.DataFrame,
+    endpoint: str = "takeoff",
+):
     df_flights = add_flight_id_col(df_flights)
     model = _model_for_endpoint(model, endpoint)
-    X, flight_ids, airport_idents = build_inference_data(df_flights, endpoint)
+    X, flight_ids, airport_idents = build_inference_data(
+        df_flights,
+        df_adsb_full,
+        endpoint,
+    )
 
     scores = model.predict_proba(X)[:, 1]
 
@@ -82,12 +91,26 @@ def _join_endpoint_predictions(df_flights: pl.DataFrame, scores: pl.DataFrame, e
     )
 
 
-def inference(df_flights: pl.DataFrame, model: LGBMClassifier | dict | Path):
+def inference(
+    df_flights: pl.DataFrame,
+    model: LGBMClassifier | dict | Path,
+    df_adsb_full: pl.DataFrame,
+):
     if isinstance(model, Path):
         model = load_model(model)
 
-    takeoff_scores = score_airport_candidates(df_flights, model, "takeoff")
-    landing_scores = score_airport_candidates(df_flights, model, "landing")
+    takeoff_scores = score_airport_candidates(
+        df_flights,
+        model,
+        df_adsb_full,
+        "takeoff",
+    )
+    landing_scores = score_airport_candidates(
+        df_flights,
+        model,
+        df_adsb_full,
+        "landing",
+    )
 
     df_flights = add_flight_id_col(df_flights)
     df_flights = _join_endpoint_predictions(df_flights, takeoff_scores, "takeoff")
@@ -96,18 +119,26 @@ def inference(df_flights: pl.DataFrame, model: LGBMClassifier | dict | Path):
     return df_flights
 
 def run_inference(run_date: date, model_path: Path):
+    from data_engineering.adsb.read_adsb import read_adsb
+
     df_flights = get_flights(run_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    icaos = df_flights.get_column("icao").unique().to_list()
+    df_adsb_full = read_adsb(run_date, icaos=icaos)
     model = load_model(model_path)
-    df_flights = inference(df_flights, model)
+    df_flights = inference(df_flights, model, df_adsb_full)
     return df_flights
 
 def run_score_canidates(run_date: date, model_path: Path):
+    from data_engineering.adsb.read_adsb import read_adsb
+
     df_flights = get_flights(run_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    icaos = df_flights.get_column("icao").unique().to_list()
+    df_adsb_full = read_adsb(run_date, icaos=icaos)
     model = load_model(model_path)
     return {
-        endpoint: score_airport_candidates(df_flights, model, endpoint)
+        endpoint: score_airport_candidates(df_flights, model, df_adsb_full, endpoint)
         for endpoint in AIRPORT_MODEL_ENDPOINTS
     }
 
