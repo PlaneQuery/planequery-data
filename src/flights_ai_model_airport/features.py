@@ -14,7 +14,7 @@ from flights.flights_comparison import df_flights_comparision
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 from utils import angle_diff_deg, haversine, initial_bearing_deg, normalize_deg
 
-AIRPORT_RADIUS_KM = 150.0
+AIRPORT_RADIUS_KM = 200.0
 FEATURE_NAMES = [
     "distance_km",
     "elevation_above_airport_ft",
