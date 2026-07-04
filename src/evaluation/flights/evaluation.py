@@ -96,11 +96,8 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
 def source_flights_reader(src: str, airport_model_path: Path | None = None):
     if src == "adsbx":
         return get_adsbx_flights_for_day
-    if src == "trad":
+    if src == "model":
         return get_flights
-    if src == "trad-airport-model":
-        assert airport_model_path is not None, "airport_model_path must be provided for 'trad-airport-model' source"
-        return lambda date: get_airport_model_flights(date, model_path=airport_model_path)
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
