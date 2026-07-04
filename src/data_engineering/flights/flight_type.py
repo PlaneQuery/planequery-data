@@ -162,6 +162,19 @@ def adsblol_flights_airport_model_output_path(target_date: date, version = "v7")
         / "flights.parquet"
     )
 
+def adsbx_flights_airport_model_output_path(target_date: date, version = "v7"):
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "trad-model-airport-adsbx"
+        / version
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
+        / "flights.parquet"
+    )
+
 def _legacy_flights_output_path(target_date: date, version: str):
     return (
         OUTPUT_DIR
@@ -256,4 +269,3 @@ def _pia_or_american_ladd_filter() -> pl.Expr:
 
 def pia_or_american_ladd_icao_filter() -> pl.Expr:
     return _pia_or_american_ladd_filter().any().over("icao")
-
