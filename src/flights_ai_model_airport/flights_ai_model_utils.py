@@ -2,6 +2,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+AIRPORT_MODEL_ENDPOINTS = ("takeoff", "landing")
+
 def get_model_runs_dir() -> Path:
     from data_engineering.utils import OUTPUT_DIR
 
