@@ -1159,10 +1159,34 @@ def _scan_readsb_hist_day_parquet(
     )
 
 
+def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
+    from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+    from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+
+    source_icaos = set()
+    for flights_reader in (get_sfdps_flights_day, get_bts_flights_for_day):
+        df_flights = flights_reader(target_date)
+        source_icaos.update(
+            df_flights.get_column("icao").drop_nulls().cast(pl.String).unique().to_list()
+        )
+    return sorted(source_icaos)
+
+
+def _limit_icaos_to_sfdps_or_bts(
+    target_date: date,
+    icaos: Sequence[str] | None,
+) -> list[str]:
+    source_icaos = set(_sfdps_or_bts_icaos(target_date))
+    if icaos is None:
+        return sorted(source_icaos)
+    return [icao for icao in icaos if icao in source_icaos]
+
+
 def run_main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
+    sfdps_or_bts_only: bool = False,
     use_adsbx: bool = False,
     max_workers: int | None = None,
     segment_chunk_size: int | None = None,
@@ -1177,6 +1201,8 @@ def run_main(
     window_start = day_start - RUN_MAIN_CONTEXT
     window_end = day_end + RUN_MAIN_CONTEXT
     scan_dates = [target_date - timedelta(days=1), target_date, target_date + timedelta(days=1)]
+    if sfdps_or_bts_only:
+        icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
 
     if use_adsbx:
         lf_adsb = pl.concat(
@@ -1271,6 +1297,11 @@ def cli() -> None:
         help="only segment and output PIA ICAOs or American LADD aircraft",
     )
     parser.add_argument(
+        "--sfdps-or-bts-only",
+        action="store_true",
+        help="only segment ICAOs present in SFDPS or BTS flights for the target date",
+    )
+    parser.add_argument(
         "--use-adsbx",
         action="store_true",
         help="read ADSBExchange trace parquet instead of ADSB.lol parquet",
@@ -1290,6 +1321,7 @@ def cli() -> None:
         flights_df = run_main(
             target_date=target_date,
             pia_or_american_ladd_only=args.pia_or_american_ladd_only,
+            sfdps_or_bts_only=args.sfdps_or_bts_only,
             use_adsbx=args.use_adsbx,
             max_workers=args.max_workers,
         )
