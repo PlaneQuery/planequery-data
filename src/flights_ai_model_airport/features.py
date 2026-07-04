@@ -160,7 +160,13 @@ def build_training_data(training_dates: list[date], endpoint: str = "takeoff"):
         df_flights = get_training_flights(dt)
         df_flights = add_flight_id_col(df_flights)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
-        X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights, endpoint)
+        icaos = df_flights.get_column("icao").unique().to_list()
+        df_adsb_full = read_adsb(dt, icaos=icaos)
+        X, Y, flight_id_rows, airport_ident_rows = process_flights(
+            df_flights,
+            df_adsb_full,
+            endpoint,
+        )
         X_parts.append(X)
         Y_parts.append(Y)
         flight_id_parts.append(flight_id_rows)
@@ -173,12 +179,15 @@ def build_training_data(training_dates: list[date], endpoint: str = "takeoff"):
         np.concatenate(airport_ident_parts),
     )
 
-def process_flights(df_flights: pl.DataFrame, endpoint: str = "takeoff"):
+def process_flights(
+    df_flights: pl.DataFrame,
+    df_adsb_full: pl.DataFrame,
+    endpoint: str = "takeoff",
+):
     df_flights = add_flight_id_col(df_flights)
-    target_date = df_flights.get_column("takeoff_time").dt.date().to_list()[0]
     icaos = df_flights.get_column("icao").unique().to_list()
-    df_adsb_full = read_adsb(target_date, icaos=icaos)
-    assert len(df_flights) > 0, f"No flights found for date: {target_date}"
+    df_adsb_full = df_adsb_full.filter(pl.col("icao").is_in(icaos))
+    assert len(df_flights) > 0, "No flights provided"
     flights = flights_df_to_flights(df_flights)
     X_rows = []
     Y_rows = []
@@ -215,8 +224,16 @@ def process_flights(df_flights: pl.DataFrame, endpoint: str = "takeoff"):
     airport_ident_rows = np.asarray(airport_ident_rows)
     return X, Y, flight_id_rows, airport_ident_rows
 
-def build_inference_data(df_flights: pl.DataFrame, endpoint: str = "takeoff"):
-    X, Y, flight_id_rows, airport_ident_rows = process_flights(df_flights, endpoint)
+def build_inference_data(
+    df_flights: pl.DataFrame,
+    df_adsb_full: pl.DataFrame,
+    endpoint: str = "takeoff",
+):
+    X, Y, flight_id_rows, airport_ident_rows = process_flights(
+        df_flights,
+        df_adsb_full,
+        endpoint,
+    )
     return X, flight_id_rows, airport_ident_rows
 
 '''

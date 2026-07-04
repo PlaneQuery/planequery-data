@@ -68,6 +68,7 @@ ADSB_ALGORITHM_COLUMNS = [
     "lat",
     "lon",
     "ground_speed_kt",
+    "track_deg",
     "on_ground",
     "baro_altitude_ft",
     "geom_altitude_ft",
@@ -1180,11 +1181,18 @@ def _limit_icaos_to_sfdps_or_bts(
     return [icao for icao in icaos if icao in source_icaos]
 
 
-def _run_airport_model_inference(flights_df: pl.DataFrame) -> pl.DataFrame:
+def _run_airport_model_inference(
+    flights_df: pl.DataFrame,
+    df_adsb_full: pl.DataFrame,
+) -> pl.DataFrame:
     from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
     from flights_ai_model_airport.inference import inference
 
-    return inference(flights_df, get_latest_airport_model_path())
+    return inference(
+        flights_df,
+        get_latest_airport_model_path(),
+        df_adsb_full,
+    )
 
 
 def run_main(
@@ -1241,8 +1249,9 @@ def run_main(
     if pia_or_american_ladd_only:
         lf_adsb = lf_adsb.filter(_pia_or_american_ladd_icao_filter())
 
+    df_adsb = lf_adsb.collect()
     segments = _collect_segments_from_adsb_lf(
-        lf_adsb,
+        df_adsb.lazy(),
         max_workers=max_workers,
         segment_chunk_size=segment_chunk_size,
         print_progress=True,
@@ -1257,7 +1266,7 @@ def run_main(
     if pia_or_american_ladd_only:
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
     
-    flights_df = _run_airport_model_inference(flights_df)
+    flights_df = _run_airport_model_inference(flights_df, df_adsb)
     output_path = (
         adsbx_flights_airport_model_output_path(target_date)
         if use_adsbx
