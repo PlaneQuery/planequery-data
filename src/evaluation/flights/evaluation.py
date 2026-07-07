@@ -95,11 +95,26 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
         pl.read_parquet(fr24_flights_parquet_path(target_date))
     )
 
+def get_model_adsbx_flights(target_date: date) -> pl.DataFrame:
+    from data_engineering.flights.flight_type import (
+        adsbx_flights_airport_model_output_path,
+        with_flight_schema_columns,
+    )
+    from flights_algorithm.main import run_main
+
+    output_path = adsbx_flights_airport_model_output_path(target_date)
+    if output_path.exists():
+        return with_flight_schema_columns(pl.read_parquet(output_path))
+    else:
+        raise FileNotFoundError(f"Model ADS-BX flights file not found for {target_date}: {output_path}")
+
 def source_flights_reader(src: str, airport_model_path: Path | None = None):
     if src == "adsbx":
         return get_adsbx_flights_for_day
     if src == "model":
         return get_flights
+    if src == "model-adsbx":
+        return get_model_adsbx_flights
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
