@@ -181,4 +181,4 @@ def read_eurocontrol_flights(
     df = pl.read_parquet(path).filter(
         pl.col("ACTUAL OFF BLOCK TIME").dt.date() == target_date
     )
-    return normalize_eurocontrol_flights(df)
+    return normalize_eurocontrol_flights(df).filter(pl.col("icao").is_not_null())
