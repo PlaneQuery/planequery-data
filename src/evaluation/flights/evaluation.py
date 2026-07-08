@@ -6,6 +6,7 @@ from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 
 from data_engineering.flights.flight_type import get_flights
+from data_engineering.eurocontrol.read import read_eurocontrol_flights
 from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
@@ -142,6 +143,8 @@ def source_flights_reader(
         return read_opensky_flights
     if src == "fr24":
         return read_fr24_flights
+    if src == "eurocontrol":
+        return read_eurocontrol_flights
 
     raise ValueError(f"Unknown flight source: {src}")
 
