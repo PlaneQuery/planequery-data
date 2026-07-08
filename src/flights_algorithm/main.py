@@ -58,9 +58,7 @@ MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
 MAX_SEGMENT_STITCH_GAP = timedelta(minutes=45)
 RUN_MAIN_CONTEXT = timedelta(hours=12)
-READSB_HIST_PARQUET_ROOT = Path(
-    "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
-)
+
 DEFAULT_RUN_MAIN_MAX_WORKERS = min(os.cpu_count() or 1, 32)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
@@ -1126,36 +1124,6 @@ def _collect_segments_from_adsb_lf(
                 print(f"Segmented {processed_icaos}/{total_icaos} ICAOs", flush=True)
             segments.extend(chunk_segments)
     return segments
-
-
-def _readsb_hist_parquet_day_dir(
-    target_date: date,
-    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
-) -> Path:
-    return (
-        Path(parquet_root)
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-    )
-
-
-def _scan_readsb_hist_day_parquet(
-    target_date: date,
-    parquet_root: Path = READSB_HIST_PARQUET_ROOT,
-) -> pl.LazyFrame:
-    day_dir = _readsb_hist_parquet_day_dir(target_date, parquet_root)
-    parquet_glob = day_dir / "part*.parquet"
-    lf = pl.scan_parquet(str(parquet_glob))
-    available_columns = set(lf.collect_schema().names())
-    return lf.select(
-        [
-            pl.col(column)
-            if column in available_columns
-            else pl.lit(None).alias(column)
-            for column in ADSB_ALGORITHM_COLUMNS
-        ]
-    )
 
 
 def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
