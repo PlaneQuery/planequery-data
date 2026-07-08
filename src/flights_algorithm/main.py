@@ -13,6 +13,7 @@ import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.flights.flight_type import (
+    adsblol_flights_output_path,
     adsblol_flights_airport_model_output_path,
     adsbx_flights_airport_model_output_path,
 )
@@ -1171,8 +1172,12 @@ def run_main(
     use_adsbx: bool = False,
     max_workers: int | None = None,
     segment_chunk_size: int | None = None,
+    no_airports_model: bool = False,
 ) -> pl.DataFrame:
     from data_engineering.adsb.read_adsb import read_adsbx, scan_adsb
+
+    if no_airports_model and use_adsbx:
+        raise ValueError("no_airports_model is only supported for ADSB.lol input")
 
     if max_workers is None:
         max_workers = _default_max_workers()
@@ -1233,13 +1238,18 @@ def run_main(
     flights_df = _filter_short_same_airport_flights(flights_df)
     if pia_or_american_ladd_only:
         flights_df = flights_df.filter(_pia_or_american_ladd_filter())
-    
-    flights_df = _run_airport_model_inference(flights_df, df_adsb)
-    output_path = (
-        adsbx_flights_airport_model_output_path(target_date)
-        if use_adsbx
-        else adsblol_flights_airport_model_output_path(target_date)
-    )
+
+    if not no_airports_model:
+        flights_df = _run_airport_model_inference(flights_df, df_adsb)
+
+    if no_airports_model:
+        output_path = adsblol_flights_output_path(target_date)
+    else:
+        output_path = (
+            adsbx_flights_airport_model_output_path(target_date)
+            if use_adsbx
+            else adsblol_flights_airport_model_output_path(target_date)
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
     return flights_df
@@ -1306,10 +1316,17 @@ def cli() -> None:
         type=_icao_arg,
         help="only run the algorithm for these ICAOs",
     )
+    parser.add_argument(
+        "--no-airports-model",
+        action="store_true",
+        help="use closest first/last ADS-B message airports instead of LightGBM airport inference",
+    )
     args = parser.parse_args()
 
     if args.end_date <= args.start_date:
         parser.error("end_date must be after start_date")
+    if args.no_airports_model and args.use_adsbx:
+        parser.error("--no-airports-model is only supported for ADSB.lol input")
 
     for target_date in _date_range(args.start_date, args.end_date):
         print(f"Running flights algorithm for {target_date}")
@@ -1320,6 +1337,7 @@ def cli() -> None:
             use_adsbx=args.use_adsbx,
             max_workers=args.max_workers,
             icaos=args.icaos,
+            no_airports_model=args.no_airports_model,
         )
         print(flights_df)
 

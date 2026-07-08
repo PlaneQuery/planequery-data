@@ -10,12 +10,9 @@ from data_engineering.fr24.get_test_data import FR24_FLIGHTS_VERSION
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
-from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
-from flights_ai_model_airport.inference import get_airport_model_flights
 from utils import current_commit_hash
 from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
-from flights_ai_model.validation import flights_df_comparison
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
@@ -108,12 +105,34 @@ def get_model_adsbx_flights(target_date: date) -> pl.DataFrame:
     else:
         raise FileNotFoundError(f"Model ADS-BX flights file not found for {target_date}: {output_path}")
 
-def source_flights_reader(src: str, airport_model_path: Path | None = None):
+def get_model_no_airports_flights(target_date: date) -> pl.DataFrame:
+    from data_engineering.flights.flight_type import (
+        adsblol_flights_output_path,
+        with_flight_schema_columns,
+    )
+
+    output_path = adsblol_flights_output_path(target_date)
+    if output_path.exists():
+        return with_flight_schema_columns(pl.read_parquet(output_path))
+    raise FileNotFoundError(f"Model no-airports flights file not found for {target_date}: {output_path}")
+
+
+def source_flights_reader(
+    src: str,
+    airport_model_path: Path | None = None,
+    no_airports_model: bool = False,
+):
     if src == "adsbx":
         return get_adsbx_flights_for_day
+    if src == "model-no-airports":
+        return get_model_no_airports_flights
     if src == "model":
+        if no_airports_model:
+            return get_model_no_airports_flights
         return get_flights
     if src == "model-adsbx":
+        if no_airports_model:
+            raise ValueError("no_airports_model is only supported for model (ADSB.lol)")
         return get_model_adsbx_flights
     if src == "sfdps":
         return get_sfdps_flights_day
@@ -134,6 +153,7 @@ def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
         "use_all_icaos",
         "filter_rotorcraft",
         "pia_or_american_ladd_only",
+        "no_airports_model",
     }
     stats_cols = [col for col in df_stats.columns if col not in metadata_cols]
     df_stats = df_stats.with_columns(pl.col(stats_cols).cast(pl.Float64))
@@ -145,6 +165,7 @@ def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
             "use_all_icaos",
             "filter_rotorcraft",
             "pia_or_american_ladd_only",
+            "no_airports_model",
         ])
         .agg([pl.col(col).mean().alias(col) for col in stats_cols])
         .with_columns(pl.lit("average").alias("test_date"))
@@ -156,10 +177,11 @@ def main(
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
-    airport_model_path = get_latest_airport_model_path(),
+    airport_model_path: Path | None = None,
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
+    no_airports_model = False,
 ):
     if isinstance(test_src, str):
         test_src = [test_src]
@@ -172,9 +194,16 @@ def main(
     outputs = []
     adsb_by_date: dict[date, pl.DataFrame] = {}
     for src in test_src:
-        get_source_flights = source_flights_reader(src, airport_model_path=airport_model_path)
+        get_source_flights = source_flights_reader(
+            src,
+            airport_model_path=airport_model_path,
+            no_airports_model=no_airports_model,
+        )
         for gold in gold_src:
-            get_gold_flights = source_flights_reader(gold)
+            get_gold_flights = source_flights_reader(
+                gold,
+                no_airports_model=no_airports_model,
+            )
             for test_date in test_dates:
                 df_test = get_source_flights(test_date)
                 df_gold = get_gold_flights(test_date)
@@ -208,6 +237,7 @@ def main(
                     "use_all_icaos": use_all_icaos,
                     "filter_rotorcraft": filter_rotorcraft,
                     "pia_or_american_ladd_only": pia_or_american_ladd_only,
+                    "no_airports_model": no_airports_model,
                     **stats,
                 })
                 print(f"Stats for {src}:{gold}: {stats}")
@@ -260,6 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_all_icaos", action="store_true", default=False)
     parser.add_argument("--filter_rotorcraft", action="store_true", default=False)
     parser.add_argument("--pia-or-american-ladd-only", action="store_true", default=False)
+    parser.add_argument("--no-airports-model", action="store_true", default=False)
     args = parser.parse_args()
 
     test_dates = args.test_dates
@@ -273,4 +304,5 @@ if __name__ == "__main__":
         use_all_icaos=args.use_all_icaos,
         filter_rotorcraft=args.filter_rotorcraft,
         pia_or_american_ladd_only=args.pia_or_american_ladd_only,
+        no_airports_model=args.no_airports_model,
     )
