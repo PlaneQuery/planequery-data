@@ -1262,6 +1262,13 @@ def _positive_int_arg(value: str) -> int:
     return parsed
 
 
+def _icao_arg(value: str) -> str:
+    icao = value.strip().lower()
+    if not icao:
+        raise argparse.ArgumentTypeError("expected non-empty ICAO")
+    return icao
+
+
 def _date_range(start_date: date, end_date: date):
     current_date = start_date
     while current_date < end_date:
@@ -1293,6 +1300,12 @@ def cli() -> None:
         type=_positive_int_arg,
         help="ICAO segmentation worker processes (default: min(os.cpu_count(), 32))",
     )
+    parser.add_argument(
+        "--icaos",
+        nargs="+",
+        type=_icao_arg,
+        help="only run the algorithm for these ICAOs",
+    )
     args = parser.parse_args()
 
     if args.end_date <= args.start_date:
@@ -1306,6 +1319,7 @@ def cli() -> None:
             sfdps_or_bts_only=args.sfdps_or_bts_only,
             use_adsbx=args.use_adsbx,
             max_workers=args.max_workers,
+            icaos=args.icaos,
         )
         print(flights_df)
 
