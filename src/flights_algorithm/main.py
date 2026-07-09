@@ -838,11 +838,6 @@ def _default_max_workers() -> int:
     return DEFAULT_RUN_MAIN_MAX_WORKERS
 
 
-def _validate_max_workers(max_workers: int) -> None:
-    if max_workers < 1:
-        raise ValueError("max_workers must be at least 1")
-
-
 def _get_airport_lookup():
     from airports.airportLookup import AirportLookup
     try:
@@ -1068,7 +1063,8 @@ def _collect_segments_from_adsb_lf(
     segment_chunk_size: int | None = None,
     print_progress: bool = False,
 ) -> list[FlightSegment]:
-    _validate_max_workers(max_workers)
+    if max_workers < 1:
+        raise ValueError("max_workers must be at least 1")
     if icaos is not None:
         lf_adsb = lf_adsb.filter(pl.col("icao").is_in(list(icaos)))
 
@@ -1181,7 +1177,6 @@ def run_main(
 
     if max_workers is None:
         max_workers = _default_max_workers()
-    _validate_max_workers(max_workers)
 
     day_start, day_end = _day_bounds(target_date)
     window_start = day_start - RUN_MAIN_CONTEXT
