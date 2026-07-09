@@ -62,3 +62,12 @@ def test_model_to_sfdps_flight_evaluation_meets_daily_bounds(single_test_date: d
     assert len(outputs) == 1
     _, stats = outputs[0]
     assert_stats_meet_bounds(stats, DAILY_STATS_BOUNDS[single_test_date])
+
+def test_model_flights_recreate_meets_daily_bounds():
+    dt = date(2026,3,1)
+    from flights_algorithm.main import run_main
+    run_main(target_date = dt)
+    outputs, df_stats = main(test_src="model", gold_src="sfdps", test_dates=dt)
+    assert len(outputs) == 1
+    _, stats = outputs[0]
+    assert_stats_meet_bounds(stats, DAILY_STATS_BOUNDS[dt])
