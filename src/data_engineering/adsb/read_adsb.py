@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -236,7 +236,21 @@ def scan_adsb(
 def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
     return read_adsb(current_day, columns=columns, icaos=icaos)
 
-
+def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
+    '''icaos is sorted'''
+    current_day = start_dt.date()
+    end_day = end_dt.date()
+    dates = [current_day + timedelta(days=i) for i in range((end_day - current_day).days + 1)]
+    for day in dates:
+        create_adsb_parquet_for_day(day)
+    first_bucket = _icao_bucket(icaos[0])
+    last_bucket = _icao_bucket(icaos[-1])
+    icao_buckets = list(range(first_bucket, last_bucket + 1))
+    paths = []
+    for day in dates:
+        paths.extend(_parquet_read_paths(day, icao_buckets=icao_buckets))
+    df_lz = pl.scan_parquet(paths).filter(pl.col("icao").is_in(icaos)).filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(columns)
+    return df_lz
 def get_icaos_in_adsb(current_day: date) -> list[str]:
     '''
     Filters invalid icaos
