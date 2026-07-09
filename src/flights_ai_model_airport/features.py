@@ -47,24 +47,6 @@ AIRCRAFT_CATEGORY_RANKING = {
 airport_lookup = AirportLookup()
 
 
-def partition_adsb_by_icao(
-    df_adsb_full: pl.DataFrame,
-    icaos: list[str] | None = None,
-) -> dict[str, pl.DataFrame]:
-    if icaos is not None:
-        df_adsb_full = df_adsb_full.filter(pl.col("icao").is_in(icaos))
-
-    groups = (
-        df_adsb_full
-        .sort(["icao", "time"])
-        .partition_by("icao", as_dict=True, maintain_order=True)
-    )
-    return {
-        key[0] if isinstance(key, tuple) else key: group
-        for key, group in groups.items()
-    }
-
-
 def aircraft_category_to_int(category: str) -> int:
     return AIRCRAFT_CATEGORY_RANKING.get(category, 0)
 
@@ -201,12 +183,10 @@ def process_flights(
     df_flights: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
     endpoint: str = "takeoff",
-    adsb_by_icao: dict[str, pl.DataFrame] | None = None,
 ):
     df_flights = add_flight_id_col(df_flights)
     icaos = df_flights.get_column("icao").unique().to_list()
-    if adsb_by_icao is None:
-        adsb_by_icao = partition_adsb_by_icao(df_adsb_full, icaos)
+    df_adsb_full = df_adsb_full.filter(pl.col("icao").is_in(icaos))
     assert len(df_flights) > 0, "No flights provided"
     flights = flights_df_to_flights(df_flights)
     X_rows = []
@@ -216,11 +196,9 @@ def process_flights(
     for flight in flights:
         if flight.first_message_time is None or flight.last_message_time is None:
             continue
-        df_icao_adsb = adsb_by_icao.get(flight.icao)
-        if df_icao_adsb is None:
-            continue
-        df_adsb = df_icao_adsb.filter(
-            (pl.col("time") >= flight.first_message_time)
+        df_adsb = df_adsb_full.filter(
+            (pl.col("icao") == flight.icao)
+            & (pl.col("time") >= flight.first_message_time)
             & (pl.col("time") <= flight.last_message_time)
         )
         if len(df_adsb) < 2:
@@ -250,13 +228,11 @@ def build_inference_data(
     df_flights: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
     endpoint: str = "takeoff",
-    adsb_by_icao: dict[str, pl.DataFrame] | None = None,
 ):
     X, Y, flight_id_rows, airport_ident_rows = process_flights(
         df_flights,
         df_adsb_full,
         endpoint,
-        adsb_by_icao,
     )
     return X, flight_id_rows, airport_ident_rows
 

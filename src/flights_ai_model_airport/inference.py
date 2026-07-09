@@ -7,7 +7,7 @@ import joblib
 from lightgbm import LGBMClassifier
 
 from data_engineering.flights.flight_type import add_flight_id_col, get_flights, pia_or_american_ladd_icao_filter
-from flights_ai_model_airport.features import FEATURE_NAMES, build_inference_data, partition_adsb_by_icao
+from flights_ai_model_airport.features import FEATURE_NAMES, build_inference_data
 from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOINTS
 
 def load_model(model_path: Path):
@@ -39,7 +39,6 @@ def score_airport_candidates(
     model: LGBMClassifier | dict | Path,
     df_adsb_full: pl.DataFrame,
     endpoint: str = "takeoff",
-    adsb_by_icao: dict[str, pl.DataFrame] | None = None,
 ):
     df_flights = add_flight_id_col(df_flights)
     model = _model_for_endpoint(model, endpoint)
@@ -47,7 +46,6 @@ def score_airport_candidates(
         df_flights,
         df_adsb_full,
         endpoint,
-        adsb_by_icao,
     )
 
     scores = model.predict_proba(X)[:, 1]
@@ -101,25 +99,20 @@ def inference(
     if isinstance(model, Path):
         model = load_model(model)
 
-    df_flights = add_flight_id_col(df_flights)
-    icaos = df_flights.get_column("icao").unique().to_list()
-    adsb_by_icao = partition_adsb_by_icao(df_adsb_full, icaos)
-
     takeoff_scores = score_airport_candidates(
         df_flights,
         model,
         df_adsb_full,
         "takeoff",
-        adsb_by_icao,
     )
     landing_scores = score_airport_candidates(
         df_flights,
         model,
         df_adsb_full,
         "landing",
-        adsb_by_icao,
     )
 
+    df_flights = add_flight_id_col(df_flights)
     df_flights = _join_endpoint_predictions(df_flights, takeoff_scores, "takeoff")
     df_flights = _join_endpoint_predictions(df_flights, landing_scores, "landing")
     df_flights = set_consecutive_airport_idents_from_scores(df_flights, landing_scores, takeoff_scores)
