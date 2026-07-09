@@ -28,7 +28,7 @@ EUROCONTROL_COLUMNS = [
 ]
 
 
-def eurocontrol_flights_parquet_path(target_date: date) -> Path:
+def eurocontrol_raw_flights_parquet_path(target_date: date) -> Path:
     _, last_day = calendar.monthrange(target_date.year, target_date.month)
     month_start = date(target_date.year, target_date.month, 1)
     month_end = date(target_date.year, target_date.month, last_day)
@@ -40,6 +40,18 @@ def eurocontrol_flights_parquet_path(target_date: date) -> Path:
         / f"{target_date:%Y%m}"
         / "intermediate"
         / f"flights_{month_start:%Y%m%d}_{month_end:%Y%m%d}_time_columns.parquet"
+    )
+
+
+def eurocontrol_flights_parquet_path(target_date: date) -> Path:
+    return (
+        OUTPUT_DIR
+        / "data"
+        / "flights"
+        / "eurocontrol"
+        / f"year={target_date.year}"
+        / f"month={target_date.month:02d}"
+        / "data.parquet"
     )
 
 
@@ -173,12 +185,40 @@ def normalize_eurocontrol_flights(
     return with_flight_schema_columns(df_flights)
 
 
+def create_eurocontrol_flights(
+    target_date: date,
+    raw_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+) -> pl.DataFrame:
+    raw_path = raw_path or eurocontrol_raw_flights_parquet_path(target_date)
+    output_path = Path(output_path or eurocontrol_flights_parquet_path(target_date))
+    df = normalize_eurocontrol_flights(pl.read_parquet(raw_path)).filter(
+        pl.col("icao").is_not_null()
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(output_path)
+    return df
+
+
+def get_eurocontrol_flights_month(
+    target_date: date,
+    use_cache: bool = True,
+    raw_path: str | Path | None = None,
+) -> pl.DataFrame:
+    path = eurocontrol_flights_parquet_path(target_date)
+    if use_cache and path.exists():
+        return pl.read_parquet(path)
+    return create_eurocontrol_flights(target_date, raw_path=raw_path, output_path=path)
+
+
 def read_eurocontrol_flights(
     target_date: date,
-    path: str | Path | None = None,
+    raw_path: str | Path | None = None,
+    use_cache: bool = True,
 ) -> pl.DataFrame:
-    path = path or eurocontrol_flights_parquet_path(target_date)
-    df = pl.read_parquet(path).filter(
-        pl.col("ACTUAL OFF BLOCK TIME").dt.date() == target_date
+    df = get_eurocontrol_flights_month(
+        target_date,
+        use_cache=use_cache,
+        raw_path=raw_path,
     )
-    return normalize_eurocontrol_flights(df).filter(pl.col("icao").is_not_null())
+    return df.filter(pl.col("takeoff_time").dt.date() == target_date)
