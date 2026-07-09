@@ -10,6 +10,7 @@ from typing import Sequence
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
+from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz
 from data_engineering.flights.flight_type import (
     adsblol_flights_output_path,
     adsblol_flights_airport_model_output_path,
@@ -1035,21 +1036,12 @@ def _pia_or_american_ladd_icao_filter() -> pl.Expr:
     return _pia_or_american_ladd_filter().any().over("icao")
 
 
-def _collect_segments_from_adsb_lf(
-    lf_adsb: pl.LazyFrame,
-    *,
-    icaos: Sequence[str] | None = None,
-    max_workers: int | None = None,
-    print_progress: bool = False,
+def _segment_adsb_df(
+    df_adsb: pl.DataFrame,
 ) -> list[FlightSegment]:
-    if max_workers is not None and max_workers < 1:
-        raise ValueError("max_workers must be at least 1")
-    if icaos is not None:
-        lf_adsb = lf_adsb.filter(pl.col("icao").is_in(list(icaos)))
 
     df_adsb = (
-        lf_adsb
-        .collect()
+        df_adsb
         .filter(
             pl.col("time").is_not_null()
             & pl.col("icao").is_not_null()
@@ -1063,20 +1055,13 @@ def _collect_segments_from_adsb_lf(
         df_icao
         for _, df_icao in df_adsb.group_by("icao", maintain_order=True)
     ]
-    if not icao_dfs:
-        return []
 
-    total_icaos = len(icao_dfs)
     processed_icaos = 0
     segments = []
-    if print_progress:
-        print(f"Segmenting {total_icaos} ICAOs", flush=True)
-
     for df_icao in icao_dfs:
         segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
         processed_icaos += 1
-        if print_progress:
-            print(f"Segmented {processed_icaos}/{total_icaos} ICAOs", flush=True)
+
     return segments
 
 
@@ -1116,6 +1101,18 @@ def _run_airport_model_inference(
         df_adsb_full,
     )
 
+def process_icaos(start_dt: datetime, end_dt: datetime, icaos: list[str], no_airports_model: bool = False) -> pl.DataFrame:
+    df_adsb = read_adsb_lz(start_dt, end_dt, icaos).collect()
+    segments = _segment_adsb_df(df_adsb)
+    segments = [
+        segment
+        for segment in segments
+        if _segment_takes_off_in_window(segment, start_dt, end_dt)
+    ]
+    flights_df = _segments_to_flights_df(segments)
+    if not no_airports_model:
+        flights_df = _run_airport_model_inference(flights_df, df_adsb)
+    return flights_df
 
 def run_main(
     target_date: date = date(2026, 3, 1),
@@ -1132,63 +1129,15 @@ def run_main(
         raise ValueError("no_airports_model is only supported for ADSB.lol input")
 
     day_start, day_end = _day_bounds(target_date)
-    window_start = day_start - RUN_MAIN_CONTEXT
-    window_end = day_end + RUN_MAIN_CONTEXT
-    scan_dates = [target_date - timedelta(days=1), target_date, target_date + timedelta(days=1)]
+    start_dt = day_start - RUN_MAIN_CONTEXT
+    end_dt = day_end + RUN_MAIN_CONTEXT
     if sfdps_or_bts_only:
         icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
-
-    if use_adsbx:
-        lf_adsb = pl.concat(
-            [
-                read_adsbx(
-                    scan_date,
-                    columns=ADSB_ALGORITHM_COLUMNS,
-                    icaos=icaos,
-                    pia_or_american_ladd_only=pia_or_american_ladd_only,
-                )
-                for scan_date in scan_dates
-            ]
-        ).lazy()
     else:
-        lf_adsb = pl.concat(
-            [
-                scan_adsb(
-                    scan_date,
-                    columns=ADSB_ALGORITHM_COLUMNS,
-                    icaos=icaos,
-                    pia_or_american_ladd_only=pia_or_american_ladd_only,
-                )
-                for scan_date in scan_dates
-            ]
-        )
+        icaos = sorted(get_icaos_in_adsb(target_date))
 
-    lf_adsb = lf_adsb.filter(
-        (pl.col("time") >= window_start)
-        & (pl.col("time") < window_end)
-    )
-    if pia_or_american_ladd_only:
-        lf_adsb = lf_adsb.filter(_pia_or_american_ladd_icao_filter())
-
-    df_adsb = lf_adsb.collect()
-    segments = _collect_segments_from_adsb_lf(
-        df_adsb.lazy(),
-        max_workers=max_workers,
-        print_progress=True,
-    )
-    segments = [
-        segment
-        for segment in segments
-        if _segment_takes_off_in_window(segment, day_start, day_end)
-    ]
-    flights_df = _segments_to_flights_df(segments)
-    flights_df = _filter_short_same_airport_flights(flights_df)
-    if pia_or_american_ladd_only:
-        flights_df = flights_df.filter(_pia_or_american_ladd_filter())
-
-    if not no_airports_model:
-        flights_df = _run_airport_model_inference(flights_df, df_adsb)
-
+    flights_df = process_icaos(start_dt, end_dt, icaos, no_airports_model=no_airports_model)
+   
     if no_airports_model:
         output_path = adsblol_flights_output_path(target_date)
     else:
