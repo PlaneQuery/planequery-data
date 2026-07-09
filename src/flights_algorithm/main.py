@@ -1311,6 +1311,11 @@ def cli() -> None:
         help="ICAO segmentation worker processes (default: min(os.cpu_count(), 32))",
     )
     parser.add_argument(
+        "--segment-chunk-size",
+        type=_positive_int_arg,
+        help="number of ICAO groups to send to each segmentation worker task",
+    )
+    parser.add_argument(
         "--icaos",
         nargs="+",
         type=_icao_arg,
@@ -1336,6 +1341,7 @@ def cli() -> None:
             sfdps_or_bts_only=args.sfdps_or_bts_only,
             use_adsbx=args.use_adsbx,
             max_workers=args.max_workers,
+            segment_chunk_size=args.segment_chunk_size,
             icaos=args.icaos,
             no_airports_model=args.no_airports_model,
         )
