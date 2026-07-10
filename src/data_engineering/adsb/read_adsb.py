@@ -236,7 +236,7 @@ def scan_adsb(
 def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
     return read_adsb(current_day, columns=columns, icaos=icaos)
 
-def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
+def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns=DEFAULT_COLUMNS_SET, use_adsbx: bool = False):
     '''icaos is sorted'''
     current_day = start_dt.date()
     end_day = end_dt.date()
@@ -246,9 +246,13 @@ def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns
     icao_buckets = list(range(first_bucket, last_bucket + 1))
     paths = []
     for day in dates:
-        paths.extend(_parquet_read_paths(day, icao_buckets=icao_buckets))
+        if use_adsbx:
+            paths.append(_adsbx_parquet_path(day))
+        else:
+            paths.extend(_parquet_read_paths(day, icao_buckets=icao_buckets))
     df_lz = pl.scan_parquet(paths).filter(pl.col("icao").is_in(icaos)).filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(columns)
     return df_lz
+
 def get_icaos_in_adsb(current_day: date) -> list[str]:
     '''
     Filters invalid icaos

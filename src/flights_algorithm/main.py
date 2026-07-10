@@ -10,7 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
-from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz
+from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz, read_adsbx
 from data_engineering.flights.flight_type import flights_algorithm_output_path
 
 
@@ -1097,8 +1097,8 @@ def _run_airport_model_inference(
         df_adsb_full,
     )
 
-def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_airports_model: bool = False) -> pl.DataFrame:
-    df_adsb = read_adsb_lz(day_start - RUN_MAIN_CONTEXT, day_end + RUN_MAIN_CONTEXT, icaos).collect()
+def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_airports_model: bool = False, use_adsbx: bool = False, target_date: date | None = None) -> pl.DataFrame:
+    df_adsb = read_adsb_lz(day_start - RUN_MAIN_CONTEXT, day_end + RUN_MAIN_CONTEXT, icaos, use_adsbx=use_adsbx).collect()
     segments = _segment_adsb_df(df_adsb)
     segments = [
         segment
@@ -1106,6 +1106,7 @@ def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_a
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     flights_df = _segments_to_flights_df(segments)
+    flights_df = _filter_short_same_airport_flights(flights_df)
     if not no_airports_model:
         flights_df = _run_airport_model_inference(flights_df, df_adsb)
     return flights_df
@@ -1127,23 +1128,20 @@ def run_main(
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
     print(f"number of workers: {max_workers or 1}")
-    if no_airports_model and use_adsbx:
-        raise ValueError("no_airports_model is only supported for ADSB.lol input")
-    # figure out how big dataframe is so I can always fit them in ram. 
+
     day_start, day_end = _day_bounds(target_date)
-    if sfdps_or_bts_only:
-        icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
+    if use_adsbx:
+        icaos = read_adsbx(target_date, columns= ["icao"]).get_column("icao").drop_nulls().unique().to_list()
     else:
         icaos = sorted(get_icaos_in_adsb(target_date))
     icao_lists = _chunks_by_size(icaos, 500)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
-            executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model)
+            executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model, use_adsbx, target_date)
             for icao_list in icao_lists
         ]
         flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
-    flights_df = _filter_short_same_airport_flights(flights_df)
     output_path = flights_algorithm_output_path(
         target_date,
         "adsbx" if use_adsbx else "adsblol",
@@ -1222,8 +1220,6 @@ def cli() -> None:
 
     if args.end_date <= args.start_date:
         parser.error("end_date must be after start_date")
-    if args.no_airports_model and args.use_adsbx:
-        parser.error("--no-airports-model is only supported for ADSB.lol input")
 
     for target_date in _date_range(args.start_date, args.end_date):
         print(f"Running flights algorithm for {target_date}")
