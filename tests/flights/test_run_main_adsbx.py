@@ -15,52 +15,46 @@ def _set_output_dir(tmp_path, monkeypatch):
     )
 
 
-def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkeypatch):
+def test_flights_algorithm_output_path_uses_algorithm_source_partitions(
+    tmp_path,
+    monkeypatch,
+):
     _set_output_dir(tmp_path, monkeypatch)
 
-    import data_engineering.adsb.read_adsb as read_adsb_module
+    import flights_algorithm.main as flights_algorithm_main
+
+    monkeypatch.setattr(flights_algorithm_main, "OUTPUT_DIR", tmp_path)
+
+    assert flights_algorithm_main.flights_algorithm_output_path(
+        date(2026, 3, 1),
+        "adsblol",
+    ) == (
+        tmp_path
+        / "data"
+        / "flights"
+        / "algorithm"
+        / "v1"
+        / "adsblol"
+        / "year=2026"
+        / "month=03"
+        / "day=01"
+        / "flights.parquet"
+    )
+    assert "adsbx" in str(
+        flights_algorithm_main.flights_algorithm_output_path(
+            date(2026, 3, 1),
+            "adsbx",
+        )
+    )
+
+
+def test_run_main_use_adsbx_writes_adsbx_algorithm_output(tmp_path, monkeypatch):
+    _set_output_dir(tmp_path, monkeypatch)
+
     import flights_algorithm.main as flights_algorithm_main
 
     target_date = date(2026, 3, 1)
-    read_calls = []
-    scan_calls = []
-    inference_adsb_heights = []
-
-    def fake_read_adsbx(current_day, columns, icaos=None, pia_or_american_ladd_only=False):
-        read_calls.append(
-            {
-                "current_day": current_day,
-                "columns": columns,
-                "icaos": icaos,
-                "pia_or_american_ladd_only": pia_or_american_ladd_only,
-            }
-        )
-        return pl.DataFrame(
-            {
-                "time": [datetime.combine(current_day, datetime.min.time())],
-                "icao": ["abc123"],
-                "lat": [0.0],
-                "lon": [0.0],
-                "ground_speed_kt": [0.0],
-                "on_ground": [True],
-                "baro_altitude_ft": [0],
-                "geom_altitude_ft": [0],
-                "pia": [True],
-                "ladd": [False],
-                "military": [False],
-                "interesting": [False],
-                "aircraft_type": [""],
-                "owner": [""],
-                "aircraft_description": [""],
-                "category": [""],
-            }
-        )
-
-    def fake_scan_adsb(*args, **kwargs):
-        scan_calls.append((args, kwargs))
-        return pl.DataFrame().lazy()
-
-    output_path = tmp_path / "flights.parquet"
+    process_calls = []
     flights_df = pl.DataFrame(
         {
             "icao": ["abc123"],
@@ -71,36 +65,29 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
         }
     )
 
-    monkeypatch.setattr(read_adsb_module, "read_adsbx", fake_read_adsbx)
-    monkeypatch.setattr(read_adsb_module, "scan_adsb", fake_scan_adsb)
     monkeypatch.setattr(
         flights_algorithm_main,
-        "_collect_segments_from_adsb_lf",
-        lambda *_args, **_kwargs: [],
+        "OUTPUT_DIR",
+        tmp_path,
     )
     monkeypatch.setattr(
         flights_algorithm_main,
-        "_segments_to_flights_df",
-        lambda _segments: flights_df,
+        "get_icaos_in_adsb",
+        lambda _target_date: ["abc123"],
     )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_filter_short_same_airport_flights",
-        lambda df: df,
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_run_airport_model_inference",
-        lambda df, df_adsb_full: (
-            inference_adsb_heights.append(df_adsb_full.height),
-            df,
-        )[1],
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "adsbx_flights_airport_model_output_path",
-        lambda _target_date: output_path,
-    )
+
+    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+        process_calls.append(
+            {
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+                "icaos": icaos,
+                "no_airports_model": no_airports_model,
+            }
+        )
+        return flights_df
+
+    monkeypatch.setattr(flights_algorithm_main, "process_icaos", fake_process_icaos)
 
     df = flights_algorithm_main.run_main(
         target_date=target_date,
@@ -111,16 +98,26 @@ def test_run_main_use_adsbx_reads_adsbx_and_writes_adsbx_output(tmp_path, monkey
     )
 
     assert df.equals(flights_df)
-    assert output_path.exists()
-    assert scan_calls == []
-    assert [call["current_day"] for call in read_calls] == [
-        date(2026, 2, 28),
-        date(2026, 3, 1),
-        date(2026, 3, 2),
+    assert process_calls == [
+        {
+            "start_dt": datetime(2026, 2, 28, 12),
+            "end_dt": datetime(2026, 3, 2, 12),
+            "icaos": ["abc123"],
+            "no_airports_model": False,
+        }
     ]
-    assert inference_adsb_heights == [2]
-    assert all(call["icaos"] == ["abc123"] for call in read_calls)
-    assert all(call["pia_or_american_ladd_only"] for call in read_calls)
+    assert (
+        tmp_path
+        / "data"
+        / "flights"
+        / "algorithm"
+        / "v1"
+        / "adsbx"
+        / "year=2026"
+        / "month=03"
+        / "day=01"
+        / "flights.parquet"
+    ).exists()
 
 
 def test_cli_forwards_optional_icaos(tmp_path, monkeypatch):
@@ -175,41 +172,56 @@ def test_cli_forwards_optional_icaos(tmp_path, monkeypatch):
     ]
 
 
+def test_cli_forwards_max_workers(tmp_path, monkeypatch):
+    _set_output_dir(tmp_path, monkeypatch)
+
+    import flights_algorithm.main as flights_algorithm_main
+
+    calls = []
+
+    def fake_run_main(**kwargs):
+        calls.append(kwargs)
+        return pl.DataFrame({"icao": ["abc123"]})
+
+    monkeypatch.setattr(flights_algorithm_main, "run_main", fake_run_main)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "flights_algorithm.main",
+            "2026-03-01",
+            "2026-03-02",
+            "--max-workers",
+            "3",
+            "--no-airports-model",
+        ],
+    )
+
+    flights_algorithm_main.cli()
+
+    assert calls == [
+        {
+            "target_date": date(2026, 3, 1),
+            "pia_or_american_ladd_only": False,
+            "sfdps_or_bts_only": False,
+            "use_adsbx": False,
+            "max_workers": 3,
+            "icaos": None,
+            "no_airports_model": True,
+        }
+    ]
+
+
 def test_run_main_no_airports_model_skips_inference_and_writes_base_output(
     tmp_path,
     monkeypatch,
 ):
     _set_output_dir(tmp_path, monkeypatch)
 
-    import data_engineering.adsb.read_adsb as read_adsb_module
     import flights_algorithm.main as flights_algorithm_main
 
     target_date = date(2026, 3, 1)
-    inference_calls = []
-
-    def fake_scan_adsb(current_day, columns, icaos=None, pia_or_american_ladd_only=False):
-        return pl.DataFrame(
-            {
-                "time": [datetime.combine(current_day, datetime.min.time())],
-                "icao": ["abc123"],
-                "lat": [0.0],
-                "lon": [0.0],
-                "ground_speed_kt": [0.0],
-                "on_ground": [True],
-                "baro_altitude_ft": [0],
-                "geom_altitude_ft": [0],
-                "pia": [False],
-                "ladd": [False],
-                "military": [False],
-                "interesting": [False],
-                "aircraft_type": [""],
-                "owner": [""],
-                "aircraft_description": [""],
-                "category": [""],
-            }
-        ).lazy()
-
-    output_path = tmp_path / "no_airports_model" / "flights.parquet"
+    process_calls = []
     flights_df = pl.DataFrame(
         {
             "icao": ["abc123"],
@@ -218,32 +230,22 @@ def test_run_main_no_airports_model_skips_inference_and_writes_base_output(
         }
     )
 
-    monkeypatch.setattr(read_adsb_module, "scan_adsb", fake_scan_adsb)
     monkeypatch.setattr(
         flights_algorithm_main,
-        "_collect_segments_from_adsb_lf",
-        lambda *_args, **_kwargs: [],
+        "OUTPUT_DIR",
+        tmp_path,
     )
     monkeypatch.setattr(
         flights_algorithm_main,
-        "_segments_to_flights_df",
-        lambda _segments: flights_df,
+        "get_icaos_in_adsb",
+        lambda _target_date: ["abc123"],
     )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_filter_short_same_airport_flights",
-        lambda df: df,
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_run_airport_model_inference",
-        lambda df, df_adsb_full: inference_calls.append((df, df_adsb_full)),
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "adsblol_flights_output_path",
-        lambda _target_date: output_path,
-    )
+
+    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+        process_calls.append(no_airports_model)
+        return flights_df
+
+    monkeypatch.setattr(flights_algorithm_main, "process_icaos", fake_process_icaos)
 
     df = flights_algorithm_main.run_main(
         target_date=target_date,
@@ -252,8 +254,19 @@ def test_run_main_no_airports_model_skips_inference_and_writes_base_output(
     )
 
     assert df.equals(flights_df)
-    assert inference_calls == []
-    assert output_path.exists()
+    assert process_calls == [True]
+    assert (
+        tmp_path
+        / "data"
+        / "flights"
+        / "algorithm"
+        / "v1"
+        / "adsblol"
+        / "year=2026"
+        / "month=03"
+        / "day=01"
+        / "flights.parquet"
+    ).exists()
 
 
 def test_run_main_no_airports_model_rejects_adsbx():
@@ -264,47 +277,13 @@ def test_run_main_no_airports_model_rejects_adsbx():
         flights_algorithm_main.run_main(use_adsbx=True, no_airports_model=True)
 
 
-def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
+def test_run_main_sfdps_or_bts_only_limits_process_icaos(tmp_path, monkeypatch):
     _set_output_dir(tmp_path, monkeypatch)
 
-    import data_engineering.adsb.read_adsb as read_adsb_module
     import flights_algorithm.main as flights_algorithm_main
 
     target_date = date(2026, 3, 1)
-    read_calls = []
-    inference_adsb_heights = []
-
-    def fake_read_adsbx(current_day, columns, icaos=None, pia_or_american_ladd_only=False):
-        read_calls.append(
-            {
-                "current_day": current_day,
-                "columns": columns,
-                "icaos": icaos,
-                "pia_or_american_ladd_only": pia_or_american_ladd_only,
-            }
-        )
-        return pl.DataFrame(
-            {
-                "time": [datetime.combine(current_day, datetime.min.time())],
-                "icao": ["abc123"],
-                "lat": [0.0],
-                "lon": [0.0],
-                "ground_speed_kt": [0.0],
-                "on_ground": [True],
-                "baro_altitude_ft": [0],
-                "geom_altitude_ft": [0],
-                "pia": [False],
-                "ladd": [False],
-                "military": [False],
-                "interesting": [False],
-                "aircraft_type": [""],
-                "owner": [""],
-                "aircraft_description": [""],
-                "category": [""],
-            }
-        )
-
-    output_path = tmp_path / "flights.parquet"
+    process_calls = []
     flights_df = pl.DataFrame(
         {
             "icao": ["abc123"],
@@ -313,40 +292,18 @@ def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
         }
     )
 
-    monkeypatch.setattr(read_adsb_module, "read_adsbx", fake_read_adsbx)
+    monkeypatch.setattr(flights_algorithm_main, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(
         flights_algorithm_main,
         "_limit_icaos_to_sfdps_or_bts",
         lambda _target_date, icaos: [icao for icao in icaos if icao == "abc123"],
     )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_collect_segments_from_adsb_lf",
-        lambda *_args, **_kwargs: [],
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_segments_to_flights_df",
-        lambda _segments: flights_df,
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_filter_short_same_airport_flights",
-        lambda df: df,
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "_run_airport_model_inference",
-        lambda df, df_adsb_full: (
-            inference_adsb_heights.append(df_adsb_full.height),
-            df,
-        )[1],
-    )
-    monkeypatch.setattr(
-        flights_algorithm_main,
-        "adsbx_flights_airport_model_output_path",
-        lambda _target_date: output_path,
-    )
+
+    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+        process_calls.append(icaos)
+        return flights_df
+
+    monkeypatch.setattr(flights_algorithm_main, "process_icaos", fake_process_icaos)
 
     flights_algorithm_main.run_main(
         target_date=target_date,
@@ -356,10 +313,4 @@ def test_run_main_sfdps_or_bts_only_limits_adsb_reads(tmp_path, monkeypatch):
         max_workers=1,
     )
 
-    assert [call["current_day"] for call in read_calls] == [
-        date(2026, 2, 28),
-        date(2026, 3, 1),
-        date(2026, 3, 2),
-    ]
-    assert inference_adsb_heights == [2]
-    assert all(call["icaos"] == ["abc123"] for call in read_calls)
+    assert process_calls == [["abc123"]]

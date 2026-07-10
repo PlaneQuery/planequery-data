@@ -4,7 +4,9 @@ import polars as pl
 
 import data_engineering.eurocontrol.read as eurocontrol_read
 from data_engineering.eurocontrol.read import (
+    create_eurocontrol_flights,
     eurocontrol_flights_parquet_path,
+    eurocontrol_raw_flights_parquet_path,
     normalize_eurocontrol_flights,
     read_eurocontrol_flights,
 )
@@ -48,10 +50,10 @@ def _raw_eurocontrol_df() -> pl.DataFrame:
     )
 
 
-def test_eurocontrol_flights_parquet_path_uses_month_extract(monkeypatch, tmp_path):
+def test_eurocontrol_raw_flights_parquet_path_uses_month_extract(monkeypatch, tmp_path):
     monkeypatch.setattr(eurocontrol_read, "OUTPUT_DIR", tmp_path)
 
-    path = eurocontrol_flights_parquet_path(date(2024, 6, 15))
+    path = eurocontrol_raw_flights_parquet_path(date(2024, 6, 15))
 
     assert path == (
         tmp_path
@@ -61,6 +63,22 @@ def test_eurocontrol_flights_parquet_path_uses_month_extract(monkeypatch, tmp_pa
         / "202406"
         / "intermediate"
         / "flights_20240601_20240630_time_columns.parquet"
+    )
+
+
+def test_eurocontrol_flights_parquet_path_uses_normalized_month_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(eurocontrol_read, "OUTPUT_DIR", tmp_path)
+
+    path = eurocontrol_flights_parquet_path(date(2024, 6, 15))
+
+    assert path == (
+        tmp_path
+        / "data"
+        / "flights"
+        / "eurocontrol"
+        / "year=2024"
+        / "month=06"
+        / "data.parquet"
     )
 
 
@@ -163,9 +181,10 @@ def test_normalize_eurocontrol_flights_maps_to_flight_schema():
     ]
 
 
-def test_read_eurocontrol_flights_filters_to_target_takeoff_date(monkeypatch, tmp_path):
-    parquet_path = tmp_path / "eurocontrol.parquet"
-    _raw_eurocontrol_df().write_parquet(parquet_path)
+def test_create_eurocontrol_flights_writes_normalized_cache(monkeypatch, tmp_path):
+    raw_path = tmp_path / "raw.parquet"
+    output_path = tmp_path / "data" / "flights" / "eurocontrol" / "year=2024" / "month=06" / "data.parquet"
+    _raw_eurocontrol_df().write_parquet(raw_path)
     registration_icao = pl.DataFrame(
         {
             "registration": ["N123AB", "GABCD"],
@@ -183,6 +202,32 @@ def test_read_eurocontrol_flights_filters_to_target_takeoff_date(monkeypatch, tm
         ),
     )
 
-    df = read_eurocontrol_flights(date(2024, 6, 1), path=parquet_path)
+    df = create_eurocontrol_flights(
+        date(2024, 6, 1),
+        raw_path=raw_path,
+        output_path=output_path,
+    )
+
+    assert output_path.exists()
+    assert df.select("icao").to_series().to_list() == ["a12345", "400abc"]
+    assert pl.read_parquet(output_path).select("icao").to_series().to_list() == ["a12345", "400abc"]
+
+
+def test_read_eurocontrol_flights_uses_cache_and_filters_to_target_takeoff_date(monkeypatch, tmp_path):
+    monkeypatch.setattr(eurocontrol_read, "OUTPUT_DIR", tmp_path)
+    cache_path = eurocontrol_flights_parquet_path(date(2024, 6, 1))
+    cache_path.parent.mkdir(parents=True)
+    normalize_eurocontrol_flights(
+        _raw_eurocontrol_df(),
+        registration_icao=pl.DataFrame(
+            {
+                "registration": ["N123AB", "GABCD"],
+                "icao": ["a12345", "400abc"],
+            }
+        ),
+        airport_lookup=FakeAirportLookup(),
+    ).filter(pl.col("icao").is_not_null()).write_parquet(cache_path)
+
+    df = read_eurocontrol_flights(date(2024, 6, 1))
 
     assert df.select("icao").to_series().to_list() == ["a12345"]
