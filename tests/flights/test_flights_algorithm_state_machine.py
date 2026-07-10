@@ -534,7 +534,7 @@ def test_run_main_2_reads_readsb_hist_day_parts_and_filters_icaos(tmp_path, monk
     assert df.row(0, named=True)["ladd"] is True
 
 
-def test_collect_segments_from_adsb_lf_matches_parallel_workers(capsys):
+def test_collect_segments_from_adsb_lf_ignores_max_workers(capsys):
     start = datetime(2026, 3, 1, 12, 0)
     rows = []
     for icao, lon_offset in [("abc123", 0.0), ("def456", 1.0)]:
@@ -552,22 +552,21 @@ def test_collect_segments_from_adsb_lf_matches_parallel_workers(capsys):
 
     lf_adsb = pl.DataFrame(rows).lazy()
     sequential = _collect_segments_from_adsb_lf(lf_adsb, max_workers=1)
-    parallel = _collect_segments_from_adsb_lf(
+    with_compat_max_workers = _collect_segments_from_adsb_lf(
         lf_adsb,
         max_workers=2,
-        segment_chunk_size=1,
         print_progress=True,
     )
 
     assert [
         (segment.icao, segment.takeoff_time, segment.landing_time)
-        for segment in parallel
+        for segment in with_compat_max_workers
     ] == [
         (segment.icao, segment.takeoff_time, segment.landing_time)
         for segment in sequential
     ]
     progress_output = capsys.readouterr().out
-    assert "Segmenting 2 ICAOs with 2 worker(s)" in progress_output
+    assert "Segmenting 2 ICAOs" in progress_output
     assert "Segmented 2/2 ICAOs" in progress_output
 
 
