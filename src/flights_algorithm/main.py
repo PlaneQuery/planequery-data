@@ -1,9 +1,11 @@
 import argparse
 import math
+import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
+from functools import cache
 from typing import Sequence
 from concurrent.futures import ProcessPoolExecutor
 
@@ -12,6 +14,7 @@ import polars as pl
 from adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz, read_adsbx
 from data_engineering.flights.flight_type import flights_algorithm_output_path
+from data_engineering.utils import OUTPUT_DIR
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -1083,17 +1086,22 @@ def _limit_icaos_to_sfdps_or_bts(
         return sorted(source_icaos)
     return [icao for icao in icaos if icao in source_icaos]
 
+MODEL_PATH = OUTPUT_DIR / "data/models/flights_ai_model_airport/runs/2026-07-04_15-03_be6f31f_8days/model.pkl"
+
+@cache
+def _get_airport_model():
+    from flights_ai_model_airport.inference import load_model
+    return load_model(MODEL_PATH)
 
 def _run_airport_model_inference(
     flights_df: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
 ) -> pl.DataFrame:
-    from flights_ai_model_airport.flights_ai_model_utils import get_latest_airport_model_path
     from flights_ai_model_airport.inference import inference
 
     return inference(
         flights_df,
-        get_latest_airport_model_path(),
+        _get_airport_model(),
         df_adsb_full,
     )
 
@@ -1124,10 +1132,10 @@ def run_main(
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
     use_adsbx: bool = False,
-    max_workers: int | None = None,
+    max_workers: int = os.cpu_count() or 1,
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
-    print(f"number of workers: {max_workers or 1}")
+    print(f"number of workers: {max_workers}")
 
     day_start, day_end = _day_bounds(target_date)
     if use_adsbx:
