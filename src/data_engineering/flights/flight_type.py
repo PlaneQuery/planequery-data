@@ -175,12 +175,12 @@ def adsbx_flights_airport_model_output_path(target_date: date, version = "v7"):
         / "flights.parquet"
     )
 
-def flights_algorithm_output_path(target_date: date, source: str = "adsblol"):
+def flights_algorithm_output_path(target_date: date, source: str = "adsblol", no_airports_model: bool = False):
     return (
         OUTPUT_DIR
         / "data"
         / "flights"
-        / "algorithm"
+        / ("algorithm-no-airports" if no_airports_model else "algorithm")
         / "v1"
         / source
         / f"year={target_date.year}"
@@ -197,18 +197,21 @@ def _date_range(start_date: date, end_date: date):
         current_date += timedelta(days=1)
 
 
-def _get_flights_for_day(target_date: date):
-    path = flights_algorithm_output_path(target_date)
+def _get_flights_for_day(target_date: date, no_airports_model: bool = False):
+    path = flights_algorithm_output_path(target_date, no_airports_model=no_airports_model)
     df = pl.read_parquet(path)
     return with_flight_schema_columns(df)
 
 
-def get_flights(start_date: date, end_date: date | None = None):
+def get_flights(start_date: date, end_date: date | None = None, no_airports_model: bool = False):
     if end_date is None:
-        return _get_flights_for_day(start_date)
+        return _get_flights_for_day(start_date, no_airports_model=no_airports_model)
     if end_date <= start_date:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
-    return pl.concat([_get_flights_for_day(target_date) for target_date in _date_range(start_date, end_date)])
+    return pl.concat([
+        _get_flights_for_day(target_date, no_airports_model=no_airports_model)
+        for target_date in _date_range(start_date, end_date)
+    ])
 
 def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     from airports.airportLookup import AirportLookup
