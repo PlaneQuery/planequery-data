@@ -4,7 +4,6 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
-from pathlib import Path
 from typing import Sequence
 from concurrent.futures import ProcessPoolExecutor
 
@@ -12,7 +11,7 @@ import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz
-from data_engineering.utils import OUTPUT_DIR
+from data_engineering.flights.flight_type import flights_algorithm_output_path
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -1098,27 +1097,13 @@ def _run_airport_model_inference(
         df_adsb_full,
     )
 
-def _flights_algorithm_output_path(target_date: date, source: str) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "algorithm"
-        / "v1"
-        / source
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
-def process_icaos(start_dt: datetime, end_dt: datetime, icaos: list[str], no_airports_model: bool = False) -> pl.DataFrame:
-    df_adsb = read_adsb_lz(start_dt, end_dt, icaos).collect()
+def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_airports_model: bool = False) -> pl.DataFrame:
+    df_adsb = read_adsb_lz(day_start - RUN_MAIN_CONTEXT, day_end + RUN_MAIN_CONTEXT, icaos).collect()
     segments = _segment_adsb_df(df_adsb)
     segments = [
         segment
         for segment in segments
-        if _segment_takes_off_in_window(segment, start_dt, end_dt)
+        if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
     flights_df = _segments_to_flights_df(segments)
     if not no_airports_model:
@@ -1147,8 +1132,6 @@ def run_main(
         raise ValueError("no_airports_model is only supported for ADSB.lol input")
     # figure out how big dataframe is so I can always fit them in ram. 
     day_start, day_end = _day_bounds(target_date)
-    start_dt = day_start - RUN_MAIN_CONTEXT
-    end_dt = day_end + RUN_MAIN_CONTEXT
     if sfdps_or_bts_only:
         icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
     else:
@@ -1156,13 +1139,13 @@ def run_main(
     icao_lists = _chunks(icaos, max_workers or 1)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
-            executor.submit(process_icaos, start_dt, end_dt, icao_list, no_airports_model)
+            executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model)
             for icao_list in icao_lists
         ]
         flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
-
-    output_path = _flights_algorithm_output_path(
+    flights_df = _filter_short_same_airport_flights(flights_df)
+    output_path = flights_algorithm_output_path(
         target_date,
         "adsbx" if use_adsbx else "adsblol",
     )
