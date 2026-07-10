@@ -282,7 +282,7 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
 
 
 OS_CPU_COUNT = os.cpu_count() or 1
-MAX_WORKERS = min(OS_CPU_COUNT, 4)
+MAX_WORKERS = min(OS_CPU_COUNT, 8)
 SKIP_DAYS = {date(2026, 5, 5)}
 
 
