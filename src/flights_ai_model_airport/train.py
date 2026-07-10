@@ -31,18 +31,11 @@ def train(training_dates, validation_date = date(2026,3,15)):
         str(path),
     )
     print(f"  -> saved to {path}")
-    outputs, df_stats = main(test_src="model", gold_src="sfdps", test_dates=validation_date, pia_or_american_ladd_only=True, airport_model_path=path)
-    df_stats.write_csv(path.parent / "validation_stats.csv")
 
 if __name__ == "__main__":
     training_dates = [
         date(2026, 6, 1) + timedelta(days=i)
         for i in range((date(2026, 6, 8) - date(2026, 6, 1)).days + 1)
     ]
-    training_dates_2 = [
-        date(2026, 2, 1) + timedelta(days=i)
-        for i in range((date(2026, 2, 28) - date(2026, 2, 1)).days + 1)
-    ]
-    training_dates = training_dates
     print(training_dates)
     train(training_dates)
