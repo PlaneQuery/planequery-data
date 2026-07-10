@@ -108,11 +108,11 @@ def get_model_adsbx_flights(target_date: date) -> pl.DataFrame:
 
 def get_model_no_airports_flights(target_date: date) -> pl.DataFrame:
     from data_engineering.flights.flight_type import (
-        adsblol_flights_output_path,
+        flights_algorithm_output_path,
         with_flight_schema_columns,
     )
 
-    output_path = adsblol_flights_output_path(target_date)
+    output_path = flights_algorithm_output_path(target_date, no_airports_model=True)
     if output_path.exists():
         return with_flight_schema_columns(pl.read_parquet(output_path))
     raise FileNotFoundError(f"Model no-airports flights file not found for {target_date}: {output_path}")

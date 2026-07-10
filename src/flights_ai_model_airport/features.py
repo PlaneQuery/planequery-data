@@ -56,7 +56,7 @@ def get_training_flights(dt: date):
     df_sfdps_flights = df_sfdps_flights.filter(pia_or_american_ladd_icao_filter())
     df_adsb = read_adsb(dt, icaos=df_sfdps_flights.get_column("icao").to_list())
     df_sfdps_flights = get_matching_icaos_in_flights(df_sfdps_flights, df_adsb)
-    df_flights = get_flights(dt)
+    df_flights = get_flights(dt, no_airports_model=True)
     df = df_flights_comparision(df_flights, df_sfdps_flights, datetime(dt.year, dt.month, dt.day), datetime(dt.year, dt.month, dt.day) + timedelta(days=1), compare_airports=False)
     df = df.filter(pl.col("match_status") == "both")
     df = df.with_columns(
