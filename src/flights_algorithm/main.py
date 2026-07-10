@@ -1086,7 +1086,7 @@ def _limit_icaos_to_sfdps_or_bts(
         return sorted(source_icaos)
     return [icao for icao in icaos if icao in source_icaos]
 
-MODEL_PATH = OUTPUT_DIR / "data/models/flights_ai_model_airport/runs/2026-07-04_15-03_be6f31f_8days/model.pkl"
+MODEL_PATH = OUTPUT_DIR / "data/models/flights_ai_model_airport/runs/2026-07-10_12-28_6385a20_8days/model.pkl"
 
 @cache
 def _get_airport_model():
