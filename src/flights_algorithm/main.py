@@ -1230,6 +1230,10 @@ def cli() -> None:
     if args.end_date <= args.start_date:
         parser.error("end_date must be after start_date")
 
+    if args.max_workers is None:
+        max_workers = os.cpu_count() or 1
+    else:
+        max_workers = args.max_workers
     for target_date in _date_range(args.start_date, args.end_date):
         print(f"Running flights algorithm for {target_date}")
         flights_df = run_main(
@@ -1237,7 +1241,7 @@ def cli() -> None:
             pia_or_american_ladd_only=args.pia_or_american_ladd_only,
             sfdps_or_bts_only=args.sfdps_or_bts_only,
             use_adsbx=args.use_adsbx,
-            max_workers=args.max_workers,
+            max_workers=max_workers,
             icaos=args.icaos,
             no_airports_model=args.no_airports_model,
         )
