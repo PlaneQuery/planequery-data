@@ -241,8 +241,6 @@ def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns
     current_day = start_dt.date()
     end_day = end_dt.date()
     dates = [current_day + timedelta(days=i) for i in range((end_day - current_day).days + 1)]
-    for day in dates:
-        create_adsb_parquet_for_day(day)
     first_bucket = _icao_bucket(icaos[0])
     last_bucket = _icao_bucket(icaos[-1])
     icao_buckets = list(range(first_bucket, last_bucket + 1))
