@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS {database}.adsb_messages (
     type                         STRING,
     flags                        INT,
     rssi_dbfs                    FLOAT,
-    source                       STRING,
+    source                       STRING, -- TODO: Remove this like in rest of code. 
 
     -- aircraft metadata
     no_reg_data                  BOOLEAN, -- this seems like useless column. 

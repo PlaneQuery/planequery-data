@@ -14,6 +14,9 @@ Airport_Size_Ranking = { # TODO: move this inside class but python is being anno
     "MEDIUM_AIRPORT": 2,
     "LARGE_AIRPORT": 3
 }
+US_FAA_AIRSPACE_ISO_COUNTRIES = {"US", "PR", "GU", "VI", "AS", "MP", "UM"}
+US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES = {"PR", "GU", "VI", "AS", "MP", "UM"}
+US_FAA_ISLAND_AIRSPACE_ISO_REGIONS = {"US-HI", "US-AK"}
 
 # "small_airport, medium_airport, large_airport, seaplane_base, heliport, closed, balloonport"
 class Airport_Types(StrEnum):
@@ -46,10 +49,14 @@ class Airport_Types(StrEnum):
 class Airport:
     ident: str
     iata: str
-    coordinates: tuple[float, float]
+    lat: float
+    lon: float
     elevation_ft: int
     type: Airport_Types
+    iso_country: str = ""
+    iso_region: str = ""
     distance_from_plane_point_in_km: float = 0.0
+
 
 class AirportLookup:
     _instance = None
@@ -69,8 +76,12 @@ class AirportLookup:
         self._airports: list[Airport] = []
         self.iata_index: dict[str, Airport] = {} # TODO: Make this readonly.
         self.iata_to_ident_index: dict[str, str] = {}
+        self.gps_code_to_ident_index: dict[str, str] = {}
+        self.local_code_to_ident_index: dict[str, str] = {}
         self.ident_index: dict[str, Airport] = {}
-        with open(OUTPUT_DIR / 'data' / 'interim' / 'airports.csv', 'r', encoding='utf-8') as airport_csv:
+        path = OUTPUT_DIR / 'data' / 'interim' / 'airports.csv'
+        print(f"Loading airports from {path}")
+        with open(path, 'r', encoding='utf-8') as airport_csv:
             airport_csv_reader = csv.DictReader(filter(lambda row: row[0] != '#', airport_csv))
             for airport in airport_csv_reader:
                 if airport['type'] in Airport_Types:
@@ -82,12 +93,17 @@ class AirportLookup:
                     elevation_ft = airport["elevation_ft"]
                     elevation_ft = int(elevation_ft) if elevation_ft else 0
                     iata: str = airport['iata_code'] # can be '' empty
+                    gps_code: str = airport["gps_code"]
+                    local_code: str = airport["local_code"]
                     add_airport = Airport(
                         ident=ident,
                         iata=iata,
-                        coordinates=airport_coord_deg,
+                        lat=latitude_deg,
+                        lon=longitude_deg,
                         elevation_ft=elevation_ft,
-                        type = Airport_Types(airport['type'])
+                        type=Airport_Types(airport['type']),
+                        iso_country=airport["iso_country"],
+                        iso_region=airport["iso_region"],
                     )
                     self._airports.append(add_airport)
                     self._coordinates.append(airport_coord_deg)
@@ -97,6 +113,8 @@ class AirportLookup:
                         self.iata_to_ident_index[iata] = ident
                     if ident:
                         self.ident_index[ident] = add_airport
+                    self._set_code_to_ident(self.gps_code_to_ident_index, gps_code, add_airport)
+                    self._set_code_to_ident(self.local_code_to_ident_index, local_code, add_airport)
             self._ball_tree = BallTree(np.array(self._coordinates_rad), metric='haversine')
             coords_rad = np.array(self._coordinates_rad)  # (N, 2) lat/lon in radians
             xyz = np.column_stack([
@@ -105,6 +123,25 @@ class AirportLookup:
                 np.sin(coords_rad[:, 0]),
             ])
             self._kd_tree = KDTree(xyz)
+
+    def _code_mapping_score(self, airport: Airport) -> tuple[bool, int]:
+        return (
+            airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES,
+            Airport_Size_Ranking[airport.type.name],
+        )
+
+    def _set_code_to_ident(self, index: dict[str, str], code: str, airport: Airport) -> None:
+        if not code:
+            return
+
+        existing_ident = index.get(code)
+        if existing_ident is None:
+            index[code] = airport.ident
+            return
+
+        existing_airport = self.ident_index.get(existing_ident)
+        if existing_airport is None or self._code_mapping_score(airport) > self._code_mapping_score(existing_airport):
+            index[code] = airport.ident
 
     def getClosestAirport(self, latitude, longitude) -> Airport:
         query_point_rad = np.radians((latitude, longitude))
@@ -132,8 +169,29 @@ class AirportLookup:
             results.append(airport)
         return results
 
-    def get_Airport_from_airport_icao(self, airport_icao: str) -> Airport | None:
-        return self.ident_index.get(airport_icao)
+    def get_Airport_from_airport_ident(self, airport_ident: str) -> Airport | None:
+        return self.ident_index.get(airport_ident)
+
+    def get_airport_coordinates(self, airport_ident: str) -> tuple[float, float] | None:
+        airport = self.get_Airport_from_airport_ident(airport_ident)
+        if airport is None:
+            return None
+        return (airport.lat, airport.lon)
+
+    def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
+        airport = self.get_Airport_from_airport_ident(airport_ident)
+        return airport is not None and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+
+    def airport_ident_is_in_us_faa_island_airspace(self, airport_ident: str) -> bool:
+        airport = self.get_Airport_from_airport_ident(airport_ident)
+        return (
+            airport is not None
+            and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+            and (
+                airport.iso_country in US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES
+                or airport.iso_region in US_FAA_ISLAND_AIRSPACE_ISO_REGIONS
+            )
+        )
 
 def haversine(lat1, lon1, lat2, lon2):
     """
