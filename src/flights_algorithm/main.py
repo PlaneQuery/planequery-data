@@ -1117,6 +1117,7 @@ def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_a
     flights_df = _filter_short_same_airport_flights(flights_df)
     if not no_airports_model:
         flights_df = _run_airport_model_inference(flights_df, df_adsb)
+    print(f"Processed {len(icaos)} ICAOs, found {len(flights_df)} flights")
     return flights_df
 
 def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
@@ -1231,7 +1232,8 @@ def cli() -> None:
         parser.error("end_date must be after start_date")
 
     if args.max_workers is None:
-        max_workers = os.cpu_count() or 1
+        cpu_count = os.cpu_count()
+        max_workers = cpu_count // 2 if cpu_count is not None else 1
     else:
         max_workers = args.max_workers
     for target_date in _date_range(args.start_date, args.end_date):
