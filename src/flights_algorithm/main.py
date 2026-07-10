@@ -1110,8 +1110,7 @@ def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_a
         flights_df = _run_airport_model_inference(flights_df, df_adsb)
     return flights_df
 
-def _chunks(items: list[str], num_chunks: int) -> list[list[str]]:
-    chunk_size = max(1, math.ceil(len(items) / num_chunks))
+def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
     return [
         items[start:start + chunk_size]
         for start in range(0, len(items), chunk_size)
@@ -1136,7 +1135,7 @@ def run_main(
         icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
     else:
         icaos = sorted(get_icaos_in_adsb(target_date))
-    icao_lists = _chunks(icaos, max_workers or 1)
+    icao_lists = _chunks_by_size(icaos, 500)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model)
