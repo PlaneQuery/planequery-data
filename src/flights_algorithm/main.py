@@ -1153,6 +1153,7 @@ def run_main(
     output_path = flights_algorithm_output_path(
         target_date,
         "adsbx" if use_adsbx else "adsblol",
+        no_airports_model=no_airports_model,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
