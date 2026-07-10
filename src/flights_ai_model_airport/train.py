@@ -33,11 +33,9 @@ def train(training_dates, validation_date = date(2026,3,15)):
     print(f"  -> saved to {path}")
 
 if __name__ == "__main__":
-    start_date = date(2026, 5, 1)
-    end_date = date(2026, 5, 4)
     training_dates = [
-        start_date + timedelta(days=i)
-        for i in range((end_date - start_date).days + 1)
+        date(2026, 6, 1) + timedelta(days=i)
+        for i in range((date(2026, 6, 8) - date(2026, 6, 1)).days + 1)
     ]
     print(training_dates)
     train(training_dates)
