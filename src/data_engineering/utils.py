@@ -2,7 +2,7 @@ from datetime import date
 import os
 from pathlib import Path
 from botocore.exceptions import ClientError
-FLIGHTS_VERSION = "v1"
+FLIGHTS_VERSION = "v2"
 S3_BUCKET = "planequery-dev-planequery-data"
 OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
 ATHENA_DATABASE = "planequery_lake_dev"

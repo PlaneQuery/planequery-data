@@ -4,6 +4,9 @@ from lxml import etree
 import polars as pl
 from data_engineering.swim.load_xml_schema import load_nas_schema
 import gzip
+import argparse
+from datetime import date, timedelta
+from data_engineering.swim.swim_logs_download import download_swim_logs
 
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./")) / "data"
 
@@ -161,28 +164,28 @@ def _flatten_element(el: etree._Element, prefix: str, result: dict) -> None:
                 _flatten_element(child, child_prefix, result)
 
 
-def parse_sfdps_message(doc: str | bytes) -> dict | None:
+XSI_TYPE = "{http://www.w3.org/2001/XMLSchema-instance}type"
+
+
+def _find_nas_flight(root: etree._Element) -> etree._Element | None:
+    for el in root.iter():
+        xsi_type = el.get(XSI_TYPE)
+        if xsi_type is not None and "NasFlightType" in xsi_type:
+            return el
+    return None
+
+
+def parse_sfdps_message(root: etree._Element) -> dict | None:
     """
     Parse a single SFDPS XML document into a flat dict by dynamically
     discovering all elements and attributes present in the NasFlightType node.
     Supplemental nameValue pairs are lifted to top-level sup_* columns.
     Missing fields across messages will be None in the resulting DataFrame.
     """
-    raw = doc.encode("utf-8") if isinstance(doc, str) else doc
-    try:
-        root = etree.fromstring(raw)
-    except etree.XMLSyntaxError:
+    flight = _find_nas_flight(root)
+    if flight is None:
         return None
 
-    XSI = "http://www.w3.org/2001/XMLSchema-instance"
-    flights = root.xpath(
-        ".//*[@xsi:type and contains(@xsi:type, 'NasFlightType')]",
-        namespaces={"xsi": XSI},
-    )
-    if not flights:
-        return None
-
-    flight = flights[0]
     row: dict = {}
     _flatten_element(flight, "", row)
 
@@ -218,7 +221,6 @@ def remap_to_schema(
     """
     Rename dynamically-discovered flat columns to the human-readable names
     defined in SFDPS_SCHEMA where a match exists.  Unmatched columns are kept.
-    Prints a coverage summary (matched vs missing schema fields).
     """
     # Build flat_key → schema_name rename map
     rename: dict[str, str] = {}
@@ -234,21 +236,6 @@ def remap_to_schema(
             rename[flat_key] = flat_key  # already well-named, no rename needed
 
     df = df.rename(rename)
-
-    matched = [f for f in schema if f in df.columns]
-    missing = [f for f in schema if f not in df.columns]
-    print(f"Schema coverage: {len(matched)}/{len(schema)} fields matched")
-    if missing:
-        print(f"  Missing: {missing}")
-
-    # Report extra columns (not in schema or supplemental keys) that appear in >1 row
-    known = set(schema.keys()) | {f"sup_{k.lower()}" for k in supplemental_keys}
-    extra_multicol = [
-        col for col in df.columns
-        if col not in known and df[col].null_count() < len(df) - 1
-    ]
-    if extra_multicol:
-        print(f"  Extra fields (not in schema, seen in >1 row)")
 
     return df
 
@@ -268,63 +255,46 @@ def split_xml_documents(text: str) -> list[str]:
 
 def read_sfdps_log(
     file_path,
-    max_messages=None,
-    validate=False,
-    xml_schema: etree.XMLSchema | None = None,
-    apply_schema: bool = True,
+    xml_schema: etree.XMLSchema,
 ) -> pl.DataFrame:
     """
     Read an SFDPS messages log file into a Polars DataFrame.
 
     Fields are discovered dynamically from the XML — every element and attribute
     found in any message becomes a column; messages that lack a field get None.
-    When apply_schema=True (default), columns are renamed to match SFDPS_SCHEMA.
+    Columns are renamed to match SFDPS_SCHEMA where possible.
 
     Args:
         file_path: path to the .log file
-        max_messages: limit number of messages to parse (None = all)
-        validate: if True, skip messages that fail XSD validation
-        xml_schema: etree.XMLSchema returned by load_nas_schema(); required when validate=True
-        apply_schema: if True, rename columns to SFDPS_SCHEMA names where matched
+        xml_schema: etree.XMLSchema returned by load_nas_schema()
     """
     file_path = Path(file_path)
     with gzip.open(file_path, "rt", encoding="utf-8", errors="replace") as f:
         text = f.read()
     docs = split_xml_documents(text)
-    if max_messages:
-        docs = docs[:max_messages]
     
     rows = []
     skipped_validation = 0
-    skipped_parse = 0
     
     for doc in docs:
-        # Optional: validate against XSD before parsing
-        if validate and xml_schema is not None:
-            try:
-                tree = etree.fromstring(doc.encode("utf-8"))
-                if not xml_schema.validate(tree):
-                    skipped_validation += 1
-                    continue
-            except etree.XMLSyntaxError:
-                skipped_validation += 1
-                continue
-
         try:
-            row = parse_sfdps_message(doc)
-            if row:
-                rows.append(row)
-        except Exception:
-            skipped_parse += 1
+            root = etree.fromstring(doc.encode("utf-8"))
+        except etree.XMLSyntaxError:
+            skipped_validation += 1
+            continue
+
+        if not xml_schema.validate(root):
+            skipped_validation += 1
+            continue
+
+        row = parse_sfdps_message(root)
+        if row:
+            rows.append(row)
     
-    df = pl.DataFrame(rows, infer_schema_length=min(10_000, len(rows)) if rows else 0)
+    df = remap_to_schema(pl.DataFrame(rows, infer_schema_length=min(10_000, len(rows)) if rows else 0))
     print(f"Parsed {len(rows)} messages from {file_path}")
     if skipped_validation:
         print(f"  Skipped {skipped_validation} (failed XSD validation)")
-    if skipped_parse:
-        print(f"  Skipped {skipped_parse} (parse errors)")
-    if apply_schema:
-        df = remap_to_schema(df)
     return df
 
 RAW_DIR = OUTPUT_DIR / "raw"
@@ -332,7 +302,7 @@ OUTPUT_PARQUET_DIR = OUTPUT_DIR / "intermediate"
 
 
 def process_day(
-    d: "date",
+    d: date,
     raw_dir: Path = RAW_DIR,
     output_dir: Path = OUTPUT_PARQUET_DIR,
 ) -> None:
@@ -340,13 +310,11 @@ def process_day(
     prefix = f"sfdps-logs/year={d.year}/month={d.month:02d}/day={d.day:02d}"
     day_dir = raw_dir / prefix
     if not day_dir.exists():
-        print(f"[{d}] Directory not found, skipping: {day_dir}")
-        return
+        download_swim_logs("sfdps", d, d+timedelta(days=1))
 
     gz_files = sorted(p for p in day_dir.iterdir() if p.is_file() and p.suffix in (".gz", ".gzip"))
     if not gz_files:
-        print(f"[{d}] No .gz files found in {day_dir}, skipping.")
-        return
+        raise Exception(f"[{d}] No .gz files found in {day_dir}, skipping.")
 
     print(f"[{d}] Processing {len(gz_files)} file(s)...")
     out_path = output_dir / prefix / f"sfdps-logs_{d.year}_{d.month:02d}_{d.day:02d}.parquet"
@@ -354,7 +322,7 @@ def process_day(
 
     part_paths: list[Path] = []
     for path in gz_files:
-        df = read_sfdps_log(path, validate=True, xml_schema=xml_schema)
+        df = read_sfdps_log(path, xml_schema)
         if len(df) == 0:
             continue
         part_path = out_path.with_suffix(f".{path.name}.part.parquet")
@@ -374,14 +342,10 @@ def process_day(
     for p in part_paths:
         p.unlink()
 
-    result = pl.read_parquet(out_path)
-    print(f"[{d}] Wrote {len(result)} rows → {out_path}  ({result.estimated_size('mb'):.1f} MB)")
+    print(f"[{d}] Wrote {out_path}")
 
 
 if __name__ == "__main__":
-    import argparse
-    from datetime import date, timedelta
-
     parser = argparse.ArgumentParser(description="Process SFDPS logs day by day into parquet.")
     parser.add_argument("start_date", type=date.fromisoformat, help="Start date inclusive (YYYY-MM-DD).")
     parser.add_argument("end_date", type=date.fromisoformat, help="End date exclusive (YYYY-MM-DD).")

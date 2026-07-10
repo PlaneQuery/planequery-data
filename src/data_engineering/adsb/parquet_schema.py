@@ -6,6 +6,7 @@ import pyarrow as pa
 # Column names in canonical order, matching the Iceberg `adsb_messages` table.
 COLUMNS = [
     "time", "icao", "callsign", "registration", "aircraft_type",
+    "aircraft-year",
     "lat", "lon", "radius_of_containment_m", "on_ground",
     "baro_altitude_ft", "geom_altitude_ft", "baro_rate_fpm", "geom_rate_fpm",
     "ground_speed_kt", "indicated_airspeed_kt", "true_airspeed_kt", "mach",
@@ -16,7 +17,7 @@ COLUMNS = [
     "squawk", "emergency", "alert", "spi",
     "version", "nic", "nic_baro", "nac_p", "nac_v",
     "sil", "sil_type", "gva", "sda",
-    "type", "flags", "rssi_dbfs", "source",
+    "type", "flags", "rssi_dbfs",
     "no_reg_data", "pia", "ladd", "military", "interesting",
     "owner", "aircraft_description", "category",
     "wind_direction_deg", "wind_speed_kt",
@@ -33,6 +34,7 @@ PARQUET_SCHEMA = pa.schema([
     ("callsign", pa.string()),
     ("registration", pa.string()),
     ("aircraft_type", pa.string()),
+    ("aircraft-year", pa.int32()),
 
     # position / state
     ("lat", pa.float64()),
@@ -83,11 +85,10 @@ PARQUET_SCHEMA = pa.schema([
     ("gva", pa.int32()),
     ("sda", pa.int32()),
 
-    # source / message metadata
+    # message metadata
     ("type", pa.string()),
     ("flags", pa.int32()),
     ("rssi_dbfs", pa.float32()),
-    ("source", pa.string()),
 
     # aircraft metadata (dbFlags bitfield split out)
     ("no_reg_data", pa.bool_()),
