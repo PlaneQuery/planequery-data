@@ -48,7 +48,8 @@ def score_airport_candidates(
         endpoint,
     )
 
-    scores = model.predict_proba(X)[:, 1]
+    X_df = pl.DataFrame(X, schema=FEATURE_NAMES)
+    scores = model.predict_proba(X_df)[:, 1]
 
     return (
         pl.concat(
@@ -59,7 +60,7 @@ def score_airport_candidates(
                     "score": scores,
                     "endpoint": endpoint,
                 }),
-                pl.DataFrame(X, schema=FEATURE_NAMES),
+                X_df,
             ],
             how="horizontal",
         )
