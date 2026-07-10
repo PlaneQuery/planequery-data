@@ -175,26 +175,19 @@ def adsbx_flights_airport_model_output_path(target_date: date, version = "v7"):
         / "flights.parquet"
     )
 
-def _legacy_flights_output_path(target_date: date, version: str):
+def flights_algorithm_output_path(target_date: date, source: str = "adsblol"):
     return (
         OUTPUT_DIR
         / "data"
         / "flights"
-        / version
+        / "algorithm"
+        / "v1"
+        / source
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
         / f"day={target_date.day:02d}"
-        / "part-0.parquet"
+        / "flights.parquet"
     )
-
-
-def _flight_parquet_paths(target_date: date):
-    return [
-        adsblol_flights_airport_model_output_path(target_date),
-        adsblol_flights_output_path(target_date),
-        _legacy_flights_output_path(target_date, "v2"),
-        _legacy_flights_output_path(target_date, "v1"),
-    ]
 
 
 def _date_range(start_date: date, end_date: date):
@@ -205,9 +198,7 @@ def _date_range(start_date: date, end_date: date):
 
 
 def _get_flights_for_day(target_date: date):
-    for path in _flight_parquet_paths(target_date):
-        if path.exists():
-            break
+    path = flights_algorithm_output_path(target_date)
     df = pl.read_parquet(path)
     return with_flight_schema_columns(df)
 
