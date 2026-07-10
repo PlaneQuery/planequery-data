@@ -10,7 +10,7 @@ from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOI
 from flights_ai_model_airport.inference import run_inference
 from flights_ai_model_airport.model import model_training
 from flights_ai_model_airport.flights_ai_model_utils import get_model_path
-from evaluation.flights.evaluation import main
+from flights.evaluation.evaluation import main
 
 def train(training_dates, validation_date = date(2026,3,15)):
     # test_dates = [date(2026,3,1), date(2026,3,15)]

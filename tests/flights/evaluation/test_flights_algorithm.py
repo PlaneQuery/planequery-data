@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from evaluation.flights.evaluation import main
+from flights.evaluation.evaluation import main
 
 
 EVALUATION_STATS_PATH = (
