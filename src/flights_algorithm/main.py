@@ -1165,29 +1165,27 @@ def run_main(
     if sfdps_or_bts_only:
         icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
 
+    icao_lists = _chunks_by_size(icaos, 500)
     if max_workers == 1:
-        df_adsb = read_adsb_lz(
-            day_start - RUN_MAIN_CONTEXT,
-            day_end + RUN_MAIN_CONTEXT,
-            icaos,
-            use_adsbx=use_adsbx,
-        ).collect()
-        flights_df = _process_adsb_df(
-            day_start,
-            day_end,
-            icaos,
-            df_adsb,
-            no_airports_model=no_airports_model,
-        )
+        flights_dfs = [
+            process_icaos(
+                day_start,
+                day_end,
+                icao_list,
+                no_airports_model,
+                use_adsbx,
+                target_date,
+            )
+            for icao_list in icao_lists
+        ]
     else:
-        icao_lists = _chunks_by_size(icaos, 500)
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model, use_adsbx, target_date)
                 for icao_list in icao_lists
             ]
             flights_dfs = [future.result() for future in futures]
-        flights_df = pl.concat(flights_dfs)
+    flights_df = pl.concat(flights_dfs)
     output_path = flights_algorithm_output_path(
         target_date,
         "adsbx" if use_adsbx else "adsblol",
