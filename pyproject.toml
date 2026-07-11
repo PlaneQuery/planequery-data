@@ -13,3 +13,15 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+
+dependencies = [
+    "joblib==1.5.3",
+    "lightgbm==4.6.0",
+    "numpy==2.5.1",
+    "orjson==3.11.9",
+    "polars==1.42.1",
+    "pyarrow==25.0.0",
+    "scikit-learn==1.9.0",
+    "scipy==1.18.0",
+    "timezonefinder==8.2.4",
+]
