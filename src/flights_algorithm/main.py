@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -1273,6 +1274,7 @@ def cli() -> None:
         max_workers = args.max_workers
     for target_date in _date_range(args.start_date, args.end_date):
         print(f"Running flights algorithm for {target_date}")
+        _t0 = time.perf_counter()
         flights_df = run_main(
             target_date=target_date,
             pia_or_american_ladd_only=args.pia_or_american_ladd_only,
@@ -1282,6 +1284,7 @@ def cli() -> None:
             icaos=args.icaos,
             no_airports_model=args.no_airports_model,
         )
+        print(f"run_main completed in {time.perf_counter() - _t0:.2f}s")
         print(flights_df)
 
 
