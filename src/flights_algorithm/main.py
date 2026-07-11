@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 import polars as pl
 
 from adsb.adsb_messages_types import AdsbMessageRow
-from data_engineering.adsb.read_adsb import get_icaos_in_adsb, read_adsb_lz, read_adsbx
+from data_engineering.adsb.read_adsb import _icao_bucket, get_icaos_in_adsb, read_adsb_lz, read_adsbx
 from data_engineering.flights.flight_type import flights_algorithm_output_path
 from data_engineering.utils import OUTPUT_DIR
 
@@ -1136,10 +1136,14 @@ def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_a
         no_airports_model=no_airports_model,
     )
 
-def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
+def _icaos_by_bucket(icaos: Sequence[str]) -> list[list[str]]:
+    icaos_by_bucket: dict[int, list[str]] = {}
+    for icao in icaos:
+        bucket = _icao_bucket(icao)
+        icaos_by_bucket.setdefault(bucket, []).append(icao)
     return [
-        items[start:start + chunk_size]
-        for start in range(0, len(items), chunk_size)
+        sorted(bucket_icaos)
+        for _, bucket_icaos in sorted(icaos_by_bucket.items())
     ]
 
 
@@ -1166,7 +1170,7 @@ def run_main(
     if sfdps_or_bts_only:
         icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
 
-    icao_lists = _chunks_by_size(icaos, 500)
+    icao_lists = _icaos_by_bucket(icaos)
     if max_workers == 1:
         flights_dfs = [
             process_icaos(
