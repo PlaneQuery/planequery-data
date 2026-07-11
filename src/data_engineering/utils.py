@@ -4,7 +4,7 @@ from pathlib import Path
 from botocore.exceptions import ClientError
 FLIGHTS_VERSION = "v2"
 S3_BUCKET = "planequery-dev-planequery-data"
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./"))
 ATHENA_DATABASE = "planequery_lake_dev"
 ATHENA_WORKGROUP ="planequery-workgroup-dev"
 MODEL_PATH = OUTPUT_DIR / "data"/ "models"/ "2026-04-21/2026-04-21_20-08_1771d1f_30days_32epochs/model.pth"
