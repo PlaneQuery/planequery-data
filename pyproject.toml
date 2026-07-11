@@ -6,14 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "planequery-data"
 version = "0.1.0"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = "-ra"
-
 dependencies = [
     "joblib==1.5.3",
     "lightgbm==4.6.0",
@@ -24,4 +16,12 @@ dependencies = [
     "scikit-learn==1.9.0",
     "scipy==1.18.0",
     "timezonefinder==8.2.4",
+    "boto3==1.43.46"
 ]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
