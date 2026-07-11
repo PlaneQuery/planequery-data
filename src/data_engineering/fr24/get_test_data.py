@@ -342,7 +342,7 @@ def default_output_path(target_date: date) -> Path:
 
 
 def _airport_code_to_ident(code: str | None) -> str | None:
-    from airports.airportLookup import AirportLookup
+    from airports.airport_lookup import AirportLookup
 
     if code is None:
         return None

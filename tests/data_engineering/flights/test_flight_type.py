@@ -85,7 +85,7 @@ def test_add_lat_lon_to_airport_ident_columns(monkeypatch):
                 "KBOS": (42.3643, -71.005203),
             }.get(airport_ident)
 
-    import airports.airportLookup as airport_lookup_module
+    import airports.airport_lookup as airport_lookup_module
 
     monkeypatch.setattr(airport_lookup_module, "AirportLookup", FakeAirportLookup)
 

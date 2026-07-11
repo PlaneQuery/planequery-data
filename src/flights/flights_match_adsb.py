@@ -2,7 +2,7 @@ from data_engineering.flights.flight_type import flights_df_to_flights
 import polars as pl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 from utils import haversine
 
 MAX_AIRPORT_DISTANCE_KM = 10

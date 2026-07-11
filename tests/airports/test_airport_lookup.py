@@ -6,7 +6,7 @@ import pytest
 
 os.environ["OUTPUT_DIR"] = str(Path(__file__).resolve().parents[2])
 
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 
 
 @pytest.fixture
