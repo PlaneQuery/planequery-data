@@ -1,13 +1,14 @@
 from datetime import date
 from pathlib import Path
 from typing import Any
+import warnings
 
 import polars as pl
 import joblib
 from lightgbm import LGBMClassifier
 
 from data_engineering.flights.flight_type import add_flight_id_col, get_flights, pia_or_american_ladd_icao_filter
-from flights_ai_model_airport.features import FEATURE_NAMES, build_inference_data
+from flights_ai_model_airport.features import build_inference_data
 from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOINTS
 
 def load_model(model_path: Path):
@@ -48,8 +49,9 @@ def score_airport_candidates(
         endpoint,
     )
 
-    X_df = pl.DataFrame(X, schema=FEATURE_NAMES)
-    scores = model.predict_proba(X)[:, 1]
+    with warnings.catch_warnings(): # TODO: deal with.
+        warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
+        scores = model.predict_proba(X)[:, 1]
 
     return (
         pl.concat(
@@ -60,7 +62,7 @@ def score_airport_candidates(
                     "score": scores,
                     "endpoint": endpoint,
                 }),
-                X_df,
+                pl.DataFrame(X),
             ],
             how="horizontal",
         )
