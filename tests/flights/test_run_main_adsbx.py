@@ -6,6 +6,14 @@ import polars as pl
 
 def _set_output_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    for module_name in (
+        "data_engineering.utils",
+        "data_engineering.flights.flight_type",
+        "flights_algorithm.main",
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            monkeypatch.setattr(module, "OUTPUT_DIR", tmp_path, raising=False)
     airports_path = tmp_path / "data" / "interim" / "airports.csv"
     airports_path.parent.mkdir(parents=True, exist_ok=True)
     airports_path.write_text(
@@ -76,13 +84,22 @@ def test_run_main_use_adsbx_writes_adsbx_algorithm_output(tmp_path, monkeypatch)
         lambda _target_date: ["abc123"],
     )
 
-    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+    def fake_process_icaos(
+        start_dt,
+        end_dt,
+        icaos,
+        no_airports_model=False,
+        use_adsbx=False,
+        target_date=None,
+    ):
         process_calls.append(
             {
                 "start_dt": start_dt,
                 "end_dt": end_dt,
                 "icaos": icaos,
                 "no_airports_model": no_airports_model,
+                "use_adsbx": use_adsbx,
+                "target_date": target_date,
             }
         )
         return flights_df
@@ -100,10 +117,12 @@ def test_run_main_use_adsbx_writes_adsbx_algorithm_output(tmp_path, monkeypatch)
     assert df.equals(flights_df)
     assert process_calls == [
         {
-            "start_dt": datetime(2026, 2, 28, 12),
-            "end_dt": datetime(2026, 3, 2, 12),
+            "start_dt": datetime(2026, 3, 1),
+            "end_dt": datetime(2026, 3, 2),
             "icaos": ["abc123"],
             "no_airports_model": False,
+            "use_adsbx": True,
+            "target_date": target_date,
         }
     ]
     assert (
@@ -118,6 +137,45 @@ def test_run_main_use_adsbx_writes_adsbx_algorithm_output(tmp_path, monkeypatch)
         / "day=01"
         / "flights.parquet"
     ).exists()
+
+
+def test_run_main_single_worker_processes_icaos_in_serial_chunks(tmp_path, monkeypatch):
+    _set_output_dir(tmp_path, monkeypatch)
+
+    import flights_algorithm.main as flights_algorithm_main
+
+    target_date = date(2026, 3, 1)
+    icaos = [f"abc{i:03x}" for i in range(501)]
+    process_calls = []
+
+    monkeypatch.setattr(flights_algorithm_main, "OUTPUT_DIR", tmp_path)
+
+    def fake_process_icaos(
+        start_dt,
+        end_dt,
+        icaos,
+        no_airports_model=False,
+        use_adsbx=False,
+        target_date=None,
+    ):
+        process_calls.append(icaos)
+        return pl.DataFrame(
+            {
+                "icao": [icaos[0]],
+                "takeoff_time": [datetime(2026, 3, 1, 1)],
+                "landing_time": [datetime(2026, 3, 1, 2)],
+            }
+        )
+
+    monkeypatch.setattr(flights_algorithm_main, "process_icaos", fake_process_icaos)
+
+    flights_algorithm_main.run_main(
+        target_date=target_date,
+        icaos=icaos,
+        max_workers=1,
+    )
+
+    assert process_calls == [icaos[:500], icaos[500:]]
 
 
 def test_cli_forwards_optional_icaos(tmp_path, monkeypatch):
@@ -241,7 +299,14 @@ def test_run_main_no_airports_model_skips_inference_and_writes_base_output(
         lambda _target_date: ["abc123"],
     )
 
-    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+    def fake_process_icaos(
+        start_dt,
+        end_dt,
+        icaos,
+        no_airports_model=False,
+        use_adsbx=False,
+        target_date=None,
+    ):
         process_calls.append(no_airports_model)
         return flights_df
 
@@ -259,7 +324,7 @@ def test_run_main_no_airports_model_skips_inference_and_writes_base_output(
         tmp_path
         / "data"
         / "flights"
-        / "algorithm"
+        / "algorithm-no-airports"
         / "v1"
         / "adsblol"
         / "year=2026"
@@ -299,7 +364,14 @@ def test_run_main_sfdps_or_bts_only_limits_process_icaos(tmp_path, monkeypatch):
         lambda _target_date, icaos: [icao for icao in icaos if icao == "abc123"],
     )
 
-    def fake_process_icaos(start_dt, end_dt, icaos, no_airports_model=False):
+    def fake_process_icaos(
+        start_dt,
+        end_dt,
+        icaos,
+        no_airports_model=False,
+        use_adsbx=False,
+        target_date=None,
+    ):
         process_calls.append(icaos)
         return flights_df
 

@@ -819,7 +819,7 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
 
 
 def _get_airport_lookup():
-    from airports.airportLookup import AirportLookup
+    from airports.airport_lookup import AirportLookup
     try:
         airport_lookup = AirportLookup()
     except (FileNotFoundError, KeyError):

@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 from timezonefinder import TimezoneFinder
 from data_engineering.flights.flight_type import with_flight_schema_columns
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
 from data_engineering.adsb.read_adsb import read_adsb
 airport_lookup = AirportLookup()

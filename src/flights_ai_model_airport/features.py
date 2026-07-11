@@ -4,7 +4,7 @@ import math
 import polars as pl
 import numpy as np
 from adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df
-from airports.airportLookup import Airport, Airport_Size_Ranking, AirportLookup
+from airports.airport_lookup import Airport, Airport_Size_Ranking, AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, Flight, flights_df_to_flights, pia_or_american_ladd_icao_filter
 from data_engineering.flights.flight_type import add_flight_id_col, flights_df_to_flights, get_flights

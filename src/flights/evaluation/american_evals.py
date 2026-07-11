@@ -1,5 +1,5 @@
 import polars as pl
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 
 airport_lookup = AirportLookup()
 
