@@ -2,7 +2,7 @@
 
 from pyparsing import ai
 
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight
 from utils import haversine
 airport_lookup = AirportLookup()

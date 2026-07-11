@@ -1,5 +1,5 @@
 from data_engineering.adsb.read_adsb import read_adsb
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 import polars as pl
 import math
 from datetime import datetime

@@ -214,7 +214,7 @@ def get_flights(start_date: date, end_date: date | None = None, no_airports_mode
     ])
 
 def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
-    from airports.airportLookup import AirportLookup
+    from airports.airport_lookup import AirportLookup
 
     airport_lookup = AirportLookup()
 
