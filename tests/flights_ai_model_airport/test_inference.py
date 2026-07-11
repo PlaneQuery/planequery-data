@@ -5,6 +5,15 @@ import numpy as np
 import polars as pl
 
 os.environ.setdefault("OUTPUT_DIR", "/tmp/planequery-test-output")
+AIRPORTS_PATH = "/tmp/planequery-test-output/data/interim/airports.csv"
+os.makedirs(os.path.dirname(AIRPORTS_PATH), exist_ok=True)
+if not os.path.exists(AIRPORTS_PATH):
+    with open(AIRPORTS_PATH, "w", encoding="utf-8") as airport_csv:
+        airport_csv.write(
+            "ident,type,latitude_deg,longitude_deg,elevation_ft,iata_code,gps_code,local_code,iso_country,iso_region\n"
+            "KAAA,small_airport,0,0,0,AAA,KAAA,AAA,US,US-AA\n"
+            "KBBB,small_airport,1,1,0,BBB,KBBB,BBB,US,US-BB\n"
+        )
 
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df
 from flights_ai_model_airport.inference import set_consecutive_airport_idents_from_scores
@@ -120,8 +129,11 @@ def test_inference_passes_preloaded_adsb_to_both_endpoint_feature_builders(monke
             np.array(["KAAA"]),
         )
 
+    predict_inputs = []
+
     class FakeModel:
         def predict_proba(self, X):
+            predict_inputs.append(X)
             return np.array([[0.1, 0.9] for _ in range(len(X))])
 
     monkeypatch.setattr(
@@ -138,3 +150,4 @@ def test_inference_passes_preloaded_adsb_to_both_endpoint_feature_builders(monke
 
     assert [endpoint for endpoint, _df_adsb in calls] == ["takeoff", "landing"]
     assert all(df_adsb is df_adsb_full for _endpoint, df_adsb in calls)
+    assert all(isinstance(X, np.ndarray) for X in predict_inputs)
