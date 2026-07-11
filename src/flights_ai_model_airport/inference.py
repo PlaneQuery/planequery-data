@@ -49,7 +49,7 @@ def score_airport_candidates(
     )
 
     X_df = pl.DataFrame(X, schema=FEATURE_NAMES)
-    scores = model.predict_proba(X_df)[:, 1]
+    scores = model.predict_proba(X)[:, 1]
 
     return (
         pl.concat(
