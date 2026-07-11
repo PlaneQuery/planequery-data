@@ -1,12 +1,10 @@
-import os
 from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
 
 from data_engineering.swim.read_sfdps_logs import process_day
-
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./"))
+from data_engineering.utils import OUTPUT_DIR
 
 
 def _date_partition(d: date) -> str:

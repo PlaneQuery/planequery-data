@@ -13,7 +13,7 @@ import logging
 import polars as pl
 environment = os.getenv('ENVIRONMENT', 'development')
 
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+from data_engineering.utils import OUTPUT_DIR
 ADSB_REAPI_S3_BUCKET = os.getenv("ADSB_REAPI_S3_BUCKET", "planequery-dev-adsb-reapi")
 ADSB_REAPI_S3_PREFIX = os.getenv(
     "ADSB_REAPI_S3_PREFIX",

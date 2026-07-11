@@ -1,9 +1,7 @@
 import polars as pl
 from datetime import date
-import os
 from data_engineering.openairframes.read import add_latest_icao_info
-
-OUTPUT_DIR = os.environ["OUTPUT_DIR"]
+from data_engineering.utils import OUTPUT_DIR
 
 
 def get_adsbx_flights_for_day(current_date: date) -> pl.DataFrame:
