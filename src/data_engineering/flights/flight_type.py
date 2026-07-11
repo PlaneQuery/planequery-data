@@ -135,46 +135,6 @@ def add_flight_id_col(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def adsblol_flights_output_path(target_date: date, version = "v6"):
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "trad-model"
-        / version
-        / "adsblol"
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
-def adsblol_flights_airport_model_output_path(target_date: date, version = "v7"):
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "trad-model-airport"
-        / version
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
-def adsbx_flights_airport_model_output_path(target_date: date, version = "v7"):
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "trad-model-airport-adsbx"
-        / version
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
 def flights_algorithm_output_path(target_date: date, source: str = "adsblol", no_airports_model: bool = False):
     return (
         OUTPUT_DIR
