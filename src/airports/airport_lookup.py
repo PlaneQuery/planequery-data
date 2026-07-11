@@ -79,7 +79,7 @@ class AirportLookup:
         self.gps_code_to_ident_index: dict[str, str] = {}
         self.local_code_to_ident_index: dict[str, str] = {}
         self.ident_index: dict[str, Airport] = {}
-        path = OUTPUT_DIR / 'data' / 'interim' / 'airports.csv'
+        path = OUTPUT_DIR / 'data' / 'interim' / 'airports.csv' # TODO: Change path to / 'data' / 'raw/ourairports' / 'airports.csv'
         print(f"Loading airports from {path}")
         with open(path, 'r', encoding='utf-8') as airport_csv:
             airport_csv_reader = csv.DictReader(filter(lambda row: row[0] != '#', airport_csv))
