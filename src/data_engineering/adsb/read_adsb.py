@@ -247,7 +247,14 @@ def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns
     paths = []
     for day in dates:
         if use_adsbx:
-            paths.append(_adsbx_parquet_path(day))
+            for bucket in sorted(set(icao_buckets)):
+                path = (
+                    _adsbx_parquet_day_dir(day)
+                    / f"icao_bucket={bucket}"
+                    / "data.parquet"
+                )
+                if path.exists():
+                    paths.append(str(path))
         else:
             paths.extend(_parquet_read_paths(day, icao_buckets=icao_buckets))
     df_lz = pl.scan_parquet(paths).filter(pl.col("icao").is_in(icaos)).filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(columns)
