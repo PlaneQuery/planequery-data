@@ -20,7 +20,7 @@ COLUMNS = set([
 
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+from data_engineering.utils import OUTPUT_DIR
 BTS_FLIGHTS_VERSION = "v3"
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 

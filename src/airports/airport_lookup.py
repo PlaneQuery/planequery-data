@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from sklearn.neighbors import BallTree
 from scipy.spatial import KDTree
 from enum import StrEnum
-from pathlib import Path
-import os
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+from data_engineering.utils import OUTPUT_DIR
 Airport_Size_Ranking = { # TODO: move this inside class but python is being annoying with thinking this should be another enum value when I try to make it a member variable
     "SMALL_AIRPORT": 1,
     "MEDIUM_AIRPORT": 2,
