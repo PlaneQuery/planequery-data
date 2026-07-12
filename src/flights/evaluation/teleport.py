@@ -1,7 +1,12 @@
 # in tests/ have examples of true teleports.
 # This has function that detects teleports.
 import polars as pl
+from datetime import date, timedelta, datetime
 
+from data_engineering.adsb.read_adsb import pia_or_american_ladd_icao
+from data_engineering.flights.flight_type import get_flights
+from flights.evaluation.american_evals import continental_usa_to_continental_usa
+from flights.evaluation.evaluation import pia_or_american_ladd_expr
 def detect_teleports(df_flights: pl.DataFrame) -> pl.DataFrame:
     TELEPORT_MIN_DISTANCE_KM = 50.0
     EARTH_RADIUS_KM = 6371.0088
@@ -67,3 +72,21 @@ def detect_teleports(df_flights: pl.DataFrame) -> pl.DataFrame:
     )
 
     return teleport_flights
+
+def main():
+    start_date = date(2026, 6, 1)
+    end_date = date(2026, 7, 1)
+
+    current_date = start_date
+
+    while current_date < end_date:
+        print(current_date)
+        df_flights = get_flights(current_date)
+        df_flights = df_flights.filter(pia_or_american_ladd_icao())
+        df_flights = continental_usa_to_continental_usa(df_flights)
+        df_teleports = detect_teleports(df_flights)
+        print(len(df_teleports), "teleports found for", current_date)
+        current_date += timedelta(days=1)
+
+if __name__ == "__main__":
+    main()
