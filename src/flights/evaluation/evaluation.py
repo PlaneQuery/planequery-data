@@ -4,6 +4,7 @@ from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.opensky.create_flights_from_trino_parquets import read_opensky_flights
 
 from data_engineering.flights.flight_type import get_flights
@@ -115,6 +116,8 @@ def source_flights_reader(
         return get_bts_flights_for_day
     if src =="opensky":
         return lambda target_date: read_opensky_flights(target_date)
+    if src == "opdi":
+        return get_opdi_flights
     if src == "fr24":
         return read_fr24_flights
     if src == "eurocontrol":
