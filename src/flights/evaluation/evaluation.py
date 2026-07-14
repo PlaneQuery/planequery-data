@@ -271,3 +271,6 @@ if __name__ == "__main__":
         filter_rotorcraft=args.filter_rotorcraft,
         pia_or_american_ladd_only=args.pia_or_american_ladd_only,
     )
+
+
+# df COLUMNS = COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"]
