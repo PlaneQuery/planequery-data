@@ -7,7 +7,7 @@ import polars as pl
 import joblib
 from lightgbm import LGBMClassifier
 
-from data_engineering.flights.flight_type import add_flight_id_col, get_flights, pia_or_american_ladd_icao_filter
+from data_engineering.flights.flight_type import add_flight_id_col, get_flights
 from flights_ai_model_airport.features import build_inference_data
 from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOINTS
 
@@ -48,6 +48,16 @@ def score_airport_candidates(
         df_adsb_full,
         endpoint,
     )
+    if len(flight_ids) == 0:
+        return pl.DataFrame(
+            schema={
+                "flight_id": pl.String,
+                "airport_ident": pl.String,
+                "score": pl.Float64,
+                "endpoint": pl.String,
+                "rank": pl.UInt32,
+            }
+        )
 
     with warnings.catch_warnings(): # TODO: deal with.
         warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
@@ -89,7 +99,12 @@ def _join_endpoint_predictions(df_flights: pl.DataFrame, scores: pl.DataFrame, e
     return (
         df_flights
         .join(predictions, on="flight_id", how="left")
-        .with_columns(pl.col(f"_{endpoint}_airport_ident").alias(f"{endpoint}_airport_ident"))
+        .with_columns(
+            pl.coalesce(
+                f"_{endpoint}_airport_ident",
+                f"{endpoint}_airport_ident",
+            ).alias(f"{endpoint}_airport_ident")
+        )
         .drop(f"_{endpoint}_airport_ident")
     )
 
@@ -125,7 +140,6 @@ def run_inference(run_date: date, model_path: Path):
     from data_engineering.adsb.read_adsb import read_adsb
 
     df_flights = get_flights(run_date)
-    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     icaos = df_flights.get_column("icao").unique().to_list()
     df_adsb_full = read_adsb(run_date, icaos=icaos)
     model = load_model(model_path)
@@ -136,7 +150,6 @@ def run_score_canidates(run_date: date, model_path: Path):
     from data_engineering.adsb.read_adsb import read_adsb
 
     df_flights = get_flights(run_date)
-    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     icaos = df_flights.get_column("icao").unique().to_list()
     df_adsb_full = read_adsb(run_date, icaos=icaos)
     model = load_model(model_path)

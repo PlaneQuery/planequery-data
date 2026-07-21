@@ -9,8 +9,11 @@ version = "0.1.0"
 dependencies = [
     "joblib==1.5.3",
     "lightgbm==4.6.0",
+    "matplotlib==3.10.7",
+    "networkx==3.6.1",
     "numpy==2.5.1",
     "orjson==3.11.9",
+    "ortools==9.15.6755",
     "polars==1.42.1",
     "pyarrow==25.0.0",
     "scikit-learn==1.9.0",

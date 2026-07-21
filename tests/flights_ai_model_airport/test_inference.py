@@ -106,6 +106,7 @@ def test_set_consecutive_airport_idents_keeps_different_airports_when_scores_dis
 
 def test_inference_passes_preloaded_adsb_to_both_endpoint_feature_builders(monkeypatch):
     import flights_ai_model_airport.inference as inference_module
+    from flights_ai_model_airport.features import FEATURE_NAMES
 
     df_flights = flights_to_flights_df(
         [
@@ -124,7 +125,7 @@ def test_inference_passes_preloaded_adsb_to_both_endpoint_feature_builders(monke
     def fake_build_inference_data(df, df_adsb_full, endpoint="takeoff"):
         calls.append((endpoint, df_adsb_full))
         return (
-            np.ones((1, len(inference_module.FEATURE_NAMES))),
+            np.ones((1, len(FEATURE_NAMES))),
             np.array(["abc123_2026-03-01_10-00"]),
             np.array(["KAAA"]),
         )

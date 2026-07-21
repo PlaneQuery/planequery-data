@@ -1,13 +1,13 @@
-"""AWS Batch stack for GPU flight inference and Iceberg ingest.
+"""AWS Batch stack for flight reconstruction and Iceberg ingest.
 
 The stack provisions:
 
-* An AMD64 GPU Docker image built from ``Dockerfile.inference``.
-* A managed AWS Batch EC2 compute environment with several GPU instance sizes.
+* An AMD64 Docker image built from ``Dockerfile.inference``.
+* A managed AWS Batch EC2 compute environment with memory-optimized instances.
 * A job queue and small/medium/large job definitions that run
   ``flights_from_model.py``.
-* IAM permissions to read/write PlaneQuery S3 data, read/update the Glue
-  Iceberg catalog, and stage Athena queries when feature generation needs it.
+* IAM permissions to read/write PlaneQuery S3 data and update the Glue
+  Iceberg catalog.
 
 Use ``scripts/run_flight_inference_batch_on_aws.py`` to submit and monitor jobs.
 """
@@ -30,18 +30,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _DATA_BUCKETS = ("planequery-dev-lake", "planequery-prod-lake")
 _PLANEQUERY_DATA_BUCKET = "planequery-dev-planequery-data"
-_ATHENA_RESULTS_BUCKET = "planequery-dev-athena-results"
 _GLUE_DATABASE = "planequery_lake_prod"
 _ADSB_TABLE = "adsb_messages"
 _FLIGHTS_TABLE = "flights"
 _MAX_PARALLEL_JOBS = 10
-_ATHENA_WORKGROUP = "planequery-workgroup-dev"
-_JOB_QUEUE_NAME = "planequery-dev-flight-inference-gpu"
+_JOB_QUEUE_NAME = "planequery-dev-flight-algorithm"
 _COMPUTE_INSTANCE_TYPES = [
-    "g5.4xlarge",
-    "g5.8xlarge",
-    "g6.4xlarge",
-    "g6.8xlarge",
+    "m7i.4xlarge",
+    "m7i.8xlarge",
+    "m7i.16xlarge",
 ]
 
 _JOB_SIZE_CONFIGS = {
@@ -89,7 +86,7 @@ class PlanequeryFlightInferenceBatchStack(Stack):
         )
 
         # ------------------------------------------------------------------
-        # Build & push the AMD64 GPU docker image to ECR.
+        # Build and push the AMD64 algorithm image to ECR.
         # ------------------------------------------------------------------
         image_asset = ecr_assets.DockerImageAsset(
             self,
@@ -99,8 +96,7 @@ class PlanequeryFlightInferenceBatchStack(Stack):
             platform=ecr_assets.Platform.LINUX_AMD64,
             exclude=[
                 "data/raw/**",
-                "data/model/**",
-                "data/features/**",
+                "data/models/**",
                 "notebooks/**",
                 "tests/**",
                 "cdk/cdk.out/**",
@@ -171,14 +167,14 @@ class PlanequeryFlightInferenceBatchStack(Stack):
             self,
             "FlightInferenceBatchJobRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-            description="Runtime role for GPU flight inference and Iceberg ingest jobs",
+            description="Runtime role for flight reconstruction and Iceberg ingest jobs",
         )
 
         image_asset.repository.grant_pull(instance_role)
         image_asset.repository.grant_pull(execution_role)
 
         # S3: read/write the Iceberg lake buckets, read/write the planequery-data
-        # bucket for cached features/model artifacts, and use Athena results.
+        # bucket for ADS-B, model, and published flight artifacts.
         # Prod flight inference writes planequery_lake_prod.flights in
         # planequery-prod-lake, while shared ADS-B inputs still live in
         # planequery-dev-lake.
@@ -204,8 +200,6 @@ class PlanequeryFlightInferenceBatchStack(Stack):
                     ],
                     f"arn:aws:s3:::{_PLANEQUERY_DATA_BUCKET}",
                     f"arn:aws:s3:::{_PLANEQUERY_DATA_BUCKET}/*",
-                    f"arn:aws:s3:::{_ATHENA_RESULTS_BUCKET}",
-                    f"arn:aws:s3:::{_ATHENA_RESULTS_BUCKET}/*",
                 ],
             )
         )
@@ -238,44 +232,9 @@ class PlanequeryFlightInferenceBatchStack(Stack):
             )
         )
 
-        # Athena: feature generation can read Iceberg via awswrangler/Athena.
-        job_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "athena:StartQueryExecution",
-                    "athena:GetQueryExecution",
-                    "athena:BatchGetQueryExecution",
-                    "athena:GetQueryResults",
-                    "athena:GetQueryResultsStream",
-                    "athena:StopQueryExecution",
-                    "athena:GetWorkGroup",
-                    "athena:GetDataCatalog",
-                    "athena:GetTableMetadata",
-                    "athena:ListDatabases",
-                    "athena:ListTableMetadata",
-                ],
-                resources=[
-                    f"arn:aws:athena:{self.region}:{self.account}:workgroup/{_ATHENA_WORKGROUP}",
-                    f"arn:aws:athena:{self.region}:{self.account}:datacatalog/*",
-                ],
-            )
-        )
-
-        # Spot interruption handling: the container exits with code 99 so Batch
-        # retries, but first it terminates the interrupted host to avoid being
-        # immediately retried on the same EC2 instance during the warning window.
-        job_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["ec2:TerminateInstances"],
-                resources=[
-                    f"arn:aws:ec2:{self.region}:{self.account}:instance/*",
-                ],
-            )
-        )
-
         # ------------------------------------------------------------------
         # AWS Batch EC2 compute environment using EC2 Spot instances and a
-        # set of allowed GPU instance types. Using Spot reduces cost and
+        # set of allowed memory-optimized instance types. Using Spot reduces cost and
         # allows Batch to pick any of the listed instance sizes.
         # Each job definition sets memory below the matching host total to leave room
         # for ECS and OS overhead on the instance.
@@ -302,7 +261,7 @@ class PlanequeryFlightInferenceBatchStack(Stack):
             self,
             "FlightInferenceComputeEnvironment",
             compute_environment_name=(
-                "planequery-dev-flight-inference-gpu-spot-v7"
+                "planequery-dev-flight-algorithm-spot-v1"
             ),
             type="MANAGED",
             state="ENABLED",
@@ -318,7 +277,7 @@ class PlanequeryFlightInferenceBatchStack(Stack):
                 security_group_ids=[security_group.security_group_id],
                 ec2_configuration=[
                     batch.CfnComputeEnvironment.Ec2ConfigurationObjectProperty(
-                        image_type="ECS_AL2_NVIDIA",
+                        image_type="ECS_AL2023",
                     )
                 ],
                 launch_template=batch.CfnComputeEnvironment.LaunchTemplateSpecificationProperty(
@@ -358,10 +317,6 @@ class PlanequeryFlightInferenceBatchStack(Stack):
                             action="RETRY",
                         ),
                         batch.CfnJobDefinition.EvaluateOnExitProperty(
-                            on_exit_code="99",
-                            action="RETRY",
-                        ),
-                        batch.CfnJobDefinition.EvaluateOnExitProperty(
                             on_exit_code="*",
                             action="EXIT",
                         ),
@@ -385,10 +340,6 @@ class PlanequeryFlightInferenceBatchStack(Stack):
                             type="MEMORY",
                             value=str(config["memory_mib"]),
                         ),
-                        batch.CfnJobDefinition.ResourceRequirementProperty(
-                            type="GPU",
-                            value="1",
-                        ),
                     ],
                     environment=[
                         batch.CfnJobDefinition.EnvironmentProperty(
@@ -400,12 +351,12 @@ class PlanequeryFlightInferenceBatchStack(Stack):
                             value=self.region,
                         ),
                         batch.CfnJobDefinition.EnvironmentProperty(
-                            name="ATHENA_WORKGROUP",
-                            value=_ATHENA_WORKGROUP,
-                        ),
-                        batch.CfnJobDefinition.EnvironmentProperty(
                             name="PLANEQUERY_BATCH_JOB_SIZE",
                             value=size,
+                        ),
+                        batch.CfnJobDefinition.EnvironmentProperty(
+                            name="PLANEQUERY_READ_FROM_S3",
+                            value="1",
                         ),
                     ],
                     log_configuration=batch.CfnJobDefinition.LogConfigurationProperty(
