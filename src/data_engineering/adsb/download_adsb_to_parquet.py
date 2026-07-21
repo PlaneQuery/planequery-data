@@ -508,7 +508,6 @@ def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None
                     "/app/src/data_engineering/flights/flights_from_algorithm.py",
                     day.isoformat(),
                     next_day.isoformat(),
-                    "--download-airport-model-from-s3",
                     "--write-to-s3",
                     "--ingest-to-iceberg",
                     "--prod",
