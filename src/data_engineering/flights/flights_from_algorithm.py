@@ -22,8 +22,6 @@ from data_engineering.flights.flight_type import (
     with_flight_schema_columns,
 )
 from data_engineering.utils import (
-    does_s3_key_exist,
-    download_from_s3,
     upload_to_s3,
 )
 
@@ -57,17 +55,6 @@ def _date_range(start_date: date, end_date: date):
     while current_date < end_date:
         yield current_date
         current_date += timedelta(days=1)
-
-
-def _ensure_airport_model(model_path: Path, download_from_s3_if_missing: bool) -> None:
-    os.environ["FLIGHTS_AIRPORT_MODEL_PATH"] = str(model_path)
-    flights_algorithm.MODEL_PATH = model_path
-    flights_algorithm._get_airport_model.cache_clear()
-    if model_path.exists() or not download_from_s3_if_missing:
-        return
-    if not does_s3_key_exist(model_path):
-        raise FileNotFoundError(f"Airport model is not available locally or in S3: {model_path}")
-    download_from_s3(model_path)
 
 
 def publish_flights_parquet(
@@ -134,13 +121,6 @@ def main() -> None:
     parser.add_argument("--source", choices=ALGORITHM_ADSB_SOURCES, default="adsblol")
     parser.add_argument("--max-workers", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--no-airports-model", action="store_true")
-    parser.add_argument(
-        "--airport-model",
-        type=Path,
-        default=flights_algorithm.MODEL_PATH,
-        help="Local LightGBM airport-model bundle.",
-    )
-    parser.add_argument("--download-airport-model-from-s3", action="store_true")
     parser.add_argument("--write-to-s3", action="store_true")
     parser.add_argument("--ingest-to-iceberg", action="store_true")
     parser.add_argument("--prod", action="store_true")
@@ -150,12 +130,6 @@ def main() -> None:
         parser.error("end_date must be after start_date")
     if args.max_workers < 1:
         parser.error("--max-workers must be positive")
-    if not args.no_airports_model:
-        _ensure_airport_model(
-            args.airport_model,
-            download_from_s3_if_missing=args.download_airport_model_from_s3,
-        )
-
     array_index = os.getenv("AWS_BATCH_JOB_ARRAY_INDEX")
     dates = list(_date_range(args.start_date, args.end_date))
     if array_index is not None:

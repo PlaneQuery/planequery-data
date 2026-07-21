@@ -16,7 +16,7 @@ dependencies = [
     "ortools==9.15.6755",
     "polars==1.42.1",
     "pyarrow==25.0.0",
-    "pyspark==4.2.0",
+    "pyspark==4.0.4",
     "scikit-learn==1.9.0",
     "scipy==1.18.0",
     "timezonefinder==8.2.4",
