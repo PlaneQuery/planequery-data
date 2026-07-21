@@ -4,7 +4,7 @@ Reads Batch metadata from ``PlanequeryFlightInferenceBatchStack`` outputs and
 submits one AWS Batch job for the date range. Multi-day ranges use an array job
 where each child runs one day using ``AWS_BATCH_JOB_ARRAY_INDEX``::
 
-    python /app/src/data_engineering/flights/flights_from_model.py \
+    python /app/src/data_engineering/flights/flights_from_algorithm.py \
         START_DATE END_DATE --ingest-to-iceberg
 
 
@@ -140,7 +140,7 @@ def _stop_failed_array(
 def _command_for_range(start: dt.date, end: dt.date, model_path: str | None) -> list[str]:
     command = [
         "python",
-        "/app/src/data_engineering/flights/flights_from_model.py",
+        "/app/src/data_engineering/flights/flights_from_algorithm.py",
         start.strftime("%Y-%m-%d"),
         end.strftime("%Y-%m-%d"),
     ]
