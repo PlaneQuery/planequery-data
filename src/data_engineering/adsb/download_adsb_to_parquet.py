@@ -505,7 +505,7 @@ def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None
                 "job_name": f"flights-{day:%Y-%m-%d}",
                 "command": [
                     "python",
-                    "/app/src/data_engineering/flights/flights_from_model.py",
+                    "/app/src/data_engineering/flights/flights_from_algorithm.py",
                     day.isoformat(),
                     next_day.isoformat(),
                     "--download-airport-model-from-s3",
