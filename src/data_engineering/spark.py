@@ -71,7 +71,7 @@ def get_spark_session(
 
     REGION = "us-east-2"
 
-    ICEBERG_PKG = "org.apache.iceberg:iceberg-spark-runtime-4.2_2.13:1.10.0"
+    ICEBERG_PKG = "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.0"
     ICEBERG_AWS_BUNDLE = "org.apache.iceberg:iceberg-aws-bundle:1.10.0"
     spark_resource_config = get_local_spark_resource_config()
 
