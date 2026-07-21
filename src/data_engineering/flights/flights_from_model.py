@@ -153,7 +153,7 @@ def main() -> None:
         dates = [dates[int(array_index)]]
 
     for target_date in dates:
-        df_flights = flights_algorithm.run_main(
+        df_flights = flights_algorithm.main(
             target_date=target_date,
             source=args.source,
             max_workers=args.max_workers,
