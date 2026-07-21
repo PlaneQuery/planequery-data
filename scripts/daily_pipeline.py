@@ -106,7 +106,7 @@ def run_adsb_day(day: date, args: argparse.Namespace) -> None:
 def run_flights_day(day: date, args: argparse.Namespace) -> None:
     command = [
         sys.executable,
-        "src/data_engineering/flights/flights_from_model.py",
+        "src/data_engineering/flights/flights_from_algorithm.py",
         fmt(day),
         fmt(next_day(day)),
         "--download-airport-model-from-s3",
