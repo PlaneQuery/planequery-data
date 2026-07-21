@@ -6,8 +6,9 @@ import polars as pl
 from timezonefinder import TimezoneFinder
 from data_engineering.flights.flight_type import with_flight_schema_columns
 from airports.airport_lookup import AirportLookup
-from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
 from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
+from data_engineering.utils import OUTPUT_DIR
 airport_lookup = AirportLookup()
 tf = TimezoneFinder()
 
@@ -20,7 +21,7 @@ COLUMNS = set([
 
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
-from data_engineering.utils import OUTPUT_DIR
+
 BTS_FLIGHTS_VERSION = "v3"
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 
@@ -136,11 +137,10 @@ def iata_to_ident_mapping():
     lookup = pl.DataFrame({"iata": list(airport_lookup.iata_to_ident_index.keys()), "ident": list(airport_lookup.iata_to_ident_index.values())})
     return lookup
 def get_registration_to_icao() -> pl.DataFrame:
-    df_faa = pl.read_csv(OUTPUT_DIR/ "data/raw" /"openairframes"/"openairframes_faa_2023-08-16_2026-03-25.csv",ignore_errors=True)
-    df_faa = df_faa.select(["registration_number", "transponder_code_hex"])
-    df_faa = df_faa.rename({"registration_number": "registration", "transponder_code_hex": "icao"})
-    df_faa = df_faa.unique(subset=["registration"])
-    return df_faa
+    return (
+        scan_latest_faa_registration_icao_for_join(real_icao_column="icao")
+        .collect()
+    )
 
 def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     '''
@@ -243,5 +243,5 @@ def get_bts_flights_for_day(target_date: date, use_cache = True) -> pl.DataFrame
     return df
 
 if __name__ == "__main__":
-    df = create_flights_from_bts(2025, 10)
+    df = create_flights_from_bts(2026, 3)
     print(df)

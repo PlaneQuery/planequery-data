@@ -4,9 +4,8 @@ The daily ADS-B stage runs the existing ADS-B insert image at 02:00 UTC with
 no positional dates.  In that mode ``download_adsb_to_parquet.py`` checks
 ``get_adsblol_releases_to_process`` once and exits with code 42 when there is
 no work.  The state machine catches that sentinel, waits 60 minutes, and starts
-a fresh task up to six times.  Once ADS-B succeeds, the workflow starts
-inference-feature generation for the days that now have previous/current/future
-ADS-B available, then runs flight inference for those feature days.
+a fresh task up to six times. Once ADS-B succeeds, the workflow runs the
+canonical flight algorithm for every newly available ADS-B day.
 """
 
 from aws_cdk import (
@@ -24,7 +23,6 @@ from constructs import Construct
 
 from cdk.planequery_datalake_adsb_insert_stack import PlanequeryDatalakeAdsbInsertStack
 from cdk.planequery_flight_inference_batch_stack import PlanequeryFlightInferenceBatchStack
-from cdk.planequery_inference_features_stack import PlanequeryInferenceFeaturesStack
 
 
 class PlanequeryDailyPipelineStack(Stack):
@@ -34,7 +32,6 @@ class PlanequeryDailyPipelineStack(Stack):
         construct_id: str,
         *,
         adsb_insert_stack: PlanequeryDatalakeAdsbInsertStack,
-        inference_features_stack: PlanequeryInferenceFeaturesStack,
         flight_inference_stack: PlanequeryFlightInferenceBatchStack,
         **kwargs,
     ) -> None:
@@ -188,16 +185,6 @@ class PlanequeryDailyPipelineStack(Stack):
             },
             result_path="$.adsb_manifest",
         )
-        run_inference_features = sfn_tasks.StepFunctionsStartExecution(
-            self,
-            "RunInferenceFeaturesForReadyDays",
-            state_machine=inference_features_stack.state_machine,
-            integration_pattern=sfn.IntegrationPattern.RUN_JOB,
-            input=sfn.TaskInput.from_json_path_at(
-                "$.adsb_manifest.manifest.inference_features_execution_input"
-            ),
-            result_path=sfn.JsonPath.DISCARD,
-        )
         run_flight_inference_job = sfn_tasks.BatchSubmitJob(
             self,
             "RunFlightInferenceForDay",
@@ -212,8 +199,8 @@ class PlanequeryDailyPipelineStack(Stack):
         )
         run_flight_inference = sfn.Map(
             self,
-            "RunFlightInferenceForFeatureDays",
-            comment="Run flight inference once for each newly-created inference-feature day.",
+            "RunFlightAlgorithmForAdsbDays",
+            comment="Run the flight algorithm once for each newly available ADS-B day.",
             items_path=sfn.JsonPath.string_at("$.adsb_manifest.manifest.flight_inference_jobs"),
             max_concurrency=1,
             result_path=sfn.JsonPath.DISCARD,
@@ -225,7 +212,6 @@ class PlanequeryDailyPipelineStack(Stack):
             .next(run_adsb_insert)
             .next(adsb_processed)
             .next(get_adsb_manifest)
-            .next(run_inference_features)
             .next(run_flight_inference)
             .next(done)
         )

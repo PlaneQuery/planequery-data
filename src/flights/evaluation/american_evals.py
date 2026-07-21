@@ -20,6 +20,18 @@ def add_airspace_columns(df: pl.DataFrame):
     )
     return df
 
+def us_faa_airspace_to_us_faa_airspace_expr() -> pl.Expr:
+    return (
+        pl.col("takeoff_airport_in_us_faa_airspace")
+        & pl.col("landing_airport_in_us_faa_airspace")
+    )
+
+def any_us_faa_airspace_expr() -> pl.Expr:
+    return (
+        pl.col("takeoff_airport_in_us_faa_airspace")
+        | pl.col("landing_airport_in_us_faa_airspace")
+    )
+
 # Flight Sequencing Continetal USA -> Continetal USA. With SFDPS I can use the idents
 def continental_usa_to_continental_usa(df: pl.DataFrame) -> pl.DataFrame:  # except Alaska?
     df = add_airspace_columns(df)
@@ -28,4 +40,3 @@ def continental_usa_to_continental_usa(df: pl.DataFrame) -> pl.DataFrame:  # exc
 
 # Flight Sequencing Continetal USA -> Outside
 # Flight Sequencing Outside -> Continetal USA
-

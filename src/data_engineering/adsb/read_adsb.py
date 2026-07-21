@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
+import os
 from pathlib import Path
 
 import polars as pl
@@ -7,7 +8,6 @@ import polars as pl
 from data_engineering.utils import OUTPUT_DIR
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
-ADSBLOL_LEGACY_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v5"
 ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
 ICAO_BUCKET_COUNT = 8
 ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
@@ -72,22 +72,41 @@ def _adsbx_parquet_path(current_day: date) -> str:
     return str(_adsbx_parquet_day_dir(current_day) / "icao_bucket=*" / "data.parquet")
 
 
-def _legacy_parquet_day_dir(current_day: date) -> Path:
-    return _day_partition_dir(ADSBLOL_LEGACY_PARQUET_ROOT, current_day)
-
-
-def _legacy_parquet_path(current_day: date) -> Path:
-    return _legacy_parquet_day_dir(current_day) / "part-00000.parquet"
-
-
 def _parquet_partition_has_data(partition_dir: Path) -> bool:
     return any(partition_dir.glob("icao_bucket=*/data.parquet"))
 
 
 def _parquet_day_has_data(current_day: date) -> bool:
-    return (
-        _parquet_partition_has_data(_parquet_day_dir(current_day))
-        or _legacy_parquet_path(current_day).exists()
+    return _parquet_partition_has_data(_parquet_day_dir(current_day))
+
+
+def _restore_partition_from_s3(partition_dir: Path) -> None:
+    if os.getenv("PLANEQUERY_READ_FROM_S3") != "1":
+        return
+    from data_engineering.utils import download_prefix_from_s3
+
+    downloaded = download_prefix_from_s3(partition_dir)
+    if downloaded:
+        print(f"Downloaded {downloaded} parquet files from S3 into {partition_dir}")
+
+
+def create_adsbx_parquet_for_day(current_day: date):
+    partition_dir = _adsbx_parquet_day_dir(current_day)
+    if not _parquet_partition_has_data(partition_dir):
+        _restore_partition_from_s3(partition_dir)
+    if _parquet_partition_has_data(partition_dir):
+        return
+    if current_day.day != 1:
+        raise FileNotFoundError(
+            "ADSBExchange sample readsb-hist data is only available for the "
+            f"first day of each month; no source data is expected for {current_day}."
+        )
+
+    from data_engineering.adsbx.readsb import ensure_readsb_day_bucketed_parquet
+
+    ensure_readsb_day_bucketed_parquet(
+        current_day,
+        output_root=ADSBX_PARQUET_ROOT,
     )
 
 
@@ -111,10 +130,6 @@ def _parquet_read_paths(
             for bucket in sorted(set(icao_buckets))
         ]
         return [str(path) for path in paths if path.exists()]
-
-    legacy_path = _legacy_parquet_path(current_day)
-    if legacy_path.exists():
-        return str(legacy_path)
 
     return []
 
@@ -146,6 +161,8 @@ def create_adsb_parquet_for_day(
     *,
     pia_or_american_ladd_only: bool = False,
 ):
+    if not _parquet_day_has_data(current_day):
+        _restore_partition_from_s3(_parquet_day_dir(current_day))
     if _parquet_day_has_data(current_day):
         return
 
@@ -154,50 +171,6 @@ def create_adsb_parquet_for_day(
         current_day,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
-
-
-def read_adsb(
-    current_day: date,
-    columns=DEFAULT_COLUMNS_SET,
-    additional_columns=None,
-    *,
-    icaos: Sequence[str] | None = None,
-    pia_or_american_ladd_only: bool = False,
-):
-    return scan_adsb(
-        current_day,
-        columns=columns,
-        additional_columns=additional_columns,
-        icaos=icaos,
-        pia_or_american_ladd_only=pia_or_american_ladd_only,
-    ).collect()
-
-
-def read_adsbx(
-    current_day: date,
-    columns=DEFAULT_COLUMNS_SET,
-    additional_columns=None,
-    *,
-    icaos: Sequence[str] | None = None,
-    pia_or_american_ladd_only: bool = False,
-):
-    columns = _column_list(columns, additional_columns)
-    filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
-    read_columns = list(dict.fromkeys(columns + ["time", "icao", *filter_columns]))
-    if not _parquet_partition_has_data(_adsbx_parquet_day_dir(current_day)):
-        return pl.DataFrame(
-            schema={column: EMPTY_COLUMN_DTYPES.get(column, pl.Null) for column in columns}
-        )
-
-    df = pl.read_parquet(_adsbx_parquet_path(current_day), columns=read_columns)
-    df = df.filter(pl.col("time").dt.date() == current_day)
-    if icaos is not None:
-        df = df.filter(pl.col("icao").is_in(list(icaos)))
-    if pia_or_american_ladd_only:
-        df = df.filter(pia_or_american_ladd_icao())
-    if "callsign" in columns:
-        df = df.with_columns(pl.col("callsign").str.replace_all(" ","").alias("callsign"))
-    return df.select(columns)
 
 
 def scan_adsb(
@@ -222,7 +195,10 @@ def scan_adsb(
     if not parquet_paths:
         return _empty_scan(columns)
 
-    lf = pl.scan_parquet(parquet_paths).select(scan_columns)
+    # Some day partitions can contain newly added columns (for example
+    # `aircraft-year`) while older files do not. Ignore extra columns so
+    # mixed-schema partitions remain readable.
+    lf = pl.scan_parquet(parquet_paths, extra_columns="ignore").select(scan_columns)
     lf = lf.filter(pl.col("time").dt.date() == current_day)
     if icaos is not None:
         lf = lf.filter(pl.col("icao").is_in(list(icaos)))
@@ -233,32 +209,210 @@ def scan_adsb(
     return lf.select(columns)
 
 
+def _date_range_inclusive(start_day: date, end_day: date) -> list[date]:
+    return [start_day + timedelta(days=offset) for offset in range((end_day - start_day).days + 1)]
+
+
+def _date_range_for_interval(start_dt: datetime, end_dt: datetime) -> list[date]:
+    if end_dt <= start_dt:
+        return []
+    end_day = (end_dt - timedelta(microseconds=1)).date()
+    return _date_range_inclusive(start_dt.date(), end_day)
+
+
+def _scan_adsbx_days(
+    days: Sequence[date],
+    columns: Sequence[str],
+    *,
+    icaos: Sequence[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+) -> pl.LazyFrame:
+    filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
+    scan_columns = list(dict.fromkeys(list(columns) + ["time", "icao", *filter_columns]))
+    for day in days:
+        create_adsbx_parquet_for_day(day)
+    paths = [
+        _adsbx_parquet_path(day)
+        for day in days
+        if _parquet_partition_has_data(_adsbx_parquet_day_dir(day))
+    ]
+    if not paths:
+        return _empty_scan(columns)
+
+    lf = pl.scan_parquet(paths, extra_columns="ignore").select(scan_columns)
+    if icaos is not None:
+        lf = lf.filter(pl.col("icao").is_in(list(icaos)))
+    if pia_or_american_ladd_only:
+        lf = lf.filter(pia_or_american_ladd_icao())
+    if "callsign" in columns:
+        lf = lf.with_columns(pl.col("callsign").str.replace_all(" ","").alias("callsign"))
+    return lf.select(columns)
+
+
+def _scan_opensky_days(
+    days: Sequence[date],
+    columns: Sequence[str],
+    *,
+    icaos: Sequence[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+) -> pl.LazyFrame:
+    from data_engineering.openairframes.read import scan_latest_icao_info_for_join
+    from data_engineering.opensky.read_opensky_trino_states import (
+        OPENAIRFRAMES_COLUMNS,
+        join_lf_with_openairframes,
+        scan_cached_opensky_state_vectors_for_day,
+    )
+
+    metadata_columns = set(OPENAIRFRAMES_COLUMNS)
+    filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
+    scan_columns = list(dict.fromkeys(list(columns) + ["time", "icao", *filter_columns]))
+    cached_columns = [column for column in scan_columns if column not in metadata_columns]
+
+    lf = pl.concat(
+        [
+            scan_cached_opensky_state_vectors_for_day(day, columns=cached_columns)
+            for day in days
+        ]
+    )
+    if icaos is not None:
+        lf = lf.filter(pl.col("icao").is_in([icao.lower() for icao in icaos]))
+
+    needs_metadata = bool(metadata_columns.intersection(scan_columns))
+    if needs_metadata or pia_or_american_ladd_only:
+        df_openairframes = scan_latest_icao_info_for_join().with_columns(
+            pl.col("icao").str.to_lowercase()
+        )
+        lf = join_lf_with_openairframes(lf, df_openairframes)
+
+    if pia_or_american_ladd_only:
+        lf = lf.filter(pia_or_american_ladd_icao())
+    if "callsign" in columns:
+        lf = lf.with_columns(pl.col("callsign").str.replace_all(" ","").alias("callsign"))
+    return lf.select(columns)
+
+
+ADSB_SOURCES = ("adsblol", "adsbx", "opensky")
+
+
+def ensure_adsb_source_data(
+    start: date | datetime,
+    end: datetime | None = None,
+    *,
+    source: str = "adsblol",
+    pia_or_american_ladd_only: bool = False,
+) -> None:
+    if isinstance(start, datetime):
+        start_dt = start
+        end_dt = end if end is not None else start_dt + timedelta(days=1)
+    else:
+        start_dt = datetime.combine(start, datetime.min.time())
+        end_dt = end if end is not None else start_dt + timedelta(days=1)
+
+    days = _date_range_for_interval(start_dt, end_dt)
+    if source == "adsblol":
+        for day in days:
+            create_adsb_parquet_for_day(
+                day,
+                pia_or_american_ladd_only=pia_or_american_ladd_only,
+            )
+    elif source == "adsbx":
+        for day in days:
+            create_adsbx_parquet_for_day(day)
+    elif source == "opensky":
+        from data_engineering.opensky.read_opensky_trino_states import (
+            write_opensky_state_vectors_cache_for_day,
+        )
+
+        for day in days:
+            write_opensky_state_vectors_cache_for_day(day)
+    else:
+        raise ValueError(f"Unknown ADS-B source: {source!r}")
+
+
+def read_adsb(
+    start: date | datetime,
+    end: datetime | None = None,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: list[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    source: str = "adsblol",
+) -> pl.DataFrame:
+    """Read ADS-B messages, eagerly (lazy scanning is only used internally
+    where it helps, e.g. column/predicate pushdown while reading parquet).
+
+    Pass a `date` for `start` to read a single full day, or `datetime`s for
+    `start`/`end` to read a `[start, end)` range spanning one or more days
+    (e.g. a context window around a target day).
+
+    `source` selects the data provider: "adsblol" (default), "adsbx", or
+    "opensky".
+    """
+    if isinstance(start, datetime):
+        start_dt = start
+        end_dt = end if end is not None else start_dt + timedelta(days=1)
+    else:
+        start_dt = datetime.combine(start, datetime.min.time())
+        end_dt = end if end is not None else start_dt + timedelta(days=1)
+
+    requested_columns = _column_list(columns, additional_columns)
+    scan_columns = _column_list(requested_columns, ["time"])
+    days = _date_range_for_interval(start_dt, end_dt)
+
+    if source == "opensky":
+        lf = _scan_opensky_days(
+            days,
+            scan_columns,
+            icaos=icaos,
+            pia_or_american_ladd_only=pia_or_american_ladd_only,
+        )
+    elif source == "adsblol":
+        lf = pl.concat(
+            [
+                scan_adsb(
+                    day,
+                    columns=scan_columns,
+                    icaos=icaos,
+                    pia_or_american_ladd_only=pia_or_american_ladd_only,
+                )
+                for day in days
+            ]
+        )
+    elif source == "adsbx":
+        lf = _scan_adsbx_days(
+            days,
+            scan_columns,
+            icaos=icaos,
+            pia_or_american_ladd_only=pia_or_american_ladd_only,
+        )
+    else:
+        raise ValueError(f"Unknown ADS-B source: {source!r}")
+
+    lf = lf.filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(requested_columns)
+    return lf.collect()
+
+
 def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
     return read_adsb(current_day, columns=columns, icaos=icaos)
 
-def read_adsb_lz(start_dt: datetime, end_dt: datetime, icaos: list[str], columns=DEFAULT_COLUMNS_SET, use_adsbx: bool = False):
-    '''icaos is sorted'''
-    current_day = start_dt.date()
-    end_day = end_dt.date()
-    dates = [current_day + timedelta(days=i) for i in range((end_day - current_day).days + 1)]
-    first_bucket = _icao_bucket(icaos[0])
-    last_bucket = _icao_bucket(icaos[-1])
-    icao_buckets = list(range(first_bucket, last_bucket + 1))
-    paths = []
-    for day in dates:
-        if use_adsbx:
-            paths.append(_adsbx_parquet_path(day))
-        else:
-            paths.extend(_parquet_read_paths(day, icao_buckets=icao_buckets))
-    df_lz = pl.scan_parquet(paths).filter(pl.col("icao").is_in(icaos)).filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(columns)
-    return df_lz
 
-def get_icaos_in_adsb(current_day: date) -> list[str]:
+
+def get_icaos_in_adsb(current_day: date, source: str = "adsblol") -> list[str]:
     '''
-    Filters invalid icaos
+    List of distinct ICAOs seen on `current_day` for the given `source`.
+    Invalid ICAOs are filtered out for the "adsblol" source.
     '''
-    df = scan_adsb(current_day, columns=["icao"]).filter(exclude_invalid_icaos()).unique().collect()
-    return df["icao"].to_list()
+    if source == "opensky":
+        from data_engineering.opensky.read_opensky_trino_states import get_icaos_in_opensky
+        return get_icaos_in_opensky(current_day)
+    if source == "adsbx":
+        df = _scan_adsbx_days([current_day], ["icao"]).unique().collect()
+        return df.get_column("icao").drop_nulls().to_list()
+    if source == "adsblol":
+        df = scan_adsb(current_day, columns=["icao"]).filter(exclude_invalid_icaos()).unique().collect()
+        return df["icao"].to_list()
+    raise ValueError(f"Unknown ADS-B source: {source!r}")
 
 def is_american_icao(col: str = "icao") -> pl.Expr:
     icao = pl.col(col).str.to_lowercase()

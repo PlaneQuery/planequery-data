@@ -60,7 +60,7 @@ START_TIME_OF_PROGRAM_MINUS_DAY= START_TIME_OF_PROGRAM - 24*3600*1000
 
 last_message_time_by_icao: dict[str, int] = dict()
 
-from adsb_messages_types import Adsb_Message_reapi
+from data_engineering.adsb.adsb_messages_types import Adsb_Message_reapi
 
 @dataclass
 class ReapiFetchResult:
