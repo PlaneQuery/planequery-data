@@ -393,9 +393,11 @@ def process_version_date(
 
 def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
     from data_engineering.spark import get_spark_session
+    from pyspark.sql import functions as F
+
     spark = get_spark_session()
     table_name = "glue.planequery_lake_prod.adsb_messages"
-    df = spark.read.parquet(str(parquet_path))
+    df = spark.read.parquet(str(parquet_path)).withColumn("source", F.lit("adsb.lol"))
     df = df.select(*spark.table(table_name).columns)
     df = df.coalesce(2)
     next_day = target_date + timedelta(days=1)
@@ -458,11 +460,8 @@ def create_parquet_for_day(
 def upload_to_s3(parquet_path: Path):
     import boto3
     s3 = boto3.client('s3')
-    if parquet_path.is_file():
-        paths = [parquet_path]
-    else:
-        paths = sorted(path for path in parquet_path.rglob("*") if path.is_file())
-
+    paths = sorted(parquet_path.rglob("*.parquet"))
+    assert len(paths) == 8, f"Expected 8 parquet files under {parquet_path}, found {len(paths)}"
     for path in paths:
         s3_key = str(path.relative_to(OUTPUT_DIR))
         s3.upload_file(str(path), S3_BUCKET, s3_key)
