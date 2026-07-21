@@ -137,16 +137,13 @@ def _stop_failed_array(
         batch_client.terminate_job(jobId=job_id, reason=reason)
 
 
-def _command_for_range(start: dt.date, end: dt.date, model_path: str | None) -> list[str]:
+def _command_for_range(start: dt.date, end: dt.date) -> list[str]:
     command = [
         "python",
         "/app/src/data_engineering/flights/flights_from_algorithm.py",
         start.strftime("%Y-%m-%d"),
         end.strftime("%Y-%m-%d"),
     ]
-    if model_path:
-        command.extend(["--airport-model", model_path])
-    command.append("--download-airport-model-from-s3")
     command.append("--write-to-s3")
     command.append("--ingest-to-iceberg")
     command.append("--prod")
@@ -158,7 +155,6 @@ def _submit_job(
     cfg: StackConfig,
     start: dt.date,
     end: dt.date,
-    model_path: str | None,
     max_parallel: int | None,
     job_size: str,
     run_ts: str,
@@ -170,7 +166,7 @@ def _submit_job(
         "jobName": job_name,
         "jobQueue": cfg.job_queue_arn,
         "jobDefinition": job_definition_arn,
-        "containerOverrides": {"command": _command_for_range(start, end, model_path)},
+        "containerOverrides": {"command": _command_for_range(start, end)},
     }
     if day_count > 1:
         kwargs["arrayProperties"] = {"size": day_count}
@@ -187,14 +183,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("start_date", help="Start date (inclusive), YYYY-MM-DD")
     parser.add_argument("end_date", help="End date (exclusive), YYYY-MM-DD")
-    parser.add_argument(
-        "--airport-model",
-        default=None,
-        help=(
-            "Optional container-local LightGBM airport-model path. If omitted, "
-            "the publishing job downloads the canonical path from S3."
-        ),
-    )
     parser.add_argument(
         "--region",
         default=DEFAULT_REGION,
@@ -244,7 +232,6 @@ def main() -> int:
     print(f"JobSize:        {args.size}")
     print(f"JobDefinition:  {cfg.job_definition_arns[args.size]}")
     print(f"LogGroup:       {cfg.log_group}")
-    print(f"Airport model:  {args.airport_model or 'canonical S3 path'}")
     if day_count > 1 and args.max_parallel == 1:
         print("MaxParallel:    1 (AWS Batch SEQUENTIAL array dependency)")
     elif day_count > 1 and args.max_parallel is not None:
@@ -258,7 +245,6 @@ def main() -> int:
         cfg,
         start,
         end,
-        args.airport_model,
         args.max_parallel,
         args.size,
         run_ts,
