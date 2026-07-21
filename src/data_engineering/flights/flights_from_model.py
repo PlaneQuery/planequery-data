@@ -1,169 +1,171 @@
-import time
+"""Run the canonical flights algorithm and publish its output.
+
+This module keeps planequery-data's S3 and Spark/Iceberg integration around
+the implementation in ``flights_algorithm.main``.  The historical neural
+flight model pipeline has been removed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import tempfile
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import polars as pl
-from argparse import ArgumentParser
-from datetime import date, datetime
-from pathlib import Path
-from flights_ai_model.inference import run_inference
-from data_engineering.utils import MODEL_PATH, delete_from_s3, does_s3_key_exist, download_from_s3, s3_key_exists
-from datetime import timedelta
-from data_engineering.flights.flight_type import flights_parquet_path
-from data_engineering.utils import upload_to_s3
-import tempfile
-import os
-import sys
-import threading
-import urllib.request
-import json
-import urllib.error
-from data_engineering.utils import OUTPUT_DIR, S3_BUCKET
-from data_engineering.flights.flight_type import flights_parquet_path
 
+import flights_algorithm.main as flights_algorithm
+from data_engineering.flights.flight_type import (
+    ALGORITHM_ADSB_SOURCES,
+    flights_parquet_path,
+    with_flight_schema_columns,
+)
+from data_engineering.utils import (
+    does_s3_key_exist,
+    download_from_s3,
+    upload_to_s3,
+)
+
+
+ICEBERG_FLIGHTS_COLUMNS = [
+    "icao",
+    "callsign",
+    "registration",
+    "takeoff_time",
+    "takeoff_airport_ident",
+    "landing_time",
+    "landing_airport_ident",
+    "pia",
+    "ladd",
+    "military",
+    "interesting",
+    "aircraft_type",
+    "owner",
+    "aircraft_description",
+    "category",
+]
 BOOLEAN_COLUMNS = ["pia", "ladd", "military", "interesting"]
 
-def _format_time(td: timedelta) -> str:
-    total_seconds = int(td.total_seconds())
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    return f"{hours}:{minutes:02d}:{seconds:02d}"
 
-def ingest_flights_to_iceberg(df_flights: pl.DataFrame, target_date: date) -> None:
+def _date_arg(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _date_range(start_date: date, end_date: date):
+    current_date = start_date
+    while current_date < end_date:
+        yield current_date
+        current_date += timedelta(days=1)
+
+
+def _ensure_airport_model(model_path: Path, download_from_s3_if_missing: bool) -> None:
+    os.environ["FLIGHTS_AIRPORT_MODEL_PATH"] = str(model_path)
+    flights_algorithm.MODEL_PATH = model_path
+    flights_algorithm._get_airport_model.cache_clear()
+    if model_path.exists() or not download_from_s3_if_missing:
+        return
+    if not does_s3_key_exist(model_path):
+        raise FileNotFoundError(f"Airport model is not available locally or in S3: {model_path}")
+    download_from_s3(model_path)
+
+
+def publish_flights_parquet(df_flights: pl.DataFrame, target_date: date) -> Path:
+    output_path = flights_parquet_path(target_date)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with_flight_schema_columns(df_flights).write_parquet(output_path)
+    return output_path
+
+
+def ingest_flights_to_iceberg(
+    df_flights: pl.DataFrame,
+    target_date: date,
+    *,
+    prod: bool,
+) -> None:
     from data_engineering.spark import get_spark_session
 
-    spark = get_spark_session()
+    database = "planequery_lake_prod" if prod else "planequery_lake_dev"
+    table = f"glue.{database}.flights"
     next_day = target_date + timedelta(days=1)
-    existing_row_count = spark.sql(
-        f"""
-        SELECT COUNT(*) AS row_count
-        FROM glue.{Glue_Database}.flights
-        WHERE takeoff_time >= TIMESTAMP '{target_date:%Y-%m-%d} 00:00:00'
-          AND takeoff_time < TIMESTAMP '{next_day:%Y-%m-%d} 00:00:00'
-        """
-    ).collect()[0]["row_count"]
-    print(f"Rows already in table on {target_date}: {existing_row_count}")
-    if existing_row_count > 0:
-        raise Exception(f"Data for {target_date} already exists in Iceberg. Ingestion skipped.")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = os.path.join(tmpdir, "data.parquet")
-        df_flights.write_parquet(tmp_path)
-        df = spark.read.parquet(tmp_path)
-        df = df.fillna(False, subset=BOOLEAN_COLUMNS)
-        df = df.coalesce(2)
-        df.writeTo(f"glue.{Glue_Database}.flights").append()
-    spark.stop()
-    print(f"Ingested {len(df_flights)} flights into Iceberg")
+    spark = get_spark_session()
+    try:
+        existing_rows = spark.sql(
+            f"""
+            SELECT COUNT(*) AS row_count
+            FROM {table}
+            WHERE takeoff_time >= TIMESTAMP '{target_date:%Y-%m-%d} 00:00:00'
+              AND takeoff_time < TIMESTAMP '{next_day:%Y-%m-%d} 00:00:00'
+            """
+        ).collect()[0]["row_count"]
+        if existing_rows:
+            raise RuntimeError(
+                f"{table} already contains {existing_rows} rows for {target_date}"
+            )
 
-def check_for_aws_spot_reclaim_signal(target_date, tmpdir, stop_event):
-    URL = "http://169.254.169.254/latest/meta-data/spot/instance-action"
-    INSTANCE_ID_URL = "http://169.254.169.254/latest/meta-data/instance-id"
-    start_time = time.time()
-    def terminate_current_instance():
-        import boto3
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parquet_path = Path(tmpdir) / "flights.parquet"
+            with_flight_schema_columns(df_flights).write_parquet(parquet_path)
+            spark_df = (
+                spark.read.parquet(str(parquet_path))
+                .select(*ICEBERG_FLIGHTS_COLUMNS)
+                .fillna(False, subset=BOOLEAN_COLUMNS)
+            )
+            spark_df.coalesce(2).writeTo(table).append()
+    finally:
+        spark.stop()
 
-        with urllib.request.urlopen(INSTANCE_ID_URL, timeout=1) as response:
-            instance_id = response.read().decode()
-        print(f"Terminating interrupted EC2 instance {instance_id} before Batch retry.")
-        ec2 = boto3.client("ec2", region_name=os.environ.get("AWS_REGION"))
-        ec2.terminate_instances(InstanceIds=[instance_id])
-        time.sleep(20)
 
-    def exit_logic():
-        parquet_path = flights_parquet_path(target_date)
-        tmpdir_path = Path(tmpdir.name)
-        print(f"SPOT INTERRUPTION SIGNAL RECEIVED after {_format_time(timedelta(seconds=time.time() - start_time))}.")
-        if len(list(tmpdir_path.glob("flights_batch_*.parquet"))) == 0:
-            print("No batch files found in tmpdir, skipping upload to S3.")
-        else:
-            pl.scan_parquet(tmpdir_path / "flights_batch_*.parquet").sink_parquet(parquet_path)
-            upload_to_s3(parquet_path)
-            txt_file = parquet_path.parent / "metadata.json"
-            upload_to_s3(txt_file)
-        try:
-            terminate_current_instance()
-        except Exception as e:
-            print(f"Failed to terminate interrupted EC2 instance before retry: {e}")
-        os._exit(99)
-    while not stop_event.is_set():
-        try:
-            with urllib.request.urlopen(URL, timeout=1) as response:
-                if response.status == 200:
-                    print("SPOT INTERRUPTION WARNING!")
-                    print(response.read().decode())
-                    exit_logic()
-        except urllib.error.URLError:
-            pass
-        time.sleep(5)
-def main():
-    parser = ArgumentParser(description="Run flight inference for a given day and ingest to Iceberg")
-    parser.add_argument('start_date',help='Start date (inclusive) in YYYY-MM-DD format' ) # These are positional args. 
-    parser.add_argument('end_date', help='End date (exclusive) in YYYY-MM-DD format.')
-    parser.add_argument("--model",      type=Path, default=MODEL_PATH, help="Path to model .pth")
-    parser.add_argument(
-        '--ingest-to-iceberg',
-        action='store_true',
-        help='Ingest the created parquet files into Iceberg'
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run the flights algorithm and publish results to local parquet, S3, and/or Iceberg."
     )
+    parser.add_argument("start_date", type=_date_arg)
+    parser.add_argument("end_date", type=_date_arg)
+    parser.add_argument("--source", choices=ALGORITHM_ADSB_SOURCES, default="adsblol")
+    parser.add_argument("--max-workers", type=int, default=os.cpu_count() or 1)
+    parser.add_argument("--no-airports-model", action="store_true")
     parser.add_argument(
-        '--write-to-s3',
-        action='store_true',
-        help='Write the created parquet files to S3 (in addition to local filesystem)'
+        "--airport-model",
+        type=Path,
+        default=flights_algorithm.MODEL_PATH,
+        help="Local LightGBM airport-model bundle.",
     )
-    parser.add_argument(
-        '--fresh',
-        action='store_true'
-    )
-    parser.add_argument("--prod", action='store_true', help="Run in production mode") # TODO: This should really be envionrment variaible.
+    parser.add_argument("--download-airport-model-from-s3", action="store_true")
+    parser.add_argument("--write-to-s3", action="store_true")
+    parser.add_argument("--ingest-to-iceberg", action="store_true")
+    parser.add_argument("--prod", action="store_true")
     args = parser.parse_args()
-    global Glue_Database
-    if args.prod:
-        print("Running in PRODUCTION mode.")
-        Glue_Database = "planequery_lake_prod"
-    else:
-        print("Running in DEV mode.")
-        Glue_Database = "planequery_lake_dev"
-    fresh = args.fresh if args.fresh else False
-    ingest_to_iceberg = args.ingest_to_iceberg
-    write_to_s3 = args.write_to_s3
-    model_path = args.model
-    start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
-    end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
-    array_index = os.environ.get("AWS_BATCH_JOB_ARRAY_INDEX")
-    current_date = start_date + timedelta(days=int(array_index or 0))
+
+    if args.end_date <= args.start_date:
+        parser.error("end_date must be after start_date")
+    if args.max_workers < 1:
+        parser.error("--max-workers must be positive")
+    if not args.no_airports_model:
+        _ensure_airport_model(
+            args.airport_model,
+            download_from_s3_if_missing=args.download_airport_model_from_s3,
+        )
+
+    array_index = os.getenv("AWS_BATCH_JOB_ARRAY_INDEX")
+    dates = list(_date_range(args.start_date, args.end_date))
     if array_index is not None:
-        end_date = current_date + timedelta(days=1)
-        print(f"Running AWS Batch array child {array_index} for {current_date}")
-    while current_date < end_date:
-        print(f"Running inference for {current_date}")
-        icaos_stop = 0
-        existing_flights_df = None
-        json_file_path = flights_parquet_path(current_date).parent / "metadata.json"
-        if not fresh and does_s3_key_exist(flights_parquet_path(current_date)):
-            print(f"Existing flights parquet found for {current_date}. Downloading from S3.")
-            download_from_s3(flights_parquet_path(current_date))
-            existing_flights_df = pl.read_parquet(flights_parquet_path(current_date))
-            if does_s3_key_exist(json_file_path):
-                download_from_s3(json_file_path)
-                with open(json_file_path, "r") as f:
-                    data = json.load(f)
-                icaos_stop = data["icaos_stop"]
-                print(f"Resuming from ICAO index {icaos_stop}")
-        tmpdir = tempfile.TemporaryDirectory()
-        stop_event = threading.Event()
-        thread = threading.Thread(target=check_for_aws_spot_reclaim_signal, args=(current_date, tmpdir, stop_event))
-        thread.start()
-        df_flights = run_inference(current_date, model_path=model_path, tmpdir=tmpdir, icao_start=icaos_stop, existing_flights_df=existing_flights_df)
-        stop_event.set()
-        thread.join()
-        # Potentially batch ec2 could get stop event and it's killed before flights inserted but unlikely. 
-        if write_to_s3:
-            upload_to_s3(flights_parquet_path(current_date))
-            if does_s3_key_exist(json_file_path):
-                delete_from_s3(json_file_path)
-        if ingest_to_iceberg:
-            ingest_flights_to_iceberg(df_flights, current_date)
-        tmpdir.cleanup()
-        current_date += timedelta(days=1)
+        dates = [dates[int(array_index)]]
+
+    for target_date in dates:
+        df_flights = flights_algorithm.run_main(
+            target_date=target_date,
+            source=args.source,
+            max_workers=args.max_workers,
+            no_airports_model=args.no_airports_model,
+        )
+        output_path = publish_flights_parquet(df_flights, target_date)
+        print(f"Published {len(df_flights)} flights to {output_path}")
+        if args.write_to_s3:
+            upload_to_s3(output_path)
+        if args.ingest_to_iceberg:
+            ingest_flights_to_iceberg(df_flights, target_date, prod=args.prod)
+
 
 if __name__ == "__main__":
     main()

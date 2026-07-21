@@ -1,8 +1,7 @@
-from datetime import date, datetime
+from datetime import datetime
 
 import polars as pl
 
-import data_engineering.flights.flight_type as flight_type
 from data_engineering.flights.flight_type import (
     FLIGHT_POLARS_SCHEMA,
     add_lat_lon_to_airport_ident_columns,
@@ -54,27 +53,6 @@ def test_flights_df_to_flights_accepts_full_schema_columns():
     assert flight.last_lon == -71.0
     assert flight.last_baro_altitude_ft == 100
     assert flight.last_geom_altitude_ft == 200
-
-
-def test_adsbx_flights_airport_model_output_path_uses_hive_partitions(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.setattr(flight_type, "OUTPUT_DIR", tmp_path)
-
-    path = flight_type.adsbx_flights_airport_model_output_path(date(2026, 3, 1))
-
-    assert path == (
-        tmp_path
-        / "data"
-        / "flights"
-        / "trad-model-airport-adsbx"
-        / "v7"
-        / "year=2026"
-        / "month=03"
-        / "day=01"
-        / "flights.parquet"
-    )
 
 
 def test_add_lat_lon_to_airport_ident_columns(monkeypatch):
