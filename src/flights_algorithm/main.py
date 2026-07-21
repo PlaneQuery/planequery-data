@@ -795,10 +795,6 @@ def stitch_flight_segments(segments: Sequence[FlightSegment]) -> list[FlightSegm
     return stitched
 
 
-def main(adsb_messages: Sequence[AdsbMessageRow | AdsbPositionMessage]) -> list[FlightSegment]:
-    return identify_flight_segments(adsb_messages)
-
-
 def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
     return [
         AdsbPositionMessage(
@@ -1150,7 +1146,7 @@ def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
     ]
 
 
-def run_main(
+def main(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
@@ -1178,6 +1174,28 @@ def run_main(
         ]
         flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
+    return flights_df
+
+
+def run_main(
+    target_date: date = date(2026, 3, 1),
+    icaos: Sequence[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    sfdps_or_bts_only: bool = False,
+    source: str = "adsblol",
+    max_workers: int = os.cpu_count() or 1,
+    no_airports_model: bool = False,
+) -> pl.DataFrame:
+    """Run the algorithm and write its algorithm-cache parquet output."""
+    flights_df = main(
+        target_date=target_date,
+        icaos=icaos,
+        pia_or_american_ladd_only=pia_or_american_ladd_only,
+        sfdps_or_bts_only=sfdps_or_bts_only,
+        source=source,
+        max_workers=max_workers,
+        no_airports_model=no_airports_model,
+    )
     output_path = flights_algorithm_output_path(
         target_date,
         adsb_src=source,
