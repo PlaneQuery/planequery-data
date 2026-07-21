@@ -109,7 +109,6 @@ def run_flights_day(day: date, args: argparse.Namespace) -> None:
         "src/data_engineering/flights/flights_from_algorithm.py",
         fmt(day),
         fmt(next_day(day)),
-        "--download-airport-model-from-s3",
     ]
     if args.write_to_s3:
         command.append("--write-to-s3")
