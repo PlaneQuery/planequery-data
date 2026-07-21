@@ -6,6 +6,7 @@ Used by the historical ADS-B processing pipeline.
 """
 import datetime as dt
 import glob
+import json
 import os
 import re
 import shutil
@@ -489,6 +490,42 @@ def get_adsblol_releases_to_process_or_exit() -> list[date]:
     sys.exit(NO_ADSBLOL_RELEASES_EXIT_CODE)
 
 
+def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None:
+    parameter_name = os.getenv("DAILY_PIPELINE_MANIFEST_SSM_PARAMETER")
+    if not parameter_name:
+        return
+
+    import boto3
+
+    jobs = []
+    for value in processed_days:
+        day = _day_date(value)
+        next_day = day + timedelta(days=1)
+        jobs.append(
+            {
+                "job_name": f"flights-{day:%Y-%m-%d}",
+                "command": [
+                    "python",
+                    "/app/src/data_engineering/flights/flights_from_model.py",
+                    day.isoformat(),
+                    next_day.isoformat(),
+                    "--download-airport-model-from-s3",
+                    "--write-to-s3",
+                    "--ingest-to-iceberg",
+                    "--prod",
+                ],
+            }
+        )
+
+    boto3.client("ssm").put_parameter(
+        Name=parameter_name,
+        Value=json.dumps({"flight_inference_jobs": jobs}),
+        Type="String",
+        Overwrite=True,
+    )
+    print(f"Wrote daily pipeline manifest with {len(jobs)} flight jobs")
+
+
 
 if __name__ == '__main__':
     import argparse
@@ -564,3 +601,5 @@ if __name__ == '__main__':
         else:
             print(f"\n✗ Failed to create parquet file for {day.strftime('%Y-%m-%d')}")
             sys.exit(1)
+
+    write_daily_pipeline_manifest(processed_days)

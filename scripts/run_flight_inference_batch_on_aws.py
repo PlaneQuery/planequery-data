@@ -1,4 +1,4 @@
-"""Launch and monitor GPU flight inference jobs on AWS Batch.
+"""Launch and monitor flight-algorithm jobs on AWS Batch.
 
 Reads Batch metadata from ``PlanequeryFlightInferenceBatchStack`` outputs and
 submits one AWS Batch job for the date range. Multi-day ranges use an array job
@@ -145,7 +145,8 @@ def _command_for_range(start: dt.date, end: dt.date, model_path: str | None) -> 
         end.strftime("%Y-%m-%d"),
     ]
     if model_path:
-        command.extend(["--model", model_path])
+        command.extend(["--airport-model", model_path])
+    command.append("--download-airport-model-from-s3")
     command.append("--write-to-s3")
     command.append("--ingest-to-iceberg")
     command.append("--prod")
@@ -187,11 +188,11 @@ def main() -> int:
     parser.add_argument("start_date", help="Start date (inclusive), YYYY-MM-DD")
     parser.add_argument("end_date", help="End date (exclusive), YYYY-MM-DD")
     parser.add_argument(
-        "--model",
+        "--airport-model",
         default=None,
         help=(
-            "Optional container-local model path. If omitted, flights_from_model.py "
-            "uses the model baked into the image via OUTPUT_DIR=/app."
+            "Optional container-local LightGBM airport-model path. If omitted, "
+            "the publishing job downloads the canonical path from S3."
         ),
     )
     parser.add_argument(
@@ -243,7 +244,7 @@ def main() -> int:
     print(f"JobSize:        {args.size}")
     print(f"JobDefinition:  {cfg.job_definition_arns[args.size]}")
     print(f"LogGroup:       {cfg.log_group}")
-    print(f"Model:          {args.model or 'image default'}")
+    print(f"Airport model:  {args.airport_model or 'canonical S3 path'}")
     if day_count > 1 and args.max_parallel == 1:
         print("MaxParallel:    1 (AWS Batch SEQUENTIAL array dependency)")
     elif day_count > 1 and args.max_parallel is not None:
@@ -257,7 +258,7 @@ def main() -> int:
         cfg,
         start,
         end,
-        args.model,
+        args.airport_model,
         args.max_parallel,
         args.size,
         run_ts,
