@@ -18,7 +18,7 @@ import polars as pl
 import flights_algorithm.main as flights_algorithm
 from data_engineering.flights.flight_type import (
     ALGORITHM_ADSB_SOURCES,
-    flights_parquet_path,
+    flights_algorithm_output_path,
     with_flight_schema_columns,
 )
 from data_engineering.utils import (
@@ -70,8 +70,17 @@ def _ensure_airport_model(model_path: Path, download_from_s3_if_missing: bool) -
     download_from_s3(model_path)
 
 
-def publish_flights_parquet(df_flights: pl.DataFrame, target_date: date) -> Path:
-    output_path = flights_parquet_path(target_date)
+def publish_flights_parquet(
+    df_flights: pl.DataFrame,
+    target_date: date,
+    source: str,
+    no_airports_model: bool,
+) -> Path:
+    output_path = flights_algorithm_output_path(
+        target_date,
+        adsb_src=source,
+        no_airports_model=no_airports_model,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with_flight_schema_columns(df_flights).write_parquet(output_path)
     return output_path
@@ -159,7 +168,12 @@ def main() -> None:
             max_workers=args.max_workers,
             no_airports_model=args.no_airports_model,
         )
-        output_path = publish_flights_parquet(df_flights, target_date)
+        output_path = publish_flights_parquet(
+            df_flights,
+            target_date,
+            args.source,
+            args.no_airports_model,
+        )
         print(f"Published {len(df_flights)} flights to {output_path}")
         if args.write_to_s3:
             upload_to_s3(output_path)
