@@ -260,6 +260,7 @@ def main(
                             matched_gold_by_date[matching_cache_key] = get_matching_icaos_in_flights(
                                 df_gold,
                                 adsb_by_date[adsb_cache_key],
+                                datetime(test_date.year, test_date.month, test_date.day),
                             )
                         df_gold = matched_gold_by_date[matching_cache_key]
                         df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
