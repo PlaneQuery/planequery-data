@@ -2,14 +2,23 @@
 
 # funciton to get all icao information up to certain date.
 from pathlib import Path
+import urllib.request
 
 import polars as pl
 
-DEFAULT_OPENAIRFRAMES_ADSB_PATH = Path(
-    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_adsb_2024-01-01_2026-06-20.csv"
+from data_engineering.utils import OUTPUT_DIR
+
+OPENAIRFRAMES_DIR = OUTPUT_DIR / "data" / "raw" / "openairframes"
+DEFAULT_OPENAIRFRAMES_ADSB_PATH = OPENAIRFRAMES_DIR / "openairframes_adsb_2024-01-01_2026-07-05.csv.gz"
+DEFAULT_OPENAIRFRAMES_ADSB_URL = (
+    "https://github.com/PlaneQuery/OpenAirframes/releases/download/"
+    "openairframes-2026-07-10-main/"
+    "openairframes_adsb_2024-01-01_2026-07-05.csv.gz"
 )
-DEFAULT_OPENAIRFRAMES_FAA_PATH = Path(
-    "/Volumes/T2-SSD/planequery/data/raw/openairframes/openairframes_faa_2023-08-16_2026-06-21.csv"
+DEFAULT_OPENAIRFRAMES_FAA_PATH = OPENAIRFRAMES_DIR / "openairframes_faa_2023-08-16_2026-07-10.csv"
+DEFAULT_OPENAIRFRAMES_FAA_URL = (
+    "https://github.com/PlaneQuery/OpenAirframes/releases/download/"
+    "openairframes-2026-07-10-main/openairframes_faa_2023-08-16_2026-07-10.csv"
 )
 
 COLUMN_MAP = {
@@ -34,6 +43,28 @@ ICAO_INFO_COLUMNS = [
 ]
 
 
+def _ensure_default_openairframes_adsb_path(path: str | Path) -> Path:
+    resolved_path = Path(path)
+    if resolved_path != DEFAULT_OPENAIRFRAMES_ADSB_PATH or resolved_path.exists():
+        return resolved_path
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading OpenAirframes ADS-B snapshot to {resolved_path}")
+    urllib.request.urlretrieve(DEFAULT_OPENAIRFRAMES_ADSB_URL, resolved_path)
+    return resolved_path
+
+
+def _ensure_default_openairframes_faa_path(path: str | Path) -> Path:
+    resolved_path = Path(path)
+    if resolved_path != DEFAULT_OPENAIRFRAMES_FAA_PATH or resolved_path.exists():
+        return resolved_path
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading OpenAirframes FAA snapshot to {resolved_path}")
+    urllib.request.urlretrieve(DEFAULT_OPENAIRFRAMES_FAA_URL, resolved_path)
+    return resolved_path
+
+
 def extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
     return [
         (pl.col(col).cast(pl.Int64) & 1).cast(pl.Boolean).alias("military"),
@@ -44,6 +75,7 @@ def extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
 
 
 def scan_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.LazyFrame:
+    path = _ensure_default_openairframes_adsb_path(path)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -72,6 +104,7 @@ def scan_latest_icao_info_for_join(
     The OpenAirframes CSV is chronological, so keeping the last row per ICAO
     avoids a multi-GB time sort before joining.
     """
+    path = _ensure_default_openairframes_adsb_path(path)
     source_columns = ["icao", "r", "t", "ownOp", "desc", "aircraft_category", "dbFlags"]
     df = pl.scan_csv(
         path,
@@ -118,6 +151,7 @@ def scan_latest_registration_icao_for_join(
     real_icao_column: str = "real_icao",
 ) -> pl.LazyFrame:
     """Scan one latest OpenAirframes ICAO per registration for tail-number joins."""
+    path = _ensure_default_openairframes_adsb_path(path)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -144,6 +178,7 @@ def scan_latest_faa_registration_icao_for_join(
     real_icao_column: str = "real_icao",
 ) -> pl.LazyFrame:
     """Scan one latest FAA OpenAirframes ICAO per registration for tail-number joins."""
+    path = _ensure_default_openairframes_faa_path(path)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -171,6 +206,7 @@ def scan_latest_faa_registration_icao_for_join(
 
 
 def get_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.DataFrame:
+    path = _ensure_default_openairframes_adsb_path(path)
     df = scan_icao_info(path)
     df = df.sort("time").group_by("icao").tail(1)
     return df.collect()

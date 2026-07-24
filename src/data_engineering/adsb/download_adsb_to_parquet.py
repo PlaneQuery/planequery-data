@@ -6,6 +6,7 @@ Used by the historical ADS-B processing pipeline.
 """
 import datetime as dt
 import glob
+import json
 import os
 import re
 import shutil
@@ -392,9 +393,11 @@ def process_version_date(
 
 def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
     from data_engineering.spark import get_spark_session
+    from pyspark.sql import functions as F
+
     spark = get_spark_session()
     table_name = "glue.planequery_lake_prod.adsb_messages"
-    df = spark.read.parquet(str(parquet_path))
+    df = spark.read.parquet(str(parquet_path)).withColumn("source", F.lit("adsb.lol"))
     df = df.select(*spark.table(table_name).columns)
     df = df.coalesce(2)
     next_day = target_date + timedelta(days=1)
@@ -457,11 +460,8 @@ def create_parquet_for_day(
 def upload_to_s3(parquet_path: Path):
     import boto3
     s3 = boto3.client('s3')
-    if parquet_path.is_file():
-        paths = [parquet_path]
-    else:
-        paths = sorted(path for path in parquet_path.rglob("*") if path.is_file())
-
+    paths = sorted(parquet_path.rglob("*.parquet"))
+    assert len(paths) == 8, f"Expected 8 parquet files under {parquet_path}, found {len(paths)}"
     for path in paths:
         s3_key = str(path.relative_to(OUTPUT_DIR))
         s3.upload_file(str(path), S3_BUCKET, s3_key)
@@ -487,6 +487,41 @@ def get_adsblol_releases_to_process_or_exit() -> list[date]:
         f"{NO_ADSBLOL_RELEASES_EXIT_CODE}."
     )
     sys.exit(NO_ADSBLOL_RELEASES_EXIT_CODE)
+
+
+def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None:
+    parameter_name = os.getenv("DAILY_PIPELINE_MANIFEST_SSM_PARAMETER")
+    if not parameter_name:
+        return
+
+    import boto3
+
+    jobs = []
+    for value in processed_days:
+        day = _day_date(value)
+        next_day = day + timedelta(days=1)
+        jobs.append(
+            {
+                "job_name": f"flights-{day:%Y-%m-%d}",
+                "command": [
+                    "python",
+                    "/app/src/data_engineering/flights/flights_from_algorithm.py",
+                    day.isoformat(),
+                    next_day.isoformat(),
+                    "--write-to-s3",
+                    "--ingest-to-iceberg",
+                    "--prod",
+                ],
+            }
+        )
+
+    boto3.client("ssm").put_parameter(
+        Name=parameter_name,
+        Value=json.dumps({"flight_inference_jobs": jobs}),
+        Type="String",
+        Overwrite=True,
+    )
+    print(f"Wrote daily pipeline manifest with {len(jobs)} flight jobs")
 
 
 
@@ -564,3 +599,5 @@ if __name__ == '__main__':
         else:
             print(f"\n✗ Failed to create parquet file for {day.strftime('%Y-%m-%d')}")
             sys.exit(1)
+
+    write_daily_pipeline_manifest(processed_days)

@@ -4,7 +4,7 @@ import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb, read_icaos_from_adsb
 from data_engineering.flights.flight_type import get_flights, flights_df_to_flights
 from pia.simulator.main import simulate_pia_flights
-from data_engineering.flights.flights_and_adsb_match import get_icaos_with_perfect_match
+from flights.flights_match_adsb import get_matching_icaos_in_flights
 
 
 def get_simulated_flights_0():
@@ -27,8 +27,7 @@ def get_simulated_flights_0():
         df_adsbs.append(df_adsb)
         target_date += timedelta(days=1)
     df_adsb = pl.concat(df_adsbs)
-    perfect_icaos = get_icaos_with_perfect_match(df_flights, df_adsb)
-    df_flights = df_flights.filter(pl.col("icao").is_in(perfect_icaos))
+    df_flights = get_matching_icaos_in_flights(df_flights, df_adsb)
     df_flights_sim, gold_mapping = simulate_pia_flights(df_flights)
     return df_flights_sim, gold_mapping
 

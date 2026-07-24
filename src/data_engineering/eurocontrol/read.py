@@ -103,7 +103,7 @@ def _airport_code_to_ident(code: str | None, airport_lookup: Any | None = None) 
         return None
 
     if airport_lookup is None:
-        from airports.airportLookup import AirportLookup
+        from airports.airport_lookup import AirportLookup
 
         airport_lookup = AirportLookup()
 
@@ -138,7 +138,7 @@ def normalize_eurocontrol_flights(
     openairframes_path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
 ) -> pl.DataFrame:
     if airport_lookup is None:
-        from airports.airportLookup import AirportLookup
+        from airports.airport_lookup import AirportLookup
 
         airport_lookup = AirportLookup()
 
