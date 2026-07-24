@@ -100,8 +100,8 @@ def flights_df(icao: str, flight_rows) -> pl.DataFrame:
 def test_flights_match_adsb(icao: str, expected_match: bool, flight_rows):
     df_flights = flights_df(icao, flight_rows)
     df_adsb = read_adsb(TARGET_DATE, icaos=[icao]).filter(pl.col("icao") == icao)
-
-    assert flights_match_adsb(df_flights, df_adsb) is expected_match
+    dt = datetime(TARGET_DATE.year, TARGET_DATE.month, TARGET_DATE.day)
+    assert flights_match_adsb(df_flights, df_adsb, dt) == expected_match
 
 
 def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
@@ -119,8 +119,8 @@ def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
         ],
     )
     df_adsb = read_adsb(target_date, icaos=[icao]).filter(pl.col("icao") == icao)
-
-    assert flights_match_adsb(df_flights, df_adsb) is False
+    dt = datetime(target_date.year, target_date.month, target_date.day)
+    assert flights_match_adsb(df_flights, df_adsb, dt) is False
 
 
 '''
