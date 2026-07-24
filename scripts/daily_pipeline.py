@@ -52,14 +52,6 @@ def load_env_file(env_path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
-def inference_feature_days(adsb_days: list[date]) -> list[date]:
-    days = sorted(set(adsb_days))
-    latest_day = days[-1]
-    feature_days = {days[0] - timedelta(days=1)}
-    feature_days.update(day for day in days if day < latest_day)
-    return sorted(feature_days)
-
-
 @contextmanager
 def pipeline_lock(lock_file: Path, wait: bool):
     lock_file.parent.mkdir(parents=True, exist_ok=True)
@@ -111,26 +103,10 @@ def run_adsb_day(day: date, args: argparse.Namespace) -> None:
     run_command(command, args.dry_run)
 
 
-def run_features_day(day: date, args: argparse.Namespace) -> None:
-    command = [
-        sys.executable,
-        "src/flights_ai_model/features.py",
-        "--features",
-        "inference",
-        "--start-date",
-        fmt(day),
-        "--end-date",
-        fmt(next_day(day)),
-    ]
-    if args.write_to_s3:
-        command.append("--write-to-s3")
-    run_command(command, args.dry_run)
-
-
 def run_flights_day(day: date, args: argparse.Namespace) -> None:
     command = [
         sys.executable,
-        "src/data_engineering/flights/flights_from_model.py",
+        "src/data_engineering/flights/flights_from_algorithm.py",
         fmt(day),
         fmt(next_day(day)),
     ]
@@ -145,7 +121,7 @@ def run_flights_day(day: date, args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the local daily PlaneQuery ADS-B, feature, and flight pipeline."
+        description="Run the local daily PlaneQuery ADS-B and flight pipeline."
     )
     parser.add_argument(
         "--start-date",
@@ -189,15 +165,12 @@ def main() -> int:
             print("No adsb.lol releases to process.")
             return 0
 
-        feature_days = inference_feature_days(adsb_days)
         print("ADS-B release days:", ", ".join(fmt(day) for day in adsb_days))
-        print("Feature/flight days:", ", ".join(fmt(day) for day in feature_days))
+        print("Flight days:", ", ".join(fmt(day) for day in adsb_days))
 
         for day in adsb_days:
             run_adsb_day(day, args)
-        for day in feature_days:
-            run_features_day(day, args)
-        for day in feature_days:
+        for day in adsb_days:
             run_flights_day(day, args)
 
     return 0

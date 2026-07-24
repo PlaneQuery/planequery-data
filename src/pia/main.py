@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
-from flights.flight_continuity import make_flights_continuous
+from pia.flight_continuity import make_flights_continuous
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 from pia.resolver import get_canidate_icaos, resolve_pia_mappings
 
@@ -74,4 +74,3 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
         .sort("_route_fix_row_nr")
         .drop(["_route_fix_row_nr", "_next_takeoff_airport_ident"])
     )
-

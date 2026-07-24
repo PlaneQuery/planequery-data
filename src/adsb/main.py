@@ -13,7 +13,7 @@ import logging
 import polars as pl
 environment = os.getenv('ENVIRONMENT', 'development')
 
-OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
+from data_engineering.utils import OUTPUT_DIR
 ADSB_REAPI_S3_BUCKET = os.getenv("ADSB_REAPI_S3_BUCKET", "planequery-dev-adsb-reapi")
 ADSB_REAPI_S3_PREFIX = os.getenv(
     "ADSB_REAPI_S3_PREFIX",
@@ -60,7 +60,7 @@ START_TIME_OF_PROGRAM_MINUS_DAY= START_TIME_OF_PROGRAM - 24*3600*1000
 
 last_message_time_by_icao: dict[str, int] = dict()
 
-from adsb_messages_types import Adsb_Message_reapi
+from data_engineering.adsb.adsb_messages_types import Adsb_Message_reapi
 
 @dataclass
 class ReapiFetchResult:

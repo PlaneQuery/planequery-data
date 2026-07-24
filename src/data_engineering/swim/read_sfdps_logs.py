@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 from lxml import etree
 import polars as pl
 from data_engineering.swim.load_xml_schema import load_nas_schema
@@ -8,7 +7,8 @@ import argparse
 from datetime import date, timedelta
 from data_engineering.swim.swim_logs_download import download_swim_logs
 
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./")) / "data"
+from data_engineering.utils import OUTPUT_DIR
+OUTPUT_DIR = OUTPUT_DIR / "data"
 
 # Mapping from human-readable field name → (element path, attribute key).
 # Key=None means text content of the final element; key=str means an XML attribute.

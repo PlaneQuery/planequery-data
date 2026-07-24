@@ -1,11 +1,11 @@
 from datetime import date, datetime, timedelta
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
-from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, get_flights, pia_or_american_ladd_icao_filter
+from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA, get_flights
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
 from flights.flights_match_adsb import get_matching_icaos_in_flights
-from flights_ai_model_airport.features import FEATURE_NAMES, build_training_data
+from flights_ai_model_airport.features import build_training_data
 from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOINTS
 from flights_ai_model_airport.inference import run_inference
 from flights_ai_model_airport.model import model_training
@@ -24,13 +24,11 @@ def train(training_dates, validation_date = date(2026,3,15)):
     path = get_model_path(num_days=len(training_dates)) / "model.pkl"
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(
-        {
-            "models": models,
-            "feature_names": FEATURE_NAMES,
-        },
+        {"models": models},
         str(path),
     )
     print(f"  -> saved to {path}")
+    return path
 
 if __name__ == "__main__":
     training_dates = [
