@@ -39,7 +39,6 @@ import boto3
 
 STACK_NAME = "PlanequeryDailyPipelineStack"
 ADSB_STACK_NAME = "PlanequeryDatalakeAdsbInsertStack"
-INFERENCE_FEATURES_STACK_NAME = "PlanequeryInferenceFeaturesStack"
 FLIGHT_INFERENCE_STACK_NAME = "PlanequeryFlightInferenceBatchStack"
 DEFAULT_REGION = "us-east-2"
 POLL_INTERVAL_S = 30
@@ -60,7 +59,6 @@ class StackConfig:
     state_machine_arn: str
     schedule_rule_name: str
     adsb_log_group: str | None = None
-    inference_features_log_group: str | None = None
     flight_inference_log_group: str | None = None
 
 
@@ -106,11 +104,6 @@ def _load_stack_outputs(region: str, *, include_log_groups: bool = False) -> Sta
         state_machine_arn=outputs["StateMachineArn"],
         schedule_rule_name=outputs["ScheduleRuleName"],
         adsb_log_group=_stack_output(cfn, ADSB_STACK_NAME, "LogGroupName"),
-        inference_features_log_group=_stack_output(
-            cfn,
-            INFERENCE_FEATURES_STACK_NAME,
-            "LogGroupName",
-        ),
         flight_inference_log_group=_stack_output(
             cfn,
             FLIGHT_INFERENCE_STACK_NAME,
@@ -267,17 +260,6 @@ def _task_log_source(config: StackConfig, task_arn: str) -> LogSource | None:
             label=f"adsb:{task_id[:8]}",
             log_group=config.adsb_log_group,
             log_stream=f"planequery-dev-adsb-insert/planequery-dev-adsb-insert/{task_id}",
-        )
-    if "planequery-dev-inference-features" in task_arn:
-        if not config.inference_features_log_group:
-            return None
-        return LogSource(
-            label=f"features:{task_id[:8]}",
-            log_group=config.inference_features_log_group,
-            log_stream=(
-                "planequery-dev-inference-features/"
-                f"planequery-dev-inference-features/{task_id}"
-            ),
         )
     return None
 

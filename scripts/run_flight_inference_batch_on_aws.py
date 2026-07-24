@@ -1,10 +1,10 @@
-"""Launch and monitor GPU flight inference jobs on AWS Batch.
+"""Launch and monitor flight-algorithm jobs on AWS Batch.
 
 Reads Batch metadata from ``PlanequeryFlightInferenceBatchStack`` outputs and
 submits one AWS Batch job for the date range. Multi-day ranges use an array job
 where each child runs one day using ``AWS_BATCH_JOB_ARRAY_INDEX``::
 
-    python /app/src/data_engineering/flights/flights_from_model.py \
+    python /app/src/data_engineering/flights/flights_from_algorithm.py \
         START_DATE END_DATE --ingest-to-iceberg
 
 
@@ -137,15 +137,13 @@ def _stop_failed_array(
         batch_client.terminate_job(jobId=job_id, reason=reason)
 
 
-def _command_for_range(start: dt.date, end: dt.date, model_path: str | None) -> list[str]:
+def _command_for_range(start: dt.date, end: dt.date) -> list[str]:
     command = [
         "python",
-        "/app/src/data_engineering/flights/flights_from_model.py",
+        "/app/src/data_engineering/flights/flights_from_algorithm.py",
         start.strftime("%Y-%m-%d"),
         end.strftime("%Y-%m-%d"),
     ]
-    if model_path:
-        command.extend(["--model", model_path])
     command.append("--write-to-s3")
     command.append("--ingest-to-iceberg")
     command.append("--prod")
@@ -157,7 +155,6 @@ def _submit_job(
     cfg: StackConfig,
     start: dt.date,
     end: dt.date,
-    model_path: str | None,
     max_parallel: int | None,
     job_size: str,
     run_ts: str,
@@ -169,7 +166,7 @@ def _submit_job(
         "jobName": job_name,
         "jobQueue": cfg.job_queue_arn,
         "jobDefinition": job_definition_arn,
-        "containerOverrides": {"command": _command_for_range(start, end, model_path)},
+        "containerOverrides": {"command": _command_for_range(start, end)},
     }
     if day_count > 1:
         kwargs["arrayProperties"] = {"size": day_count}
@@ -186,14 +183,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("start_date", help="Start date (inclusive), YYYY-MM-DD")
     parser.add_argument("end_date", help="End date (exclusive), YYYY-MM-DD")
-    parser.add_argument(
-        "--model",
-        default=None,
-        help=(
-            "Optional container-local model path. If omitted, flights_from_model.py "
-            "uses the model baked into the image via OUTPUT_DIR=/app."
-        ),
-    )
     parser.add_argument(
         "--region",
         default=DEFAULT_REGION,
@@ -243,7 +232,6 @@ def main() -> int:
     print(f"JobSize:        {args.size}")
     print(f"JobDefinition:  {cfg.job_definition_arns[args.size]}")
     print(f"LogGroup:       {cfg.log_group}")
-    print(f"Model:          {args.model or 'image default'}")
     if day_count > 1 and args.max_parallel == 1:
         print("MaxParallel:    1 (AWS Batch SEQUENTIAL array dependency)")
     elif day_count > 1 and args.max_parallel is not None:
@@ -257,7 +245,6 @@ def main() -> int:
         cfg,
         start,
         end,
-        args.model,
         args.max_parallel,
         args.size,
         run_ts,

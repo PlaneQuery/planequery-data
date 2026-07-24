@@ -1,10 +1,10 @@
 from pathlib import Path
-import os
 import gzip
 from lxml import etree
 import polars as pl
 
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./")) / "data"
+from data_engineering.utils import OUTPUT_DIR
+OUTPUT_DIR = OUTPUT_DIR / "data"
 
 # ── Container elements that wrap the payload inside a fltdMessage ─────────────
 # When flattening, the content of the matched container is hoisted to the row
