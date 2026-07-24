@@ -2,6 +2,7 @@ from data_engineering.flights.flight_type import flights_df_to_flights
 import polars as pl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 from airports.airport_lookup import AirportLookup
 from utils import haversine
 
@@ -116,7 +117,9 @@ def adsb_rows_dwell_at_airport(
         if row.time >= dwell_start and (dwell_end is None or row.time <= dwell_end)
     )
 
-def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
+def flights_match_adsb(
+    df_flights: pl.DataFrame, df_adsb: pl.DataFrame, start_dt: datetime
+) -> bool | Literal["unknown"]:
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
@@ -171,6 +174,8 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
             else [previous_flight.landing_time, flight.takeoff_time],
             use_time_grace=previous_flight is not None,
         ):
+            if previous_flight is None and flight.takeoff_time < start_dt + timedelta(hours=8):
+                return "unknown"
             return False
 
         current_landing_row_idx = closest_time_row_idx(adsb_rows, flight.landing_time, True)
@@ -211,7 +216,7 @@ def get_matching_icaos_in_flights(
     for key, df_flights in df_flights_full.group_by("icao"):
         icao = key[0]
         df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
-        if flights_match_adsb(df_flights, df_adsb):
+        if flights_match_adsb(df_flights, df_adsb) is True:
             icaos.add(icao)
     df = df_flights_full.filter(pl.col("icao").is_in(icaos))
     return df
