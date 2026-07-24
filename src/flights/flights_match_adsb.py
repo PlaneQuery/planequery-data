@@ -206,20 +206,48 @@ def flights_match_adsb(
         last_flight.landing_airport_ident,
         last_flight.landing_time,
     )
-    # 1. check that all takeoff_landing airport idents equal each other
+
+def add_adsb_match_column(
+    df_flights_full: pl.DataFrame,
+    df_adsb_full: pl.DataFrame,
+    start_dt: datetime,
+) -> pl.DataFrame:
+    """Add a nullable ADS-B match result for every flight's ICAO.
+
+    ``None`` represents an indeterminate (``"unknown"``) match, while ``True``
+    and ``False`` represent definite results.
+    """
+    if df_flights_full.is_empty():
+        return df_flights_full.with_columns(
+            pl.Series("adsb_matched", [], dtype=pl.Boolean)
+        )
+
+    match_by_icao = {}
+    for key, df_flights in df_flights_full.group_by("icao"):
+        icao = key[0]
+        df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
+        match_by_icao[icao] = flights_match_adsb(df_flights, df_adsb, start_dt)
+
+    return df_flights_full.with_columns(
+        pl.Series(
+            "adsb_matched",
+            [
+                None if match_by_icao[icao] == "unknown" else match_by_icao[icao]
+                for icao in df_flights_full.get_column("icao")
+            ],
+            dtype=pl.Boolean,
+        )
+    )
+
 
 def get_matching_icaos_in_flights(
     df_flights_full: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
+    start_dt: datetime,
 ) -> pl.DataFrame:
-    icaos = set()
-    for key, df_flights in df_flights_full.group_by("icao"):
-        icao = key[0]
-        df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
-        if flights_match_adsb(df_flights, df_adsb) is True:
-            icaos.add(icao)
-    df = df_flights_full.filter(pl.col("icao").is_in(icaos))
-    return df
+    return add_adsb_match_column(df_flights_full, df_adsb_full, start_dt).filter(
+        pl.col("adsb_matched") == True
+    ).drop("adsb_matched")
 
 
     
