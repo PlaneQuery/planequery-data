@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 import polars as pl
 import pytest
 from data_engineering.adsb.read_adsb import read_adsb
@@ -49,6 +50,17 @@ FLIGHT_MATCH_CASES = [
         marks=pytest.mark.skip(reason="flights_match_algoirhtm gives False negatie on this.") # False negatives are ok. False Positives are terrible
     ),
     pytest.param(
+        "a00929",
+        "unknown",
+        [
+            (datetime(2026, 3, 1, 3, 5), "KORD", datetime(2026, 3, 1, 4, 46), "KOKC"),
+            (datetime(2026, 3, 1, 16, 35), "KOKC", datetime(2026, 3, 1, 19, 17), "KLGA"),
+            (datetime(2026, 3, 1, 20, 55), "KLGA", datetime(2026, 3, 1, 22, 19), "KCLE"),
+            (datetime(2026, 3, 1, 23, 32), "KCLE", datetime(2026, 3, 2, 0, 31), "KLGA"),
+        ],
+        id="a00929-early-coverage-unknown",
+    ),
+    pytest.param(
         "a4ed4f",
         False,
         [
@@ -97,7 +109,9 @@ def flights_df(icao: str, flight_rows) -> pl.DataFrame:
 
 
 @pytest.mark.parametrize(("icao", "expected_match", "flight_rows"), FLIGHT_MATCH_CASES)
-def test_flights_match_adsb(icao: str, expected_match: bool, flight_rows):
+def test_flights_match_adsb(
+    icao: str, expected_match: bool | Literal["unknown"], flight_rows
+):
     df_flights = flights_df(icao, flight_rows)
     df_adsb = read_adsb(TARGET_DATE, icaos=[icao]).filter(pl.col("icao") == icao)
     dt = datetime(TARGET_DATE.year, TARGET_DATE.month, TARGET_DATE.day)
