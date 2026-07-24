@@ -1,7 +1,8 @@
 from lxml import etree
 from pathlib import Path
 import os
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "./")) / "data" / "raw" / "xml-schemas"
+from data_engineering.utils import OUTPUT_DIR
+OUTPUT_DIR = OUTPUT_DIR / "data" / "raw" / "xml-schemas"
 FIXM_3_PATH = OUTPUT_DIR / "FIXM_Core_v3_0_full_release"
 FIXM_NAS_3_PATH = OUTPUT_DIR / "FIXM_US_Extension_v3_0_full_archive"
 

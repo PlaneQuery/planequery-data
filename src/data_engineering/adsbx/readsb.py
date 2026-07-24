@@ -1,6 +1,9 @@
 import argparse
+import datetime as dt
 import gzip
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import orjson
@@ -8,16 +11,51 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
+from data_engineering.utils import OUTPUT_DIR
 
 
-DEFAULT_INPUT_PATH = Path(
-    "/Volumes/T2-SSD/planequery/data/raw/adsb-exchange/readsb-hist/"
-    "2026/03/01/000000Z.json.gz"
-)
+DEFAULT_INPUT_ROOT = OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "readsb-hist"
+DEFAULT_INPUT_PATH = DEFAULT_INPUT_ROOT / "2026" / "03" / "01"
 DEFAULT_OUTPUT_ROOT = Path(
-    "/Volumes/T2-SSD/planequery/data/processed/adsb-exchange/readsb-hist/parquet"
+    OUTPUT_DIR / "data" / "processed" / "adsb-exchange" / "readsb-hist" / "parquet"
 )
+DEFAULT_BUCKETED_OUTPUT_ROOT = (
+    OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "traces_parquet"
+)
+ICAO_BUCKET_COUNT = 8
+ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
 FILENAME_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})Z\.json\.gz$")
+
+
+def _day_dir(day: dt.date) -> Path:
+    return DEFAULT_INPUT_ROOT / f"{day.year:04d}" / f"{day.month:02d}" / f"{day.day:02d}"
+
+
+def _has_snapshot_files(input_path: Path) -> bool:
+    return any(input_path.glob("*.json.gz"))
+
+
+def _ensure_day_downloaded(day: dt.date) -> Path:
+    day_dir = _day_dir(day)
+    if _has_snapshot_files(day_dir):
+        return day_dir
+
+    downloader = Path(__file__).with_name("download_readsb_day.py")
+    cmd = [
+        sys.executable,
+        str(downloader),
+        day.isoformat(),
+        "--out-dir",
+        str(DEFAULT_INPUT_ROOT),
+    ]
+    print(f"No snapshots found for {day.isoformat()}, downloading to {day_dir}")
+    subprocess.run(cmd, check=True)
+
+    if not _has_snapshot_files(day_dir):
+        raise FileNotFoundError(
+            f"Download finished but no snapshot files were found under {day_dir}"
+        )
+    return day_dir
 
 
 def _str_or_none(value):
@@ -210,6 +248,67 @@ def _write_batch(writer: pq.ParquetWriter, cols: dict[str, list]) -> int:
     return row_count
 
 
+def _empty_cols() -> dict[str, list]:
+    return {col: [] for col in COLUMNS}
+
+
+def _icao_bucket(icao: str) -> int:
+    if icao.startswith("~"):
+        return ICAO_BUCKET_COUNT - 1
+    icao_int = int(icao.lower(), 16)
+    return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
+
+
+def _bucketed_output_paths(input_path: Path, output_root: Path) -> dict[int, Path]:
+    day_dir = input_path.parent if input_path.is_file() else input_path
+    year, month, day = day_dir.parts[-3:]
+    return {
+        bucket: (
+            output_root
+            / f"year={year}"
+            / f"month={month}"
+            / f"day={day}"
+            / f"icao_bucket={bucket}"
+            / "data.parquet"
+        )
+        for bucket in range(ICAO_BUCKET_COUNT)
+    }
+
+
+def _extend_bucket_cols(
+    batch_cols_by_bucket: dict[int, dict[str, list]],
+    snapshot_cols: dict[str, list],
+) -> dict[int, int]:
+    row_counts_by_bucket = {bucket: 0 for bucket in range(ICAO_BUCKET_COUNT)}
+    for row_idx, icao in enumerate(snapshot_cols["icao"]):
+        bucket = _icao_bucket(icao)
+        for col in COLUMNS:
+            batch_cols_by_bucket[bucket][col].append(snapshot_cols[col][row_idx])
+        row_counts_by_bucket[bucket] += 1
+    return row_counts_by_bucket
+
+
+def _write_bucket_batch(
+    writers: dict[int, pq.ParquetWriter | None],
+    parquet_paths: dict[int, Path],
+    batch_cols_by_bucket: dict[int, dict[str, list]],
+    bucket: int,
+) -> int:
+    row_count = len(batch_cols_by_bucket[bucket]["time"])
+    if not row_count:
+        return 0
+    parquet_paths[bucket].parent.mkdir(parents=True, exist_ok=True)
+    if writers[bucket] is None:
+        writers[bucket] = pq.ParquetWriter(
+            parquet_paths[bucket],
+            PARQUET_SCHEMA,
+            compression="zstd",
+        )
+    _write_batch(writers[bucket], batch_cols_by_bucket[bucket])
+    batch_cols_by_bucket[bucket] = _empty_cols()
+    return row_count
+
+
 def write_readsb_day_to_parquet(
     input_path: Path = DEFAULT_INPUT_PATH,
     output_path: Path | None = None,
@@ -260,16 +359,134 @@ def write_readsb_day_to_parquet(
     return output_path
 
 
+def write_readsb_day_to_bucketed_parquet(
+    input_path: Path,
+    output_root: Path = DEFAULT_BUCKETED_OUTPUT_ROOT,
+    batch_size: int = 250_000,
+    start_after: str | None = None,
+) -> dict[int, Path]:
+    input_path = Path(input_path)
+    output_root = Path(output_root)
+    files = readsb_snapshot_files(input_path, start_after=start_after)
+    if not files:
+        raise FileNotFoundError(f"No 15-second readsb snapshots found under {input_path}")
+
+    parquet_paths = _bucketed_output_paths(input_path, output_root)
+    batch_cols_by_bucket = {
+        bucket: _empty_cols()
+        for bucket in range(ICAO_BUCKET_COUNT)
+    }
+    batch_count_by_bucket = {
+        bucket: 0
+        for bucket in range(ICAO_BUCKET_COUNT)
+    }
+    total_rows_by_bucket = {
+        bucket: 0
+        for bucket in range(ICAO_BUCKET_COUNT)
+    }
+    writers: dict[int, pq.ParquetWriter | None] = {
+        bucket: None
+        for bucket in range(ICAO_BUCKET_COUNT)
+    }
+    skipped_files = []
+
+    try:
+        for index, path in enumerate(files, start=1):
+            try:
+                snapshot_cols = read_snapshot(path)
+            except (EOFError, OSError, orjson.JSONDecodeError) as exc:
+                skipped_files.append((path.name, exc))
+                print(f"skipping {path.name}: {type(exc).__name__}: {exc}")
+                continue
+
+            row_counts = _extend_bucket_cols(batch_cols_by_bucket, snapshot_cols)
+            for bucket, row_count in row_counts.items():
+                batch_count_by_bucket[bucket] += row_count
+                total_rows_by_bucket[bucket] += row_count
+                if batch_count_by_bucket[bucket] >= batch_size:
+                    written_rows = _write_bucket_batch(
+                        writers,
+                        parquet_paths,
+                        batch_cols_by_bucket,
+                        bucket,
+                    )
+                    print(
+                        f"wrote bucket {bucket}: {written_rows:,} rows "
+                        f"({total_rows_by_bucket[bucket]:,} total)"
+                    )
+                    batch_count_by_bucket[bucket] = 0
+
+            if index % 500 == 0:
+                print(f"processed {index:,}/{len(files):,} files")
+
+        for bucket in range(ICAO_BUCKET_COUNT):
+            if batch_count_by_bucket[bucket]:
+                written_rows = _write_bucket_batch(
+                    writers,
+                    parquet_paths,
+                    batch_cols_by_bucket,
+                    bucket,
+                )
+                print(
+                    f"wrote bucket {bucket} final: {written_rows:,} rows "
+                    f"({total_rows_by_bucket[bucket]:,} total)"
+                )
+    finally:
+        for writer in writers.values():
+            if writer is not None:
+                writer.close()
+
+    if skipped_files:
+        print("skipped files:")
+        for name, exc in skipped_files:
+            print(f"  {name}: {type(exc).__name__}: {exc}")
+
+    total_rows = sum(total_rows_by_bucket.values())
+    print(f"wrote bucketed parquet under: {output_root}")
+    print(f"total rows written: {total_rows:,}")
+    return parquet_paths
+
+
+def ensure_readsb_day_bucketed_parquet(
+    day: dt.date,
+    output_root: Path = DEFAULT_BUCKETED_OUTPUT_ROOT,
+) -> None:
+    partition_dir = (
+        Path(output_root)
+        / f"year={day.year}"
+        / f"month={day.month:02d}"
+        / f"day={day.day:02d}"
+    )
+    if any(partition_dir.glob("icao_bucket=*/data.parquet")):
+        return
+
+    input_path = _ensure_day_downloaded(day)
+    write_readsb_day_to_bucketed_parquet(
+        input_path=input_path,
+        output_root=output_root,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH)
+    parser.add_argument(
+        "date",
+        nargs="?",
+        help="UTC date in YYYY-MM-DD format. Downloads day if missing.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--batch-size", type=int, default=250_000)
     parser.add_argument("--start-after")
     args = parser.parse_args()
 
+    if args.date:
+        day = dt.date.fromisoformat(args.date)
+        input_path = _ensure_day_downloaded(day)
+    else:
+        input_path = DEFAULT_INPUT_PATH
+
     write_readsb_day_to_parquet(
-        input_path=args.input,
+        input_path=input_path,
         output_path=args.output,
         batch_size=args.batch_size,
         start_after=args.start_after,

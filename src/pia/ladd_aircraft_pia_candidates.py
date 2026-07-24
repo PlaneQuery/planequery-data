@@ -1,7 +1,7 @@
 from datetime import date
 from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
 import polars as pl
-from airports.airportLookup import AirportLookup
+from airports.airport_lookup import AirportLookup
 from utils import haversine
 
 _airport_lookup = None
