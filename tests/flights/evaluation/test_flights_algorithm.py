@@ -14,6 +14,9 @@ EVALUATION_STATS_PATH = (
 EVALUATION_MATRIX_PATH = (
     Path(__file__).parent / "2026-07-19_16-29_6da3710_flights_evaluation.csv"
 )
+ADSBX_RECREATION_STATS_PATH = (
+    Path(__file__).parent / "2026-07-22_23-06_61dccac_flights_evaluation.csv"
+)
 BEST_STATS = {
     "true_positive",
     "precision",
@@ -38,6 +41,27 @@ def load_daily_stats_bounds() -> dict[date, dict[str, float]]:
 
 
 DAILY_STATS_BOUNDS = load_daily_stats_bounds()
+
+
+def load_adsbx_recreation_stats_bounds() -> dict[str, float]:
+    with ADSBX_RECREATION_STATS_PATH.open() as f:
+        for row in csv.DictReader(f):
+            if (
+                row["test_date"] == "2026-03-01"
+                and row["adsb_src"] == "adsbx"
+                and row["matching_adsb_src"] == "adsbx"
+                and row["test_src"] == "algorithm"
+                and row["gold_src"] == "sfdps"
+                and row["pia_or_american_ladd_only"] == "false"
+            ):
+                return {
+                    key: float(row[key])
+                    for key in BEST_STATS | WORST_STATS
+                }
+    raise ValueError("Missing ADS-B Exchange algorithm/SFDPS recreation bounds")
+
+
+ADSBX_RECREATION_STATS_BOUNDS = load_adsbx_recreation_stats_bounds()
 
 
 def load_evaluation_matrix() -> list[dict[str, str]]:
@@ -125,3 +149,22 @@ def test_algorithm_flights_recreate_meets_daily_bounds():
     results, _ = main(test_src="algorithm", gold_src="sfdps", test_dates=dt, pia_or_american_ladd_only=True)
     assert len(results) == 1
     assert_stats_meet_bounds(df_flights_comparison_stats(results[0]), DAILY_STATS_BOUNDS[dt])
+
+
+def test_algorithm_flights_recreate_with_adsbx_meets_daily_bounds():
+    dt = date(2026, 3, 1)
+    from flights_algorithm.main import run_main
+
+    run_main(target_date=dt, source="adsbx")
+    results, _ = main(
+        test_src="algorithm",
+        gold_src="sfdps",
+        test_dates=dt,
+        adsb_src="adsbx",
+    )
+
+    assert len(results) == 1
+    assert_stats_meet_bounds(
+        df_flights_comparison_stats(results[0]),
+        ADSBX_RECREATION_STATS_BOUNDS,
+    )
