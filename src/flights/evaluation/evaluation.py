@@ -11,6 +11,7 @@ from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.evaluation.consecutive_airports import (
     DEFAULT_DISPLACEMENT_THRESHOLD_KM,
+    consecutive_airport_details,
     consecutive_airport_stats,
 )
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
@@ -277,6 +278,17 @@ def main(
                     if filter_rotorcraft:
                         df_test = df_test.filter(~is_helicopter_expr())
                         df_gold = df_gold.filter(~is_helicopter_expr())
+                    if include_consecutive_airport_metrics:
+                        consecutive_details = consecutive_airport_details(
+                            df_test
+                        )
+                        df_test = df_test.join(
+                            consecutive_details.drop(
+                                "takeoff_airport_ident"
+                            ),
+                            on=["icao", "takeoff_time"],
+                            how="left",
+                        )
                     df = df_flights_comparision(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
                     results.append(df)
                     stats = df_flights_comparison_stats(df)
@@ -370,4 +382,4 @@ if __name__ == "__main__":
         ),
     )
 
-# COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"]
+# COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"] + ["consecutive_airport_displacement_km"]
