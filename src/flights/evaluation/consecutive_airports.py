@@ -31,6 +31,7 @@ def consecutive_airport_transitions(df_flights: pl.DataFrame) -> pl.DataFrame:
         raise ValueError(f"Missing columns required for consecutive-airport metrics: {missing}")
 
     previous_landing_ident = "_previous_landing_airport_ident"
+    previous_takeoff_time = "_previous_takeoff_time"
     previous_landing_time = "_previous_landing_time"
     comparable_airports = (
         pl.col(previous_landing_ident).is_not_null()
@@ -43,6 +44,10 @@ def consecutive_airport_transitions(df_flights: pl.DataFrame) -> pl.DataFrame:
         df_flights
         .sort(["icao", "takeoff_time", "landing_time"])
         .with_columns(
+            pl.col("takeoff_time")
+            .shift(1)
+            .over("icao")
+            .alias(previous_takeoff_time),
             pl.col("landing_airport_ident")
             .shift(1)
             .over("icao")
@@ -55,6 +60,7 @@ def consecutive_airport_transitions(df_flights: pl.DataFrame) -> pl.DataFrame:
         .filter(comparable_airports)
         .select(
             "icao",
+            pl.col(previous_takeoff_time).alias("previous_takeoff_time"),
             pl.col(previous_landing_time).alias("previous_landing_time"),
             "takeoff_time",
             pl.col(previous_landing_ident).alias(
@@ -68,16 +74,28 @@ def consecutive_airport_transitions(df_flights: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def consecutive_airport_details(
+    df_flights: pl.DataFrame,
+    *,
+    airport_lookup: AirportCoordinatesLookup | None = None,
+) -> pl.DataFrame:
+    """Return every comparable transition with its airport displacement."""
+    transitions = consecutive_airport_transitions(df_flights)
+    return _add_displacement(transitions, airport_lookup=airport_lookup)
+
+
 def consecutive_airport_mismatches(
     df_flights: pl.DataFrame,
     *,
     airport_lookup: AirportCoordinatesLookup | None = None,
 ) -> pl.DataFrame:
     """Return mismatched consecutive airports and their great-circle distance."""
-    mismatches = consecutive_airport_transitions(df_flights).filter(
+    return consecutive_airport_details(
+        df_flights,
+        airport_lookup=airport_lookup,
+    ).filter(
         pl.col("consecutive_airport_mismatch")
     )
-    return _add_displacement(mismatches, airport_lookup=airport_lookup)
 
 
 def _add_displacement(
@@ -95,7 +113,9 @@ def _add_displacement(
     if airport_lookup is None:
         airport_lookup = AirportLookup()
 
-    def displacement_km(row: dict[str, str]) -> float | None:
+    def displacement_km(row: dict[str, str | bool]) -> float | None:
+        if not row["consecutive_airport_mismatch"]:
+            return 0.0
         previous_coords = airport_lookup.get_airport_coordinates(
             row["previous_landing_airport_ident"]
         )
@@ -110,6 +130,7 @@ def _add_displacement(
         pl.struct(
             "previous_landing_airport_ident",
             "takeoff_airport_ident",
+            "consecutive_airport_mismatch",
         )
         .map_elements(displacement_km, return_dtype=pl.Float64)
         .alias("consecutive_airport_displacement_km")
@@ -126,15 +147,15 @@ def consecutive_airport_stats(
     if displacement_threshold_km < 0:
         raise ValueError("displacement_threshold_km must be non-negative")
 
-    transitions = consecutive_airport_transitions(df_flights)
+    transitions = consecutive_airport_details(
+        df_flights,
+        airport_lookup=airport_lookup,
+    )
     transition_count = transitions.height
     mismatch_count = transitions.filter(
         pl.col("consecutive_airport_mismatch")
     ).height
-    mismatches = _add_displacement(
-        transitions.filter(pl.col("consecutive_airport_mismatch")),
-        airport_lookup=airport_lookup,
-    )
+    mismatches = transitions.filter(pl.col("consecutive_airport_mismatch"))
     displacements = mismatches.get_column(
         "consecutive_airport_displacement_km"
     ).drop_nulls()
