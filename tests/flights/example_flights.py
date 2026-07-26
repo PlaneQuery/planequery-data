@@ -1,9 +1,7 @@
 from datetime import date, datetime
-from functools import cached_property
-
-import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight
+from src.flights.evaluation.flights_test_package import FlightsTestPackage
 
 
 A0205C_DATE = date(2026, 4, 1)
@@ -11,28 +9,6 @@ A0205C_ICAO = "a0205c"
 A008C9_DATE = date(2026, 3, 1)
 A008C9_ICAO = "a008c9"
 
-
-class FlightsTestPackage:
-    def __init__(
-        self,
-        flights: list[Flight],
-        start_dt: datetime,
-        end_dt: datetime,
-        adsb_source: str = "adsblol",
-    ) -> None:
-        icao = flights[0].icao
-        self.flights = flights
-        self._lazy_adsb_rows: pl.LazyFrame = read_adsb(
-            start_dt,
-            end_dt,
-            source=adsb_source,
-            icaos=[icao],
-            lazy=True,
-        )
-
-    @cached_property
-    def adsb_rows(self) -> pl.DataFrame:
-        return self._lazy_adsb_rows.collect()
 
 
 def _a0205c_flight(
