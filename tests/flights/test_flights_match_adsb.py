@@ -2,9 +2,11 @@ from datetime import date, datetime
 from typing import Literal
 import polars as pl
 import pytest
+from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df
 from flights.flights_match_adsb import flights_match_adsb
+from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
 
 TARGET_DATE = date(2026, 3, 1)
 
@@ -135,6 +137,23 @@ def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
     df_adsb = read_adsb(target_date, icaos=[icao]).filter(pl.col("icao") == icao)
     dt = datetime(target_date.year, target_date.month, target_date.day)
     assert flights_match_adsb(df_flights, df_adsb, dt) is False
+
+def flights_match_real_adsb_with_dropout(test_package: FlightsTestPackage):
+    flights = test_package.flights
+    df_flights = flights_to_flights_df(flights)
+    df_adsb = test_package.adsb_rows
+    dt = datetime.combine(flights[0].takeoff_time.date(), datetime.min.time())
+    assert flights_match_adsb(df_flights, df_adsb, dt) is True
+
+    for i in range(len(flights)):
+        new_flights = flights[:i] + flights[i + 1 :]
+        df_flights_with_dropout = flights_to_flights_df(new_flights)
+        assert not flights_match_adsb(df_flights_with_dropout, df_adsb, dt)
+
+
+def test_flights_test_packages():
+    for test_package in Flights_Test_Packages:
+        flights_match_real_adsb_with_dropout(test_package)
 
 
 '''
