@@ -5,7 +5,7 @@ from botocore.exceptions import ClientError
 
 FLIGHTS_VERSION = "v2"
 S3_BUCKET = "planequery-dev-planequery-data"
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "./"))
+OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"])
 
 
 def get_s3_key(path: Path):
