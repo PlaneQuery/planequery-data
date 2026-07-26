@@ -14,30 +14,32 @@ class FlightsTestPackage:
         start_dt: datetime,
         end_dt: datetime,
         adsb_source: str = "adsblol",
+        is_accurate: bool = True
     ) -> None:
-        icao = flights[0].icao
         self.flights = flights
-        self._lazy_adsb_rows: pl.LazyFrame = read_adsb(
-            start_dt,
-            end_dt,
-            source=adsb_source,
-            icaos=[icao],
-            lazy=True,
-        )
+        self._start_dt = start_dt
+        self._end_dt = end_dt
+        self._adsb_source = adsb_source
+        self._icao = flights[0].icao
+        self.is_accurate = is_accurate
 
     @cached_property
     def adsb_rows(self) -> pl.DataFrame:
-        return self._lazy_adsb_rows.collect()
-
+        return read_adsb(
+            self._start_dt,
+            self._end_dt,
+            source=self._adsb_source,
+            icaos=[self._icao],
+        )
 
 def flights_match_real_adsb_with_dropout(test_package: FlightsTestPackage):
     flights = test_package.flights
     df_flights = flights_to_flights_df(flights)
     df_adsb = test_package.adsb_rows
     dt = datetime.combine(flights[0].takeoff_time.date(), datetime.min.time())
-    assert flights_match_adsb(df_flights, df_adsb, dt) is True
+    assert flights_match_adsb(df_flights, df_adsb, dt) is test_package.is_accurate
 
     for i in range(len(flights)):
         new_flights = flights[:i] + flights[i + 1 :]
         df_flights_with_dropout = flights_to_flights_df(new_flights)
-        assert not flights_match_adsb(df_flights_with_dropout, df_adsb, dt)
+        assert flights_match_adsb(df_flights_with_dropout, df_adsb, dt) != True # it can also be "unkown"
