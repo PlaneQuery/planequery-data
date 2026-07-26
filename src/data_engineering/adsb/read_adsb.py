@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
+from typing import Literal, overload
 
 import polars as pl
 
@@ -327,6 +328,34 @@ def ensure_adsb_source_data(
             write_opensky_state_vectors_cache_for_day(day)
     else:
         raise ValueError(f"Unknown ADS-B source: {source!r}")
+
+
+@overload
+def read_adsb(
+    start: date | datetime,
+    end: datetime | None = None,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: list[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    source: str = "adsblol",
+    lazy: Literal[False] = False,
+) -> pl.DataFrame: ...
+
+
+@overload
+def read_adsb(
+    start: date | datetime,
+    end: datetime | None = None,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: list[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    source: str = "adsblol",
+    lazy: Literal[True],
+) -> pl.LazyFrame: ...
 
 
 def read_adsb(
