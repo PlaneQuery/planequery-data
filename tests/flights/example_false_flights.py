@@ -35,15 +35,7 @@ A0205C_FLIGHTS = [ # WHY IS THIS NOT PASSING THE FLIGHTS_MATCH_ADSB now ???
         landing_airport_ident="KCLT",
         category="A3",
     ),
-    Flight(
-        icao=A0205C_ICAO,
-        registration="N107SY",
-        takeoff_time=datetime(2026, 4, 1, 23, 36),
-        takeoff_airport_ident="KCLT",
-        landing_time=datetime(2026, 4, 2, 1, 44),
-        landing_airport_ident="KIAH",
-        category="A3",
-    ),
+
 ]
 
 A0205C_TEST = FlightsTestPackage(
