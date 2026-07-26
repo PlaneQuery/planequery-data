@@ -139,7 +139,7 @@ def flights_match_adsb(
         )
         for row in df_adsb.select(adsb_cols).iter_rows(named=True)
     ]
-    assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False
+    assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False # TODO: may need to change.
 
     # check that takeoff_airport idents match landing airport idents
     # 2. check that from when flights say plane is landed plane did not move
