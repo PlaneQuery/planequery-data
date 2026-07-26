@@ -82,7 +82,6 @@ A0205C_TEST = FlightsTestPackage(
     flights=A0205C_FLIGHTS,
     start_dt=datetime.combine(A0205C_DATE, datetime.min.time()),
     end_dt=datetime.combine(A0205C_DATE, datetime.max.time()),
-    adsb_source = "adsbx"
 )
 
 
@@ -167,4 +166,6 @@ A008C9_TEST = FlightsTestPackage(
     end_dt=datetime.combine(A008C9_DATE, datetime.max.time()),
 )
 
-Flights_Test_Packages: list[FlightsTestPackage] = [A008C9_TEST]
+Flights_Test_Packages: list[FlightsTestPackage] = [
+    A008C9_TEST,
+]
