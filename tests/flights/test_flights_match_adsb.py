@@ -8,7 +8,7 @@ from data_engineering.flights.flight_type import Flight, flights_to_flights_df
 from flights.evaluation.flights_test_package import flights_match_real_adsb_with_dropout
 from flights.flights_match_adsb import flights_match_adsb
 from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
-
+from tests.flights.example_false_flights import False_Flights_Test_Packages
 TARGET_DATE = date(2026, 3, 1)
 
 FLIGHT_MATCH_CASES = [
@@ -143,6 +143,9 @@ def test_flights_test_packages():
     for test_package in Flights_Test_Packages:
         flights_match_real_adsb_with_dropout(test_package)
 
+def test_false_flights_test_packages():
+    for test_package in False_Flights_Test_Packages:
+        flights_match_real_adsb_with_dropout(test_package)
 
 '''
 # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
