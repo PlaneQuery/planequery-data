@@ -1145,6 +1145,11 @@ def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
         for start in range(0, len(items), chunk_size)
     ]
 
+def _number_of_workers_default() -> int:
+    cpu_count = os.cpu_count()
+    if cpu_count is None:
+        return 1
+    return max(1, cpu_count // 2)
 
 def main(
     target_date: date = date(2026, 3, 1),
@@ -1152,7 +1157,7 @@ def main(
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
     source: str = "adsblol",
-    max_workers: int = os.cpu_count() or 1,
+    max_workers: int = _number_of_workers_default(),
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
     print(f"number of workers: {max_workers}")
