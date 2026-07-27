@@ -14,6 +14,7 @@ from flights.flights_match_adsb import get_matching_icaos_in_flights
 def ground_truth_flights_output_path(target_date: date):
     return (
         OUTPUT_DIR
+        / "data"
         / "flights"
         / "ground_truth"
         / f"year={target_date.year}"
