@@ -21,6 +21,7 @@ from flights.ground_truth.bts_and_sfdps_to_gold import (
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
 from utils import current_commit_hash
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+from data_engineering.flights.mike import get_mike_flights_for_day
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
@@ -149,6 +150,8 @@ def source_flights_reader(
         return read_eurocontrol_flights
     if src == "opdi":
         return get_opdi_flights
+    if src == "mike":
+        return get_mike_flights_for_day
 
     raise ValueError(f"Unknown flight source: {src}")
 
