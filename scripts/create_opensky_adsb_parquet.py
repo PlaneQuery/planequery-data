@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from data_engineering.adsb.opensky.read_opensky_trino import (
+from data_engineering.opensky.read_opensky_trino_states import (
     align_to_adsb_parquet_schema,
     join_lf_with_openairframes,
     scan_normalized_opensky_state_vectors_for_day,
