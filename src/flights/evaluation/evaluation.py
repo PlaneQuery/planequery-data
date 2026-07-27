@@ -15,6 +15,9 @@ from flights.evaluation.consecutive_airports import (
     consecutive_airport_stats,
 )
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
+from flights.ground_truth.bts_and_sfdps_to_gold import (
+    get_ground_truth_flights_for_day,
+)
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
 from utils import current_commit_hash
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
@@ -136,6 +139,8 @@ def source_flights_reader(
         return get_sfdps_flights_day
     if src == "bts":
         return get_bts_flights_for_day
+    if src == "ground_truth":
+        return get_ground_truth_flights_for_day
     if src =="opensky":
         return lambda target_date: get_flights(target_date, algorithm="opensky")
     if src == "fr24":
