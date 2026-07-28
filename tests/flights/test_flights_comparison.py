@@ -125,4 +125,13 @@ def test_df_flights_comparison_stats():
     assert stats["precision"] == pytest.approx(2 / 3)
     assert stats["recall"] == pytest.approx(1 / 2)
     assert stats["f1"] == pytest.approx(4 / 7)
+    assert stats["takeoff_airport_ident_total_count"] == 2
+    assert stats["takeoff_airport_ident_match_count"] == 1
+    assert stats["takeoff_airport_ident_incorrect_match_count"] == 1
+    assert stats["landing_airport_ident_total_count"] == 2
+    assert stats["landing_airport_ident_match_count"] == 1
+    assert stats["landing_airport_ident_incorrect_match_count"] == 1
+    assert stats["airport_ident_total_count"] == 2
+    assert stats["airport_ident_match_count"] == 1
+    assert stats["airport_ident_incorrect_match_count"] == 1
     assert stats["airport_ident_match_pct"] == pytest.approx(1 / 2)
