@@ -12,15 +12,17 @@ def message(
     minutes: int,
     altitude: float | None,
     *,
-    on_ground: bool = False,
+    on_ground: bool | None = False,
     geom_altitude: int | None = None,
+    lon: float | None = None,
+    speed: float | None = None,
 ) -> AdsbPositionMessage:
     return AdsbPositionMessage(
         time=START + timedelta(minutes=minutes),
         icao=ICAO,
         lat=0.0,
-        lon=minutes * 0.1,
-        ground_speed_kt=0.0 if on_ground else 200.0,
+        lon=minutes * 0.1 if lon is None else lon,
+        ground_speed_kt=(0.0 if on_ground else 200.0) if speed is None else speed,
         on_ground=on_ground,
         baro_altitude_ft=altitude,
         geom_altitude_ft=geom_altitude,
@@ -101,6 +103,42 @@ def test_falls_back_to_trace_boundaries_when_ground_state_is_missing():
     assert len(segments) == 1
     assert segments[0].takeoff_time == START
     assert segments[0].landing_time == START + timedelta(minutes=5)
+
+
+def test_ignores_isolated_airborne_status_blips_while_parked():
+    messages = [
+        message(0, None, on_ground=True, lon=0.0, speed=0.1),
+        message(1, None, on_ground=False, lon=0.0, speed=0.1),
+        message(2, None, on_ground=True, lon=0.0, speed=0.1),
+        message(3, None, on_ground=True, lon=0.0, speed=0.1),
+        message(4, 0, on_ground=False, lon=0.0, speed=87),
+        message(5, 1_000, on_ground=False, lon=0.1, speed=150),
+        message(6, 5_000, on_ground=False, lon=0.2, speed=200),
+        message(10, None, on_ground=True, lon=0.3, speed=80),
+        message(11, None, on_ground=False, lon=0.3, speed=0.1),
+        message(12, None, on_ground=True, lon=0.3, speed=0.1),
+    ]
+
+    segments = identify_flight_segments(messages)
+
+    assert len(segments) == 1
+    assert segments[0].takeoff_time == START + timedelta(minutes=4)
+    assert segments[0].landing_time == START + timedelta(minutes=10)
+
+
+def test_rejects_all_ground_slice_despite_duration_and_accumulated_movement():
+    messages = [
+        message(
+            index * 2,
+            None,
+            on_ground=True,
+            lon=index * 0.012,
+            speed=15,
+        )
+        for index in range(6)
+    ]
+
+    assert identify_flight_segments(messages) == []
 
 
 def test_readsb_does_not_mark_traces_shorter_than_twenty_points():
