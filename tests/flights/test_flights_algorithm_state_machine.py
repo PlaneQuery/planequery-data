@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from flights_algorithm.main import AdsbPositionMessage, identify_flight_segments
+from flights_algorithm.readsb_legs import mark_leg_indexes
 
 
 ICAO = "abc123"
@@ -9,87 +10,115 @@ START = datetime(2026, 3, 1)
 
 def message(
     minutes: int,
-    lat: float,
-    lon: float,
-    *,
-    speed: float,
     altitude: float | None,
-    track: float | None,
+    *,
     on_ground: bool = False,
+    geom_altitude: int | None = None,
 ) -> AdsbPositionMessage:
     return AdsbPositionMessage(
         time=START + timedelta(minutes=minutes),
         icao=ICAO,
-        lat=lat,
-        lon=lon,
-        ground_speed_kt=speed,
-        track_deg=track,
+        lat=0.0,
+        lon=minutes * 0.1,
+        ground_speed_kt=0.0 if on_ground else 200.0,
         on_ground=on_ground,
         baro_altitude_ft=altitude,
+        geom_altitude_ft=geom_altitude,
     )
 
 
-def messages_with_gap(
-    *,
-    gap_end_lon: float,
-    before_gap_track: float,
-    after_gap_track: float,
-) -> list[AdsbPositionMessage]:
+def two_flight_trace() -> list[AdsbPositionMessage]:
+    altitudes = [
+        0,
+        0,
+        1_000,
+        5_000,
+        10_000,
+        20_000,
+        30_000,
+        30_000,
+        30_000,
+        25_000,
+        18_000,
+        10_000,
+        5_000,
+        1_000,
+        0,
+        0,
+        0,
+        0,
+        1_000,
+        5_000,
+        10_000,
+        20_000,
+        30_000,
+        30_000,
+    ]
     return [
-        message(0, 0.0, 0.0, speed=0.0, altitude=0.0, track=90.0, on_ground=True),
-        message(2, 0.0, 0.1, speed=180.0, altitude=2_000.0, track=90.0),
-        message(30, 0.0, 2.5, speed=300.0, altitude=25_000.0, track=90.0),
-        message(60, 0.0, 5.0, speed=300.0, altitude=30_000.0, track=before_gap_track),
-        message(180, 0.0, gap_end_lon, speed=300.0, altitude=30_000.0, track=after_gap_track),
-        message(200, 0.0, gap_end_lon + 1.5, speed=300.0, altitude=25_000.0, track=90.0),
-        message(220, 0.0, gap_end_lon + 3.5, speed=300.0, altitude=15_000.0, track=90.0),
-        message(240, 0.0, gap_end_lon + 5.0, speed=45.0, altitude=500.0, track=90.0),
-        message(
-            243,
-            0.0,
-            gap_end_lon + 5.01,
-            speed=10.0,
-            altitude=0.0,
-            track=90.0,
-            on_ground=True,
-        ),
+        message(index, altitude, on_ground=altitude == 0)
+        for index, altitude in enumerate(altitudes)
     ]
 
 
-def test_continues_a_fast_directionally_consistent_airborne_gap():
-    segments = identify_flight_segments(
-        messages_with_gap(
-            gap_end_lon=15.0,
-            before_gap_track=90.0,
-            after_gap_track=90.0,
+def test_marks_new_leg_during_ground_interval_between_descent_and_climb():
+    messages = two_flight_trace()
+
+    assert mark_leg_indexes(messages) == [16]
+
+
+def test_converts_readsb_leg_markers_to_existing_flight_segments():
+    segments = identify_flight_segments(two_flight_trace())
+
+    assert len(segments) == 2
+    assert segments[0].takeoff_time == START + timedelta(minutes=2)
+    assert segments[0].landing_time == START + timedelta(minutes=14)
+    assert segments[1].takeoff_time == START + timedelta(minutes=18)
+    assert segments[1].landing_time == START + timedelta(minutes=23)
+
+
+def test_uses_ground_air_transitions_instead_of_day_and_leg_boundaries():
+    messages = two_flight_trace()
+    messages[0] = message(0, 0, on_ground=True)
+    messages[1] = message(1, 0, on_ground=True)
+
+    segments = identify_flight_segments(messages)
+
+    assert segments[0].takeoff_message.on_ground is False
+    assert segments[0].landing_message.on_ground is True
+    assert segments[1].takeoff_message.on_ground is False
+
+
+def test_falls_back_to_trace_boundaries_when_ground_state_is_missing():
+    messages = [
+        message(index, altitude, on_ground=None)
+        for index, altitude in enumerate(
+            [1_000, 5_000, 10_000, 20_000, 30_000, 30_000]
         )
-    )
+    ]
+
+    segments = identify_flight_segments(messages)
 
     assert len(segments) == 1
+    assert segments[0].takeoff_time == START
+    assert segments[0].landing_time == START + timedelta(minutes=5)
 
 
-def test_splits_gap_with_too_little_displacement_for_sustained_flight():
-    segments = identify_flight_segments(
-        messages_with_gap(
-            gap_end_lon=6.0,
-            before_gap_track=90.0,
-            after_gap_track=90.0,
+def test_readsb_does_not_mark_traces_shorter_than_twenty_points():
+    messages = two_flight_trace()[:19]
+
+    assert mark_leg_indexes(messages) == []
+    assert len(identify_flight_segments(messages)) == 1
+
+
+def test_uses_geometric_altitude_when_baro_altitude_is_missing():
+    messages = [
+        message(
+            index,
+            None,
+            on_ground=source.baro_altitude_ft == 0,
+            geom_altitude=int(source.baro_altitude_ft or 0),
         )
-    )
+        for index, source in enumerate(two_flight_trace())
+    ]
 
-    assert len(segments) == 2
-    assert segments[0].landing_time == START + timedelta(minutes=60)
-    assert segments[1].takeoff_time >= START + timedelta(minutes=150)
-
-
-def test_splits_gap_when_endpoint_track_reverses_the_gap_direction():
-    segments = identify_flight_segments(
-        messages_with_gap(
-            gap_end_lon=15.0,
-            before_gap_track=270.0,
-            after_gap_track=90.0,
-        )
-    )
-
-    assert len(segments) == 2
-    assert segments[0].landing_time == START + timedelta(minutes=60)
+    assert mark_leg_indexes(messages) == [16]

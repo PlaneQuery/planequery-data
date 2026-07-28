@@ -173,7 +173,7 @@ def flights_algorithm_output_path(
         / "data"
         / "flights"
         / ("algorithm-no-airports" if no_airports_model else "algorithm")
-        / "v2"
+        / "v3"
         / _flights_algorithm_source_dir(adsb_src)
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
