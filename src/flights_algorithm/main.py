@@ -42,7 +42,6 @@ MIN_FLIGHT_DISTANCE_KM = 5.0
 MIN_AIRBORNE_RUN_MESSAGES = 2
 MIN_AIRBORNE_RUN_DISTANCE_KM = 1.0
 MIN_AIRBORNE_RUN_SPEED_KT = 30
-MAX_SEGMENT_STITCH_GAP = timedelta(minutes=45)
 GROUND_TRUTH_ICAOS_DATE = date(2026, 3, 1)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
@@ -191,16 +190,6 @@ def _db_flags_counts_for_messages(
     return tuple(Counter(db_flags).items())
 
 
-def _merge_db_flags_counts(
-    *counts_by_segment: tuple[tuple[int, int], ...],
-) -> tuple[tuple[int, int], ...]:
-    counter = Counter()
-    for counts in counts_by_segment:
-        for db_flags, count in counts:
-            counter[db_flags] += count
-    return tuple(counter.items())
-
-
 def _db_flags_mode_from_counts(db_flags_counts: tuple[tuple[int, int], ...]) -> int | None:
     if not db_flags_counts:
         return None
@@ -252,19 +241,6 @@ def _aircraft_metadata_counts_for_messages(
                 ).items()
             ),
         )
-        for column in AIRCRAFT_METADATA_COLUMNS
-    )
-
-
-def _merge_aircraft_metadata_counts(
-    *counts_by_segment: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
-) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
-    counters = {column: Counter() for column in AIRCRAFT_METADATA_COLUMNS}
-    for counts in counts_by_segment:
-        for column, value_counts in counts:
-            counters[column].update(dict(value_counts))
-    return tuple(
-        (column, tuple(counters[column].items()))
         for column in AIRCRAFT_METADATA_COLUMNS
     )
 
@@ -438,43 +414,6 @@ def identify_flight_segments(
             )
         )
     return segments
-
-
-def stitch_flight_segments(segments: Sequence[FlightSegment]) -> list[FlightSegment]:
-    stitched = []
-    current = None
-
-    for segment in sorted(segments, key=lambda row: (row.icao, row.takeoff_time)):
-        if current is None:
-            current = segment
-            continue
-
-        gap = segment.takeoff_time - current.landing_time
-        if segment.icao == current.icao and gap <= MAX_SEGMENT_STITCH_GAP:
-            current = FlightSegment(
-                icao=current.icao,
-                takeoff_time=current.takeoff_time,
-                landing_time=max(current.landing_time, segment.landing_time),
-                takeoff_message=current.takeoff_message,
-                landing_message=segment.landing_message,
-                distance_travelled_km=current.distance_travelled_km + segment.distance_travelled_km,
-                db_flags_counts=_merge_db_flags_counts(
-                    current.db_flags_counts,
-                    segment.db_flags_counts,
-                ),
-                aircraft_metadata_counts=_merge_aircraft_metadata_counts(
-                    current.aircraft_metadata_counts,
-                    segment.aircraft_metadata_counts,
-                ),
-            )
-        else:
-            stitched.append(current)
-            current = segment
-
-    if current is not None:
-        stitched.append(current)
-
-    return stitched
 
 
 def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
@@ -711,22 +650,6 @@ def _segment_takes_off_in_window(segment: FlightSegment, start: datetime, end: d
     return start <= segment.takeoff_time < end
 
 
-def _is_american_icao_expr() -> pl.Expr:
-    icao = pl.col("icao").str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def _pia_or_american_ladd_filter() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (_is_american_icao_expr() & pl.col("ladd").fill_null(False))
-    )
-
-
-def _pia_or_american_ladd_icao_filter() -> pl.Expr:
-    return _pia_or_american_ladd_filter().any().over("icao")
-
-
 def _segment_adsb_df(
     df_adsb: pl.DataFrame,
 ) -> list[FlightSegment]:
@@ -824,7 +747,13 @@ def _run_airport_model_inference(
     )
 
 
-def process_icaos(day_start: datetime, day_end: datetime, icaos: list[str], no_airports_model: bool = False, source: str = "adsblol", target_date: date | None = None) -> pl.DataFrame:
+def process_icaos(
+    day_start: datetime,
+    day_end: datetime,
+    icaos: list[str],
+    no_airports_model: bool = False,
+    source: str = "adsblol",
+) -> pl.DataFrame:
     read_start, read_end = _source_read_window(day_start, day_end)
     df_adsb = read_adsb(read_start, read_end, icaos=icaos, source=source)
     segments = _segment_adsb_df(df_adsb)
@@ -888,7 +817,14 @@ def main(
     icao_lists = _chunks_by_size(icaos, 500)
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp.get_context("spawn")) as executor:
         futures = [
-            executor.submit(process_icaos, day_start, day_end, icao_list, no_airports_model, source, target_date)
+            executor.submit(
+                process_icaos,
+                day_start,
+                day_end,
+                icao_list,
+                no_airports_model,
+                source,
+            )
             for icao_list in icao_lists
         ]
         flights_dfs = [future.result() for future in futures]
