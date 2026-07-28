@@ -263,11 +263,26 @@ def _scan_opensky_days(
         join_lf_with_openairframes,
         scan_cached_opensky_state_vectors_for_day,
     )
+    from data_engineering.opensky.preprocess import (
+        OPENSKY_PREPROCESSING_COLUMNS,
+        preprocess_opensky_adsb,
+    )
 
     metadata_columns = set(OPENAIRFRAMES_COLUMNS)
     filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
     scan_columns = list(dict.fromkeys(list(columns) + ["time", "icao", *filter_columns]))
-    cached_columns = [column for column in scan_columns if column not in metadata_columns]
+    cached_columns = list(
+        dict.fromkeys(
+            [
+                *[
+                    column
+                    for column in scan_columns
+                    if column not in metadata_columns
+                ],
+                *OPENSKY_PREPROCESSING_COLUMNS,
+            ]
+        )
+    )
 
     lf = pl.concat(
         [
@@ -277,6 +292,7 @@ def _scan_opensky_days(
     )
     if icaos is not None:
         lf = lf.filter(pl.col("icao").is_in([icao.lower() for icao in icaos]))
+    lf = preprocess_opensky_adsb(lf)
 
     needs_metadata = bool(metadata_columns.intersection(scan_columns))
     if needs_metadata or pia_or_american_ladd_only:
