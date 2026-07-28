@@ -63,6 +63,7 @@ LANDING_CONFIRMATION_TIME = timedelta(minutes=2)
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
 MAX_SEGMENT_STITCH_GAP = timedelta(minutes=45)
+GROUND_TRUTH_ICAOS_DATE = date(2026, 3, 1)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
     "icao",
@@ -1167,6 +1168,27 @@ def _limit_icaos_to_sfdps_or_bts(
         return sorted(source_icaos)
     return [icao for icao in icaos if icao in source_icaos]
 
+
+def _ground_truth_icaos() -> list[str]:
+    from flights.ground_truth.bts_and_sfdps_to_gold import (
+        get_ground_truth_flights_for_day,
+    )
+
+    ground_truth_flights = get_ground_truth_flights_for_day(GROUND_TRUTH_ICAOS_DATE)
+    return sorted(
+        ground_truth_flights.get_column("icao")
+        .drop_nulls()
+        .cast(pl.String)
+        .str.to_lowercase()
+        .unique()
+        .to_list()
+    )
+
+
+def _limit_icaos_to_ground_truth(icaos: Sequence[str]) -> list[str]:
+    ground_truth_icaos = set(_ground_truth_icaos())
+    return [icao for icao in icaos if icao in ground_truth_icaos]
+
 MODEL_PATH = Path(
     os.getenv(
         "FLIGHTS_AIRPORT_MODEL_PATH",
@@ -1228,6 +1250,7 @@ def main(
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
+    ground_truth_only: bool = False,
     source: str = "adsblol",
     max_workers: int = _number_of_workers_default(),
     no_airports_model: bool = False,
@@ -1242,7 +1265,16 @@ def main(
         source=source,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
-    icaos = sorted(get_icaos_in_adsb(target_date, source=source))
+    available_icaos = sorted(get_icaos_in_adsb(target_date, source=source))
+    if icaos is None:
+        icaos = available_icaos
+    else:
+        requested_icaos = set(icaos)
+        icaos = [icao for icao in available_icaos if icao in requested_icaos]
+    if sfdps_or_bts_only:
+        icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
+    if ground_truth_only:
+        icaos = _limit_icaos_to_ground_truth(icaos)
     icao_lists = _chunks_by_size(icaos, 500)
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp.get_context("spawn")) as executor:
         futures = [
@@ -1259,6 +1291,7 @@ def run_main(
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
+    ground_truth_only: bool = False,
     source: str = "adsblol",
     max_workers: int = os.cpu_count() or 1,
     no_airports_model: bool = False,
@@ -1269,6 +1302,7 @@ def run_main(
         icaos=icaos,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
         sfdps_or_bts_only=sfdps_or_bts_only,
+        ground_truth_only=ground_truth_only,
         source=source,
         max_workers=max_workers,
         no_airports_model=no_airports_model,
@@ -1329,6 +1363,13 @@ def cli() -> None:
         help="only segment ICAOs present in SFDPS or BTS flights for the target date",
     )
     parser.add_argument(
+        "--ground-truth-only",
+        action="store_true",
+        help=(
+            "only segment ICAOs present in ground-truth flights for 2026-03-01"
+        ),
+    )
+    parser.add_argument(
         "--source",
         choices=ADSB_SOURCES,
         default="adsblol",
@@ -1365,6 +1406,7 @@ def cli() -> None:
             target_date=target_date,
             pia_or_american_ladd_only=args.pia_or_american_ladd_only,
             sfdps_or_bts_only=args.sfdps_or_bts_only,
+            ground_truth_only=args.ground_truth_only,
             source=args.source,
             max_workers=max_workers,
             icaos=args.icaos,
