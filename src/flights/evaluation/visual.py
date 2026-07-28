@@ -259,6 +259,150 @@ def visualize_flights_adsb(
     return fig
 
 
+def visualize_opensky_failure(
+    df_flights: pl.DataFrame,
+    df_adsb: pl.DataFrame,
+    *,
+    width: int | None = 600,
+) -> go.Figure:
+    """Show flight assignment and its OpenSky failure in a compact paper figure."""
+    flights = _rows(df_flights, "takeoff_time")
+    if not flights:
+        raise ValueError("Expected at least one inferred flight")
+
+    windows = []
+    for index, flight in enumerate(flights, start=1):
+        label = _flight_label(index, flight).replace("->", "→")
+        windows.append((flight.get("takeoff_time"), flight.get("landing_time"), label))
+
+    def assignment(message: dict) -> str:
+        for start, end, label in windows:
+            if (
+                message.get("time") is not None
+                and start is not None
+                and end is not None
+                and start <= message["time"] <= end
+            ):
+                return label
+        return "No flight (unassigned)"
+
+    messages = _rows(df_adsb, "time")
+    groups = OrderedDict((label, []) for _, _, label in windows)
+    groups["No flight (unassigned)"] = []
+    for message in messages:
+        groups[assignment(message)].append(message)
+
+    palette = ["#4C78A8", "#F58518", "#54A24B", "#B279A2"]
+    colors = {
+        label: "#D62728" if label == "No flight (unassigned)" else palette[index]
+        for index, label in enumerate(groups)
+    }
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        specs=[[{"type": "xy"}], [{"type": "map"}]],
+        row_heights=[0.53, 0.47],
+        vertical_spacing=0.09,
+    )
+    for start, end, label in windows:
+        if start is not None and end is not None:
+            fig.add_vrect(
+                x0=start,
+                x1=end,
+                fillcolor=colors[label],
+                opacity=0.06,
+                line_width=0,
+                row=1,
+                col=1,
+            )
+
+    for label, group in groups.items():
+        color = colors[label]
+        altitude_messages = [m for m in group if m.get("baro_altitude_ft") is not None]
+        if altitude_messages:
+            is_unassigned = label == "No flight (unassigned)"
+            fig.add_trace(
+                go.Scatter(
+                    x=[m["time"] for m in altitude_messages],
+                    y=[m["baro_altitude_ft"] for m in altitude_messages],
+                    mode="markers",
+                    name=label,
+                    legendgroup=label,
+                    marker={"color": color, "size": 3.5 if is_unassigned else 3},
+                    hovertemplate="%{x|%H:%M:%S}<br>%{y:,.0f} ft<extra>" + label + "</extra>",
+                ),
+                row=1,
+                col=1,
+            )
+        map_messages = [m for m in group if m.get("lat") is not None and m.get("lon") is not None]
+        if map_messages:
+            fig.add_trace(
+                go.Scattermap(
+                    lat=[m["lat"] for m in map_messages],
+                    lon=[m["lon"] for m in map_messages],
+                    mode="markers",
+                    name=label,
+                    legendgroup=label,
+                    showlegend=False,
+                    marker={"color": color, "size": 4, "opacity": 0.72},
+                    hovertemplate="%{lat:.3f}, %{lon:.3f}<extra>" + label + "</extra>",
+                ),
+                row=2,
+                col=1,
+            )
+
+    last_flight_end = windows[-1][1]
+    missed = [
+        m for m in groups["No flight (unassigned)"]
+        if last_flight_end is not None and m.get("time") is not None and m["time"] > last_flight_end
+        and m.get("baro_altitude_ft") is not None
+    ]
+    if missed:
+        fig.add_shape(
+            type="line",
+            x0=last_flight_end,
+            x1=last_flight_end,
+            y0=0,
+            y1=1,
+            xref="x",
+            yref="y domain",
+            line={"color": "#D62728", "width": 1.5},
+        )
+
+    map_points = [m for m in messages if m.get("lat") is not None and m.get("lon") is not None]
+    map_center = {
+        "lat": sum(m["lat"] for m in map_points) / len(map_points),
+        "lon": sum(m["lon"] for m in map_points) / len(map_points),
+    } if map_points else {"lat": 0, "lon": 0}
+    fig.update_layout(
+        width=width,
+        height=540,
+        autosize=width is None,
+        template="simple_white",
+        margin={"l": 58, "r": 18, "t": 52, "b": 28},
+        legend={
+            "orientation": "h",
+            "x": 0,
+            "y": 1.08,
+            "xanchor": "left",
+            "yanchor": "bottom",
+            "font": {"size": 9},
+        },
+        hovermode="closest",
+        map={"style": "open-street-map", "center": map_center, "zoom": 5 if map_points else 1},
+    )
+    fig.update_xaxes(title_text="UTC time", tickformat="%H:%M", showgrid=False, row=1, col=1)
+    fig.update_yaxes(
+        title_text="Barometric altitude (ft)",
+        tickformat=",d",
+        gridcolor="#E5E5E5",
+        zeroline=False,
+        row=1,
+        col=1,
+    )
+    return fig
+
+
 def visualize_flight(
     df_flights: pl.DataFrame,
     df_adsb: pl.DataFrame,
