@@ -39,6 +39,9 @@ AIRPORT_SIZE_RANK = {
 MAX_SHORT_SAME_AIRPORT_DURATION = timedelta(minutes=25)
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
+MIN_AIRBORNE_RUN_MESSAGES = 2
+MIN_AIRBORNE_RUN_DISTANCE_KM = 1.0
+MIN_AIRBORNE_RUN_SPEED_KT = 30
 MAX_SEGMENT_STITCH_GAP = timedelta(minutes=45)
 GROUND_TRUTH_ICAOS_DATE = date(2026, 3, 1)
 ADSB_ALGORITHM_COLUMNS = [
@@ -290,41 +293,105 @@ def _geom_altitude_ft(message: AdsbMessageRow | AdsbPositionMessage) -> int | No
 
 def _flight_endpoint_messages(
     leg_messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
-) -> tuple[
-    AdsbMessageRow | AdsbPositionMessage,
-    AdsbMessageRow | AdsbPositionMessage,
-]:
+) -> (
+    tuple[
+        AdsbMessageRow | AdsbPositionMessage,
+        AdsbMessageRow | AdsbPositionMessage,
+    ]
+    | None
+):
     """Locate takeoff and landing within a readsb marker-delimited leg.
 
     readsb's leg markers are separators between flights, commonly placed in
     the middle of a ground dwell. They are not takeoff or landing events.
-    Prefer the observed ground-to-air and air-to-ground transitions while
-    retaining the leg endpoints as fallbacks for partial traces.
+    Prefer the strongest sustained airborne run and its surrounding ground
+    transitions while retaining the leg endpoints as fallbacks for partial
+    traces. This prevents isolated bad ``on_ground`` values from becoming
+    takeoff or landing events.
     """
-    takeoff_index = 0
-    saw_ground = False
+    airborne_runs: list[tuple[int, int, int, int]] = []
+    run_start = None
+    airborne_message_count = 0
+
     for index, message in enumerate(leg_messages):
         on_ground = _optional_bool(getattr(message, "on_ground", None))
-        if on_ground is True:
-            saw_ground = True
-        elif on_ground is False and saw_ground:
-            takeoff_index = index
-            break
+        if on_ground is False:
+            if run_start is None:
+                run_start = index
+            airborne_message_count += 1
+        elif on_ground is True and run_start is not None:
+            airborne_runs.append(
+                (run_start, index - 1, index, airborne_message_count)
+            )
+            run_start = None
+            airborne_message_count = 0
 
-    last_airborne_index = None
-    for index in range(takeoff_index, len(leg_messages)):
-        if _optional_bool(getattr(leg_messages[index], "on_ground", None)) is False:
-            last_airborne_index = index
+    if run_start is not None:
+        airborne_runs.append(
+            (
+                run_start,
+                len(leg_messages) - 1,
+                len(leg_messages) - 1,
+                airborne_message_count,
+            )
+        )
 
-    landing_index = len(leg_messages) - 1
-    if last_airborne_index is not None:
-        for index in range(last_airborne_index + 1, len(leg_messages)):
-            if _optional_bool(
-                getattr(leg_messages[index], "on_ground", None)
-            ) is True:
-                landing_index = index
-                break
+    best_run = None
+    best_score = None
+    for start, end, landing, message_count in airborne_runs:
+        if message_count < MIN_AIRBORNE_RUN_MESSAGES:
+            continue
 
+        run_messages = leg_messages[start : end + 1]
+        distance_km = sum(
+            haversine_km(previous.lat, previous.lon, current.lat, current.lon)
+            for previous, current in zip(run_messages, run_messages[1:])
+        )
+        max_speed_kt = max(
+            (
+                speed
+                for message in run_messages
+                if (
+                    speed := _optional_int(
+                        getattr(message, "ground_speed_kt", None)
+                    )
+                )
+                is not None
+            ),
+            default=None,
+        )
+        has_altitude = any(
+            _baro_altitude_int_ft(message) is not None
+            or _geom_altitude_ft(message) is not None
+            for message in run_messages
+        )
+        has_airborne_evidence = (
+            distance_km >= MIN_AIRBORNE_RUN_DISTANCE_KM
+            or (
+                max_speed_kt is not None
+                and max_speed_kt >= MIN_AIRBORNE_RUN_SPEED_KT
+            )
+            or has_altitude
+        )
+        if not has_airborne_evidence:
+            continue
+
+        duration = run_messages[-1].time - run_messages[0].time
+        score = (distance_km, duration.total_seconds(), message_count)
+        if best_score is None or score > best_score:
+            best_run = (start, landing)
+            best_score = score
+
+    if best_run is None and any(
+        _optional_bool(getattr(message, "on_ground", None)) is True
+        for message in leg_messages
+    ):
+        return None
+
+    if best_run is None:
+        return leg_messages[0], leg_messages[-1]
+
+    takeoff_index, landing_index = best_run
     return leg_messages[takeoff_index], leg_messages[landing_index]
 
 
@@ -347,7 +414,10 @@ def identify_flight_segments(
             haversine_km(previous.lat, previous.lon, current.lat, current.lon)
             for previous, current in zip(leg_messages, leg_messages[1:])
         )
-        takeoff_message, landing_message = _flight_endpoint_messages(leg_messages)
+        endpoint_messages = _flight_endpoint_messages(leg_messages)
+        if endpoint_messages is None:
+            continue
+        takeoff_message, landing_message = endpoint_messages
         if landing_message.time - takeoff_message.time < MIN_FLIGHT_DURATION:
             continue
         if distance_travelled_km < MIN_FLIGHT_DISTANCE_KM:
