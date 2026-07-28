@@ -45,9 +45,9 @@ MAX_LANDING_ALTITUDE_FT = 20_000
 HIGH_ALTITUDE_APPROACH_SPEED_DROP_KT = 80.0
 AIRBORNE_GAP_MIN_SPEED_KT = 90.0
 AIRBORNE_GAP_MIN_ALTITUDE_FT = 1_000
-MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT = 30.0
+MIN_CONTINUOUS_GAP_AVERAGE_SPEED_KT = AIRBORNE_GAP_MIN_SPEED_KT
 MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT = 700.0
-HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT = 30_000
+MAX_CONTINUOUS_GAP_TRACK_DEVIATION_DEG = 135.0
 MIN_STOP_LIKE_GAP = timedelta(minutes=7)
 MAX_STOP_LIKE_GAP_DISTANCE_KM = 20.0
 MAX_STOP_LIKE_GAP_AVERAGE_SPEED_KT = 25.0
@@ -108,6 +108,7 @@ class AdsbPositionMessage:
     lat: float
     lon: float
     ground_speed_kt: float | None = None
+    track_deg: float | None = None
     on_ground: bool | None = None
     baro_altitude_ft: float | None = None
     geom_altitude_ft: int | None = None
@@ -341,6 +342,12 @@ def _reported_ground_speed_kt(message: AdsbMessageRow | AdsbPositionMessage) -> 
     )
 
 
+def _track_deg(message: AdsbMessageRow | AdsbPositionMessage) -> float | None:
+    return _optional_float(
+        getattr(message, "track_deg", getattr(message, "track", None))
+    )
+
+
 def _on_ground(message: AdsbMessageRow | AdsbPositionMessage) -> bool | None:
     value = getattr(message, "on_ground", None)
     if value is None:
@@ -458,6 +465,51 @@ def _gap_average_speed_kt(motion: MessageMotion) -> float | None:
     return motion.distance_km * 1943.844492 / dt_s
 
 
+def _initial_bearing_deg(
+    start: AdsbMessageRow | AdsbPositionMessage,
+    end: AdsbMessageRow | AdsbPositionMessage,
+) -> float | None:
+    if start.lat == end.lat and start.lon == end.lon:
+        return None
+
+    start_lat = math.radians(start.lat)
+    end_lat = math.radians(end.lat)
+    delta_lon = math.radians(end.lon - start.lon)
+    y = math.sin(delta_lon) * math.cos(end_lat)
+    x = (
+        math.cos(start_lat) * math.sin(end_lat)
+        - math.sin(start_lat) * math.cos(end_lat) * math.cos(delta_lon)
+    )
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+def _angular_difference_deg(first: float, second: float) -> float:
+    return abs((first - second + 180.0) % 360.0 - 180.0)
+
+
+def _gap_tracks_are_continuous(motion: MessageMotion) -> bool:
+    """Reject only endpoint tracks that clearly point against the gap displacement."""
+    gap_bearing_deg = _initial_bearing_deg(motion.prev, motion.curr)
+    if gap_bearing_deg is None:
+        return True
+
+    endpoint_tracks = (
+        (_track_deg(motion.prev), _reported_ground_speed_kt(motion.prev)),
+        (_track_deg(motion.curr), _reported_ground_speed_kt(motion.curr)),
+    )
+    for track_deg, speed_kt in endpoint_tracks:
+        if track_deg is None:
+            continue
+        if speed_kt is not None and speed_kt < AIRBORNE_GAP_MIN_SPEED_KT:
+            continue
+        if (
+            _angular_difference_deg(track_deg, gap_bearing_deg)
+            > MAX_CONTINUOUS_GAP_TRACK_DEVIATION_DEG
+        ):
+            return False
+    return True
+
+
 def _message_is_low_for_stop_gap(message: AdsbMessageRow | AdsbPositionMessage) -> bool:
     if _on_ground(message) is True:
         return True
@@ -510,16 +562,27 @@ def _should_continue_across_gap(motion: MessageMotion) -> bool:
     average_speed_kt = _gap_average_speed_kt(motion)
     if average_speed_kt is None or average_speed_kt > MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT:
         return False
-    if average_speed_kt >= MIN_AIRBORNE_GAP_AVERAGE_SPEED_KT:
-        return True
-
-    prev_altitude_ft = _baro_altitude_ft(motion.prev)
-    curr_altitude_ft = _baro_altitude_ft(motion.curr)
     return (
-        prev_altitude_ft is not None
-        and curr_altitude_ft is not None
-        and prev_altitude_ft >= HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT
-        and curr_altitude_ft >= HIGH_ALTITUDE_GAP_MIN_ALTITUDE_FT
+        average_speed_kt >= MIN_CONTINUOUS_GAP_AVERAGE_SPEED_KT
+        and _gap_tracks_are_continuous(motion)
+    )
+
+
+def _gap_indicates_unobserved_turnaround(motion: MessageMotion) -> bool:
+    """Identify gaps that contain enough unexplained time or a course reversal."""
+    if motion.time_gap > MAX_AIRBORNE_GAP:
+        return False
+    if not _message_looks_airborne_for_gap(motion.prev):
+        return False
+    if not _message_looks_airborne_for_gap(motion.curr):
+        return False
+
+    average_speed_kt = _gap_average_speed_kt(motion)
+    if average_speed_kt is None or average_speed_kt > MAX_AIRBORNE_GAP_AVERAGE_SPEED_KT:
+        return False
+    return (
+        average_speed_kt < MIN_CONTINUOUS_GAP_AVERAGE_SPEED_KT
+        or not _gap_tracks_are_continuous(motion)
     )
 
 
@@ -552,6 +615,7 @@ def _maybe_add_segment(
     *,
     takeoff_time_message: AdsbMessageRow | AdsbPositionMessage | None = None,
     landing_time_message: AdsbMessageRow | AdsbPositionMessage | None = None,
+    allow_unobserved_landing: bool = False,
 ) -> None:
     if takeoff_message is None:
         return
@@ -566,7 +630,10 @@ def _maybe_add_segment(
         return
     if distance_travelled_km < MIN_FLIGHT_DISTANCE_KM:
         return
-    if not _landing_endpoint_makes_sense(landing_message, max_speed_kt):
+    if (
+        not allow_unobserved_landing
+        and not _landing_endpoint_makes_sense(landing_message, max_speed_kt)
+    ):
         return
     segments.append(
         FlightSegment(
@@ -645,6 +712,9 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 distance_travelled_km += motion.distance_km
                 gap_was_continued = True
             elif state == FlightState.IN_FLIGHT:
+                probable_unobserved_landing = _gap_indicates_unobserved_turnaround(
+                    motion
+                )
                 _maybe_add_segment(
                     segments,
                     takeoff_message,
@@ -654,6 +724,7 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                     segment_messages,
                     takeoff_time_message=takeoff_time_message,
                     landing_time_message=motion.prev,
+                    allow_unobserved_landing=probable_unobserved_landing,
                 )
                 state = FlightState.GROUND
                 takeoff_message = None
@@ -662,7 +733,7 @@ def identify_flight_segments(messages: Sequence[AdsbMessageRow | AdsbPositionMes
                 distance_travelled_km = 0.0
                 max_speed_kt = None
                 segment_messages = []
-                ground_messages = []
+                ground_messages = [motion.curr]
                 ground_distance_travelled_km = 0.0
                 continue
             else:
@@ -803,6 +874,7 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
             lat=row["lat"],
             lon=row["lon"],
             ground_speed_kt=row.get("ground_speed_kt"),
+            track_deg=row.get("track_deg"),
             on_ground=row.get("on_ground"),
             baro_altitude_ft=row.get("baro_altitude_ft"),
             geom_altitude_ft=row.get("geom_altitude_ft"),
