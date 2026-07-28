@@ -246,7 +246,24 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        # Keep the underlying counts alongside the rates so evaluation output
+        # shows how many matched flights had the correct airport assignment.
+        "takeoff_airport_ident_total_count": true_positive,
+        "takeoff_airport_ident_match_count": takeoff_airport_ident_match,
+        "takeoff_airport_ident_incorrect_match_count": (
+            true_positive - takeoff_airport_ident_match
+        ),
         "takeoff_airport_ident_match_pct": takeoff_airport_ident_match_pct,
+        "landing_airport_ident_total_count": true_positive,
+        "landing_airport_ident_match_count": landing_airport_ident_match,
+        "landing_airport_ident_incorrect_match_count": (
+            true_positive - landing_airport_ident_match
+        ),
         "landing_airport_ident_match_pct": landing_airport_ident_match_pct,
+        "airport_ident_total_count": true_positive,
+        "airport_ident_match_count": airport_ident_match,
+        "airport_ident_incorrect_match_count": (
+            true_positive - airport_ident_match
+        ),
         "airport_ident_match_pct": airport_ident_match_pct,
     }
