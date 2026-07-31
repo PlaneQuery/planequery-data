@@ -237,7 +237,7 @@ def scan_latest_faa_registration_icao_for_join(
     return df
 
 
-def get_faa_info(
+def get_openairframes_faa_df(
     path: str | Path = DEFAULT_OPENAIRFRAMES_FAA_PATH,
 ) -> pl.DataFrame:
     """Return the full FAA OpenAirframes snapshot as a Polars DataFrame."""
