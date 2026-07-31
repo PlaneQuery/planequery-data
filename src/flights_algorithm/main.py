@@ -46,6 +46,8 @@ GROUND_TRUTH_ICAOS_DATE = date(2026, 3, 1)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
     "icao",
+    "callsign",
+    "registration",
     "lat",
     "lon",
     "ground_speed_kt",
@@ -74,6 +76,14 @@ AIRCRAFT_METADATA_ALIASES = {
     "aircraft_description": ("aircraft_description", "desc"),
     "category": ("category",),
 }
+FLIGHT_IDENTITY_COLUMNS = (
+    "callsign",
+    "registration",
+)
+FLIGHT_IDENTITY_ALIASES = {
+    "callsign": ("callsign", "flight"),
+    "registration": ("registration", "r"),
+}
 
 
 @dataclass(frozen=True)
@@ -92,6 +102,8 @@ class AdsbPositionMessage:
     ladd: bool | None = None
     military: bool | None = None
     interesting: bool | None = None
+    callsign: str | None = None
+    registration: str | None = None
     aircraft_type: str | None = None
     owner: str | None = None
     aircraft_description: str | None = None
@@ -107,6 +119,10 @@ class FlightSegment:
     landing_message: AdsbMessageRow | AdsbPositionMessage
     distance_travelled_km: float = 0.0
     db_flags_counts: tuple[tuple[int, int], ...] = ()
+    flight_identity_counts: tuple[
+        tuple[str, tuple[tuple[str, int], ...]],
+        ...,
+    ] = ()
     aircraft_metadata_counts: tuple[
         tuple[str, tuple[tuple[str, int], ...]],
         ...,
@@ -225,6 +241,45 @@ def _message_aircraft_metadata(
         if value is not None:
             return value
     return None
+
+
+def _message_flight_identity(
+    message: AdsbMessageRow | AdsbPositionMessage,
+    column: str,
+) -> str | None:
+    for attr in FLIGHT_IDENTITY_ALIASES[column]:
+        value = _non_empty_string(getattr(message, attr, None))
+        if value is not None:
+            return value
+    return None
+
+
+def _flight_identity_counts_for_messages(
+    messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
+) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
+    return tuple(
+        (
+            column,
+            tuple(
+                Counter(
+                    value
+                    for message in messages
+                    if (value := _message_flight_identity(message, column)) is not None
+                ).items()
+            ),
+        )
+        for column in FLIGHT_IDENTITY_COLUMNS
+    )
+
+
+def _flight_identity_mode_from_counts(
+    flight_identity_counts: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+) -> dict[str, str]:
+    modes = {column: "" for column in FLIGHT_IDENTITY_COLUMNS}
+    for column, value_counts in flight_identity_counts:
+        if value_counts:
+            modes[column] = max(value_counts, key=lambda item: item[1])[0]
+    return modes
 
 
 def _aircraft_metadata_counts_for_messages(
@@ -408,6 +463,9 @@ def identify_flight_segments(
                 landing_message=landing_message,
                 distance_travelled_km=distance_travelled_km,
                 db_flags_counts=_db_flags_counts_for_messages(leg_messages),
+                flight_identity_counts=_flight_identity_counts_for_messages(
+                    leg_messages
+                ),
                 aircraft_metadata_counts=_aircraft_metadata_counts_for_messages(
                     leg_messages
                 ),
@@ -433,6 +491,8 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
             ladd=row.get("ladd"),
             military=row.get("military"),
             interesting=row.get("interesting"),
+            callsign=row.get("callsign"),
+            registration=row.get("registration"),
             aircraft_type=row.get("aircraft_type"),
             owner=row.get("owner"),
             aircraft_description=row.get("aircraft_description"),
@@ -591,11 +651,13 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
         aircraft_metadata = _aircraft_metadata_mode_from_counts(
             segment.aircraft_metadata_counts
         )
+        flight_identity = _flight_identity_mode_from_counts(
+            segment.flight_identity_counts
+        )
         rows.append(
             {
                 "icao": segment.icao,
-                "callsign": "",
-                "registration": "",
+                **flight_identity,
                 "takeoff_time": segment.takeoff_time,
                 "takeoff_airport_ident": takeoff_guess.ident,
                 "landing_time": segment.landing_time,
