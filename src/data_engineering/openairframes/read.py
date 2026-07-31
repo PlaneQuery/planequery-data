@@ -1,7 +1,9 @@
 # functions to read csv and convert columns and types to mine
 
 # funciton to get all icao information up to certain date.
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import urllib.request
 
 import polars as pl
@@ -9,16 +11,26 @@ import polars as pl
 from data_engineering.utils import OUTPUT_DIR
 
 OPENAIRFRAMES_DIR = OUTPUT_DIR / "data" / "raw" / "openairframes"
-DEFAULT_OPENAIRFRAMES_ADSB_PATH = OPENAIRFRAMES_DIR / "openairframes_adsb_2024-01-01_2026-07-05.csv.gz"
+OPENAIRFRAMES_SNAPSHOT_END_DATE = (
+    datetime.now(timezone.utc).date() - timedelta(days=2)
+).isoformat()
+DEFAULT_OPENAIRFRAMES_ADSB_PATH = (
+    OPENAIRFRAMES_DIR
+    / f"openairframes_adsb_2024-01-01_{OPENAIRFRAMES_SNAPSHOT_END_DATE}.csv.gz"
+)
 DEFAULT_OPENAIRFRAMES_ADSB_URL = (
     "https://github.com/PlaneQuery/OpenAirframes/releases/download/"
     "openairframes-2026-07-10-main/"
-    "openairframes_adsb_2024-01-01_2026-07-05.csv.gz"
+    f"openairframes_adsb_2024-01-01_{OPENAIRFRAMES_SNAPSHOT_END_DATE}.csv.gz"
 )
-DEFAULT_OPENAIRFRAMES_FAA_PATH = OPENAIRFRAMES_DIR / "openairframes_faa_2023-08-16_2026-07-10.csv"
+DEFAULT_OPENAIRFRAMES_FAA_PATH = (
+    OPENAIRFRAMES_DIR
+    / f"openairframes_faa_2023-08-16_{OPENAIRFRAMES_SNAPSHOT_END_DATE}.csv"
+)
 DEFAULT_OPENAIRFRAMES_FAA_URL = (
     "https://github.com/PlaneQuery/OpenAirframes/releases/download/"
-    "openairframes-2026-07-10-main/openairframes_faa_2023-08-16_2026-07-10.csv"
+    "openairframes-2026-07-10-main/"
+    f"openairframes_faa_2023-08-16_{OPENAIRFRAMES_SNAPSHOT_END_DATE}.csv"
 )
 
 COLUMN_MAP = {
@@ -43,10 +55,27 @@ ICAO_INFO_COLUMNS = [
 ]
 
 
+def _latest_snapshot_path(dataset: str) -> Path | None:
+    """Return the locally available snapshot with the newest trailing date."""
+    filename_pattern = re.compile(
+        rf"^openairframes_{re.escape(dataset)}_.+_(\d{{4}}-\d{{2}}-\d{{2}})\.csv(?:\.gz)?$"
+    )
+    snapshots = []
+    for candidate in OPENAIRFRAMES_DIR.glob(f"openairframes_{dataset}_*.csv*"):
+        match = filename_pattern.match(candidate.name)
+        if match:
+            snapshots.append((match.group(1), candidate))
+
+    return max(snapshots, key=lambda snapshot: snapshot[0], default=(None, None))[1]
+
+
 def _ensure_default_openairframes_adsb_path(path: str | Path) -> Path:
     resolved_path = Path(path)
-    if resolved_path != DEFAULT_OPENAIRFRAMES_ADSB_PATH or resolved_path.exists():
+    if resolved_path != DEFAULT_OPENAIRFRAMES_ADSB_PATH:
         return resolved_path
+
+    if latest_path := _latest_snapshot_path("adsb"):
+        return latest_path
 
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading OpenAirframes ADS-B snapshot to {resolved_path}")
@@ -56,8 +85,11 @@ def _ensure_default_openairframes_adsb_path(path: str | Path) -> Path:
 
 def _ensure_default_openairframes_faa_path(path: str | Path) -> Path:
     resolved_path = Path(path)
-    if resolved_path != DEFAULT_OPENAIRFRAMES_FAA_PATH or resolved_path.exists():
+    if resolved_path != DEFAULT_OPENAIRFRAMES_FAA_PATH:
         return resolved_path
+
+    if latest_path := _latest_snapshot_path("faa"):
+        return latest_path
 
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading OpenAirframes FAA snapshot to {resolved_path}")
@@ -203,6 +235,21 @@ def scan_latest_faa_registration_icao_for_join(
         .unique(subset=["registration"], keep="last", maintain_order=False)
     )
     return df
+
+
+def get_faa_info(
+    path: str | Path = DEFAULT_OPENAIRFRAMES_FAA_PATH,
+) -> pl.DataFrame:
+    """Return the full FAA OpenAirframes snapshot as a Polars DataFrame."""
+    path = _ensure_default_openairframes_faa_path(path)
+    return pl.read_csv(
+        path,
+        schema_overrides={
+            "transponder_code_hex": pl.Utf8,
+            "registration_number": pl.Utf8,
+        },
+        ignore_errors=True
+    )
 
 
 def get_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.DataFrame:
