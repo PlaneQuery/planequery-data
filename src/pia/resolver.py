@@ -47,8 +47,41 @@ def build_candidates(flights: list[Flight]) -> list[FlightLinkCandidate]:
                 candidates.append(candidate)
 
     return candidates
+def solve_links(flights: list[Flight], candidates: list[FlightLinkCandidate]):
+    model = cp_model.CpModel()
+    flight_ids = [flight.flight_id for flight in flights]
+    candidate_ids = [candidate.id for candidate in candidates]
+    # create a variable for each candidate
+    candidate_vars = {}
+    for candidate in candidates:
+        candidate_vars[candidate.id] = model.new_bool_var(f'candidate_{candidate.id}')
+    
+    # add constraints to ensure that each flight is linked to at most one next flight
+    for flight_id in flight_ids:
+        next_candidates = [candidate_vars[candidate.id] for candidate in candidates if candidate.previous_flight_id == flight_id]
+        model.add(sum(next_candidates) <= 1)
+    
+    # add constraints to ensure that each flight is linked to at most one previous flight
+    for flight_id in flight_ids:
+        prev_candidates = [candidate_vars[candidate.id] for candidate in candidates if candidate.next_flight_id == flight_id]
+        model.add(sum(prev_candidates) <= 1)
+    
+    # objective: maximize the total score of the selected candidates
+    model.maximize(sum(candidate.score * candidate_vars[candidate.id] for candidate in candidates))
+    
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+    
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        selected_candidates = [candidate for candidate in candidates if solver.Value(candidate_vars[candidate.id]) == 1]
+        return selected_candidates
+    else:
+        print('No solution found.')
+        return []
+
 def solve_flights():
     pass
+
 
 if __name__ == "__main__":
     start_date = date(2026,5,20)
@@ -56,5 +89,8 @@ if __name__ == "__main__":
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     flights = flights_df_to_flights(df_flights)
+    print(f"Number of flights: {len(flights)}")
     candidates = build_candidates(flights)
-    print(len(candidates))
+    print(f"Number of candidates: {len(candidates)}")
+    selected_candidates = solve_links(flights, candidates)
+    print(f"Number of selected candidates: {len(selected_candidates)}")
