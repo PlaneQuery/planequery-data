@@ -127,6 +127,14 @@ def test_flight_index_filters_pia_flights_by_time_and_location():
     index = FlightIndex(flights)
 
     assert list(index.ladd_flights_by_icao) == ["ladd"]
+    assert index.get_flight_by_id("matching-airport_2026-01-01_12-00") is flights[1]
+    assert index.get_flight_by_id("missing_2026-01-01_12-00") is None
+    assert [flight.icao for flight in index.get_pia_flights()] == [
+        "too-early",
+        "matching-airport",
+        "nearby-position",
+        "too-far",
+    ]
     result = index.pia_flights_after(start, 40.7, -74.0, "KJFK")
 
     assert [flight.icao for flight in result] == [
