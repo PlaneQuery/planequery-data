@@ -11,7 +11,7 @@ from data_engineering.utils import OUTPUT_DIR
 
 MAPPINGS_PATH = OUTPUT_DIR / "data/raw/groundcontrol/r-piaicao jacksweeney mappings.csv"
 MAPPINGS_CACHE_PATH = OUTPUT_DIR / "data/intermediate/groundcontrol" / "r-piaicao jacksweeney mappings.parquet"
-def get_ground_control_mappings():
+def load_ground_control_mappings():
     if MAPPINGS_CACHE_PATH.exists():
         df_mappings = pl.read_parquet(MAPPINGS_CACHE_PATH)
         return df_mappings
@@ -42,5 +42,5 @@ def get_ground_control_mappings():
     return df_mappings
 
 if __name__ == "__main__":
-    df_mappings = get_ground_control_mappings()
+    df_mappings = load_ground_control_mappings()
     print(df_mappings)
