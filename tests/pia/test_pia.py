@@ -1,8 +1,10 @@
 from datetime import date
 import os
 from pathlib import Path
-
+import polars as pl
 import pytest
+
+from data_engineering.ground_control import load_ground_control_mappings
 
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
@@ -45,17 +47,14 @@ def test_simulator_flights_0():
     print(mapping_dict)
     print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
-@pytest.mark.skip(reason="skipping real-data PIA tests for now")
 def test_real_flights_0():
-    from pia.evaluation.real_flights_0 import flights_0, mapping_dict_0
-    print(len(flights_0))
-    mapping_dict, g = main(date(2026,5,14), date(2026,6,1))
+    df_groundcontrol = load_ground_control_mappings()
+    start_date = date(2026,5,20)
+    end_date = date(2026,5,22)
+    df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
+    print(len(df_groundcontrol))
+    mapping_dict, g = main(start_date, end_date)
     correct = 0
     total = 0
-    for flight, real_icao in mapping_dict_0.items():
-        if flight in mapping_dict:
-            total += 1
-            if mapping_dict[flight] == real_icao:
-                correct += 1
     print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
