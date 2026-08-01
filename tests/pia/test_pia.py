@@ -9,7 +9,7 @@ from data_engineering.ground_control import load_ground_control_mappings
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
-from data_engineering.flights.flight_type import flights_df_to_flights
+from data_engineering.flights.flight_type import flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
 from pia.resolver import resolve_pia_mappings
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
 from pia.main import main
@@ -54,7 +54,11 @@ def test_real_flights_0():
     df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
     pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
-    mappings = main(start_date, end_date)
+    df_flights = get_flights(start_date, end_date)
+    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
+    df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
+    mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
     correct = 0
     total = 0
     for flight, real_icao in mappings.items():
