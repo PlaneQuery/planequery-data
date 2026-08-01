@@ -112,22 +112,26 @@ class FlightIndex:
     PIA_LOCATION_RADIUS_KM = 50
 
     def __init__(self, flights: list[Flight]) -> None:
-        """Index LADD flights by ICAO and PIA flights by takeoff time."""
+        """Index flights by ICAO, with PIA and LADD time indexes."""
         self._flights_by_id = {flight.flight_id: flight for flight in flights}
-        self.ladd_flights_by_icao: dict[str, list[Flight]] = {}
+        self.flights_by_icao: dict[str, list[Flight]] = {}
 
         pia_flights = []
+        ladd_flights = []
         for flight in flights:
+            self.flights_by_icao.setdefault(flight.icao, []).append(flight)
             if flight.ladd:
-                self.ladd_flights_by_icao.setdefault(flight.icao, []).append(flight)
+                ladd_flights.append(flight)
             if flight.pia:
                 pia_flights.append(flight)
 
-        for icao_flights in self.ladd_flights_by_icao.values():
+        for icao_flights in self.flights_by_icao.values():
             icao_flights.sort(key=lambda flight: flight.takeoff_time)
 
         self._pia_flights = sorted(pia_flights, key=lambda flight: flight.takeoff_time)
         self._pia_takeoff_times = [flight.takeoff_time for flight in self._pia_flights]
+        self._ladd_flights = sorted(ladd_flights, key=lambda flight: flight.takeoff_time)
+        self._ladd_takeoff_times = [flight.takeoff_time for flight in self._ladd_flights]
 
     def get_flight_by_id(self, flight_id: str) -> Flight | None:
         """Return the flight for ``flight_id``, or ``None`` when it is absent."""
@@ -154,10 +158,53 @@ class FlightIndex:
         reported position is within :attr:`PIA_LOCATION_RADIUS_KM` of ``lat``,
         ``lon``.
         """
-        index = bisect_left(self._pia_takeoff_times, time)
+        return self._nearby_flights_after(
+            self._pia_flights,
+            self._pia_takeoff_times,
+            time,
+            lat,
+            lon,
+            airport_ident,
+            before_time,
+        )
+
+    def ladd_flights_after(
+        self,
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+        before_time: datetime | None = None,
+    ) -> list[Flight]:
+        """Return nearby LADD flights taking off at or after ``time``.
+
+        When ``before_time`` is provided, only flights that land strictly
+        before it are returned.
+        """
+        return self._nearby_flights_after(
+            self._ladd_flights,
+            self._ladd_takeoff_times,
+            time,
+            lat,
+            lon,
+            airport_ident,
+            before_time,
+        )
+
+    def _nearby_flights_after(
+        self,
+        flights: list[Flight],
+        takeoff_times: list[datetime],
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+        before_time: datetime | None,
+    ) -> list[Flight]:
+        index = bisect_left(takeoff_times, time)
         return [
             flight
-            for flight in self._pia_flights[index:]
+            for flight in flights[index:]
             if (before_time is None or flight.landing_time < before_time)
             and (
                 flight.takeoff_airport_ident == airport_ident

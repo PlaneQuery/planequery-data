@@ -36,7 +36,7 @@ def test_simulator_flights_0():
 
     df_flights_sim, gold_mapping = get_simulated_flights_0()
     print(len(df_flights_sim))
-    mapping_dict, _graph = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
+    mapping_dict = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
     correct = 0
     total = 0
     for flight, real_icao in gold_mapping.items():
@@ -50,11 +50,17 @@ def test_simulator_flights_0():
 def test_real_flights_0():
     df_groundcontrol = load_ground_control_mappings()
     start_date = date(2026,5,20)
-    end_date = date(2026,5,22)
+    end_date = date(2026,6,1)
     df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
-    print(len(df_groundcontrol))
-    mapping_dict, g = main(start_date, end_date)
+    pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
+    mappings = main(start_date, end_date)
     correct = 0
     total = 0
-    print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
+    for flight, real_icao in mappings.items():
+        if flight.icao in pia_to_real_icao.keys():
+            correct_real_icao = pia_to_real_icao[flight.icao]
+            if real_icao == correct_real_icao:
+                correct += 1
+            total += 1
 
+    print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
