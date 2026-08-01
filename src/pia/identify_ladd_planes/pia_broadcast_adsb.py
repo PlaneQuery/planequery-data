@@ -2,7 +2,7 @@ from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
 import polars as pl
 
-from pia.evaluation.ground_control import load_ground_control_mappings
+from data_engineering.ground_control import load_ground_control_mappings
 
 '''
 Get percentage of pia icaos seen that broadcast an N-number 
