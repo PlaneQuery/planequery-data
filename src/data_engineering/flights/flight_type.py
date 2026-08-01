@@ -143,8 +143,12 @@ class FlightIndex:
         lat: float,
         lon: float,
         airport_ident: str,
+        before_time: datetime | None = None,
     ) -> list[Flight]:
         """Return nearby PIA flights taking off at or after ``time``.
+
+        When ``before_time`` is provided, only flights that land strictly
+        before it are returned.
 
         A flight is nearby when it takes off from ``airport_ident`` or its first
         reported position is within :attr:`PIA_LOCATION_RADIUS_KM` of ``lat``,
@@ -154,12 +158,15 @@ class FlightIndex:
         return [
             flight
             for flight in self._pia_flights[index:]
-            if flight.takeoff_airport_ident == airport_ident
-            or (
-                flight.first_lat is not None
-                and flight.first_lon is not None
-                and haversine(lat, lon, flight.first_lat, flight.first_lon)
-                <= self.PIA_LOCATION_RADIUS_KM
+            if (before_time is None or flight.landing_time < before_time)
+            and (
+                flight.takeoff_airport_ident == airport_ident
+                or (
+                    flight.first_lat is not None
+                    and flight.first_lon is not None
+                    and haversine(lat, lon, flight.first_lat, flight.first_lon)
+                    <= self.PIA_LOCATION_RADIUS_KM
+                )
             )
         ]
 
