@@ -7,7 +7,7 @@ from data_engineering.flights.flight_type import get_flights
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.flights.flight_type import flights_df_to_flights
 from data_engineering.utils import OUTPUT_DIR
-from pia.evaluation.ground_control import load_ground_control_mappings
+from data_engineering.ground_control import load_ground_control_mappings
 from pia.main import run_pia_algorithm
 from pia.evaluation.main import evaluation, visualize_graph
 
