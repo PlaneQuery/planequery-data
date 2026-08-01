@@ -35,7 +35,11 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 candidates.append(candidate)
             assert flight.last_lon is not None # TODO: Fix this in type
             assert flight.last_lat is not None
-            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lon, flight.last_lat, flight.landing_airport_ident)
+            if next_flight is not None:
+                before_time = flight.takeoff_time
+            else:
+                before_time = None
+            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lon, flight.last_lat, flight.landing_airport_ident, before_time = before_time)
             for pia_flight in pia_flights:
                 candidate = FlightLinkCandidate(
                     len(candidates),
