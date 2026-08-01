@@ -45,25 +45,63 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 before_time = None
             pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
             for pia_flight in pia_flights:
+                score = edge_score(flight, pia_flight)
                 candidate = FlightLinkCandidate(
                     len(candidates),
                     flight.flight_id,
                     pia_flight.flight_id,
-                    score = 1
+                    score = score
                 )
                 candidates.append(candidate)
             if flight.pia:
                 ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
                 for ladd_flight in ladd_flights:
+                    score = edge_score(flight, ladd_flight)
                     candidate = FlightLinkCandidate(
                         len(candidates),
                         flight.flight_id,
                         ladd_flight.flight_id,
-                        score = 1
+                        score = score
                     )
                     candidates.append(candidate)
 
     return candidates
+
+def edge_score(a: Flight, b: Flight) -> int:
+    score = 0
+    gap = b.takeoff_time - a.landing_time
+    gap_minutes = gap.total_seconds() / 60
+
+    if gap_minutes < 15:
+        score -= 300
+    elif gap_minutes < 6 * 60:
+        score += 1000
+    elif gap_minutes < 24 * 60:
+        score += 700
+    elif gap_minutes < 3 * 24 * 60:
+        score += 250
+    elif gap_minutes < 7 * 24 * 60:
+        score -= 100
+    else:
+        score -= 500
+
+    if a.icao == b.icao:
+        score += 2000
+
+    if a.landing_airport_ident == b.takeoff_airport_ident:
+        score += 1500
+    if a.category and b.category:
+        if a.category == b.category:
+            score += 300
+        else:
+            score -= 300
+
+    if a.callsign and b.callsign and a.callsign == b.callsign:
+        score += 250
+
+    score = max(-2000, min(score, 1000))
+    return score
+
 def solve_links(
     flight_index: FlightIndex,
     candidates: list[FlightLinkCandidate],
@@ -79,6 +117,59 @@ def solve_links(
         candidate_vars[candidate.id] = candidate_var
         outgoing_vars[candidate.previous_flight_id].append(candidate_var)
         incoming_vars[candidate.next_flight_id].append(candidate_var)
+
+    # A selected path may include a LADD ICAO more than once, but it may not
+    # connect flights from two distinct LADD ICAOs. A PIA ICAO also has one
+    # shared label across all of its flights, so it cannot join multiple LADD
+    # paths. Selecting an edge requires equal labels at both endpoints.
+    candidate_flight_ids = set(outgoing_vars) | set(incoming_vars)
+    ladd_icaos = set()
+    for flight_id in flight_index.get_flights_ids():
+        flight = flight_index.get_flight_by_id(flight_id)
+        if flight is not None and flight.ladd:
+            ladd_icaos.add(flight.icao)
+    ladd_icao_labels = {
+        icao: index
+        for index, icao in enumerate(sorted(ladd_icaos), start=1)
+    }
+    pia_icao_labels: dict[str, cp_model.IntVar] = {}
+    flight_labels: dict[str, int | cp_model.IntVar] = {}
+    for flight_id in candidate_flight_ids:
+        flight = flight_index.get_flight_by_id(flight_id)
+        assert flight is not None
+
+        # An ICAO is known to be LADD when at least one of its flights is
+        # marked LADD.  Keep all non-PIA flights for that ICAO fixed to the
+        # same label, even if an individual flight's LADD flag is missing.
+        if flight.pia:
+            pia_icao_label = pia_icao_labels.get(flight.icao)
+            if pia_icao_label is None:
+                pia_icao_label = model.new_int_var(
+                    0,
+                    len(ladd_icao_labels),
+                    f"ladd_icao_label_{flight.icao}",
+                )
+                pia_icao_labels[flight.icao] = pia_icao_label
+            flight_labels[flight_id] = pia_icao_label
+        elif flight.icao in ladd_icao_labels:
+            flight_labels[flight_id] = ladd_icao_labels[flight.icao]
+        else:
+            flight_labels[flight_id] = model.new_int_var(
+                0,
+                len(ladd_icao_labels),
+                f"ladd_icao_label_{flight_id}",
+            )
+
+    for candidate in candidates:
+        previous_label = flight_labels[candidate.previous_flight_id]
+        next_label = flight_labels[candidate.next_flight_id]
+        if isinstance(previous_label, int) and isinstance(next_label, int):
+            if previous_label != next_label:
+                model.add(candidate_vars[candidate.id] == 0)
+        else:
+            model.add(previous_label == next_label).only_enforce_if(
+                candidate_vars[candidate.id]
+            )
     
     # add constraints to ensure that each flight is linked to at most one next flight
     for next_candidates in outgoing_vars.values():
