@@ -8,7 +8,7 @@ import polars as pl
 from data_engineering.flights.flight_type import flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
 from pia.flight_continuity import make_flights_continuous
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
-from pia.resolver import get_canidate_icaos, resolve_pia_mappings
+from pia.resolver import resolve_pia_mappings
 
 def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: date) -> pl.DataFrame:
     start_datetime = datetime.combine(start_date, time.min)
@@ -69,7 +69,7 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
 def main(start_date, end_date):
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
-    mappings, g = run_pia_algorithm(df_flights)
-    return mappings,g
+    mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
+    return mappings
 if __name__ == "__main__":
     main(date(2025,5,15), date(2025,5,21))
