@@ -2,7 +2,13 @@ from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
 import polars as pl
 
-from tests.pia.ground_control import load_ground_control_mappings
+from pia.evaluation.ground_control import load_ground_control_mappings
+
+'''
+Get percentage of pia icaos seen that broadcast an N-number 
+Compare to Jack Sweeney PIA matchs. 
+Checks that a pia icao isen't assigned to multiple N-numbers
+'''
 
 ACCIDENTAL_CALLSIGNS = ["N12345", "N123AB"]
 
@@ -28,6 +34,7 @@ df_pia_n_number_df = df_pia_n_number_df.unique(["icao", "callsign"])
 faa_n_numbers = df_faa.get_column("registration").unique().to_list()
 df_pia_n_number_df = df_pia_n_number_df.filter(pl.col("callsign").is_in(faa_n_numbers))
 df_pia_n_number_df = df_pia_n_number_df.filter(~pl.col("callsign").is_in(ACCIDENTAL_CALLSIGNS))
+
 icao_occurrences = (
     df_pia_n_number_df
     .group_by("icao")
@@ -36,12 +43,11 @@ icao_occurrences = (
     .sort("occurrences", descending=True)
 )
 assert icao_occurrences.get_column("occurrences").max() == 1, "Some pia icaos are assigned to multiple N-numbers"
-
+print(f"Total pia icaos that broadcast an N-number: {len(df_pia_n_number_df)}")
+      
 # check
 df_groundcontrol = load_ground_control_mappings()
+df = df_pia_n_number_df.select(["time", "icao", "callsign"])
+df = df.join(df_groundcontrol, left_on="icao", right_on="pia_icao").with_columns((pl.col("callsign") == pl.col("registration")).alias("reg_match"))
+assert df.get_column("reg_match").sum() == len(df)
 
-'''
-Get percentage of pia icaos seen that broadcast an N-number 
-Compare to Jack Sweeney PIA matchs. 
-Checks that a pia icao isen't assigned to multiple N-numbers
-'''
