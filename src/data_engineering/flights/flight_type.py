@@ -1,9 +1,11 @@
+from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
 import polars as pl
 
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
+from utils import haversine
 
 
 FLIGHT_POLARS_SCHEMA = {
@@ -104,6 +106,54 @@ class Flight:
         if not isinstance(other, Flight):
             return NotImplemented
         return self.flight_id == other.flight_id
+
+
+class FlightIndex:
+    PIA_LOCATION_RADIUS_KM = 50
+
+    def __init__(self, flights: list[Flight]) -> None:
+        """Index LADD flights by ICAO and PIA flights by takeoff time."""
+        self.ladd_flights_by_icao: dict[str, list[Flight]] = {}
+
+        pia_flights = []
+        for flight in flights:
+            if flight.ladd:
+                self.ladd_flights_by_icao.setdefault(flight.icao, []).append(flight)
+            if flight.pia:
+                pia_flights.append(flight)
+
+        for icao_flights in self.ladd_flights_by_icao.values():
+            icao_flights.sort(key=lambda flight: flight.takeoff_time)
+
+        self._pia_flights = sorted(pia_flights, key=lambda flight: flight.takeoff_time)
+        self._pia_takeoff_times = [flight.takeoff_time for flight in self._pia_flights]
+
+    def pia_flights_after(
+        self,
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+    ) -> list[Flight]:
+        """Return nearby PIA flights taking off at or after ``time``.
+
+        A flight is nearby when it takes off from ``airport_ident`` or its first
+        reported position is within :attr:`PIA_LOCATION_RADIUS_KM` of ``lat``,
+        ``lon``.
+        """
+        index = bisect_left(self._pia_takeoff_times, time)
+        return [
+            flight
+            for flight in self._pia_flights[index:]
+            if flight.takeoff_airport_ident == airport_ident
+            or (
+                flight.first_lat is not None
+                and flight.first_lon is not None
+                and haversine(lat, lon, flight.first_lat, flight.first_lon)
+                <= self.PIA_LOCATION_RADIUS_KM
+            )
+        ]
+
 
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])
