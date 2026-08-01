@@ -16,10 +16,9 @@ class FlightLinkCandidate:
     next_flight_id: str
     score: int
 
-def build_candidates(flights: list[Flight]) -> list[FlightLinkCandidate]:
+def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
     # add scores to each edge. 
-    flight_index = FlightIndex(flights)
     candidates = []
     for icao, flights in flight_index.ladd_flights_by_icao.items():
         for i in range(len(flights)):
@@ -79,6 +78,18 @@ def solve_links(flights: list[Flight], candidates: list[FlightLinkCandidate]):
         print('No solution found.')
         return []
 
+def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[str, str]:
+    mapping = {}
+    for candidate in selected_candidates:
+        previous_flight = flight_index.get_flight_by_id(candidate.previous_flight_id)
+        next_flight = flight_index.get_flight_by_id(candidate.next_flight_id)
+        assert previous_flight is not None
+        assert next_flight is not None
+        if previous_flight.pia:
+            mapping[previous_flight.flight_id] = next_flight.icao
+        if next_flight.pia:
+            mapping[next_flight.flight_id] = previous_flight.icao
+    return mapping
 def solve_flights():
     pass
 
@@ -90,7 +101,12 @@ if __name__ == "__main__":
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     flights = flights_df_to_flights(df_flights)
     print(f"Number of flights: {len(flights)}")
-    candidates = build_candidates(flights)
+    flight_index = FlightIndex(flights)
+    pia_flights = flight_index.get_pia_flights()
+    print(f"Number of PIA flights: {len(pia_flights)}")
+    candidates = build_candidates(flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates = solve_links(flights, candidates)
     print(f"Number of selected candidates: {len(selected_candidates)}")
+    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+    print(f"Number of mappings: {len(mapping.keys())}")
