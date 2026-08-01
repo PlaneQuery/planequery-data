@@ -145,6 +145,7 @@ def test_flight_index_filters_pia_flights_by_time_and_location():
         "lands-too-late",
         "too-far",
     ]
+    assert [flight.icao for flight in index.get_ladd_flights()] == ["ladd"]
     result = index.pia_flights_after(
         start,
         40.7,

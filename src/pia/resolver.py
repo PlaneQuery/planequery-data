@@ -21,7 +21,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # add scores to each edge. 
     candidates = []
     for icao, flights in flight_index.flights_by_icao.items():
-        next_flight = None
         for i in range(len(flights)):
             flight = flights[i]
             if i < len(flights) - 1:
@@ -34,6 +33,8 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 )
                 # add edge from flight to next_flight
                 candidates.append(candidate)
+            else:
+                next_flight = None
             assert flight.last_lon is not None # TODO: Fix this in type
             assert flight.last_lat is not None
             if next_flight is not None and flight.landing_airport_ident == next_flight.takeoff_airport_ident:
@@ -136,7 +137,6 @@ def solve_links(
     flight_labels: dict[str, int | cp_model.IntVar] = {}
     for flight_id in candidate_flight_ids:
         flight = flight_index.get_flight_by_id(flight_id)
-        assert flight is not None
 
         # An ICAO is known to be LADD when at least one of its flights is
         # marked LADD.  Keep all non-PIA flights for that ICAO fixed to the
@@ -194,18 +194,45 @@ def solve_links(
         print('No solution found.')
         return []
 
-def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
-    mapping = {}
+def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> nx.Graph:
+    graph = nx.Graph()
     for candidate in selected_candidates:
-        previous_flight = flight_index.get_flight_by_id(candidate.previous_flight_id)
-        next_flight = flight_index.get_flight_by_id(candidate.next_flight_id)
-        assert previous_flight is not None
-        assert next_flight is not None
-        if previous_flight.pia:
-            mapping[previous_flight] = next_flight.icao
-        if next_flight.pia:
-            mapping[next_flight] = previous_flight.icao
-    return mapping
+        graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id)
+    print (f"Number of connected components: {nx.number_connected_components(graph)}")
+    return graph
+
+def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
+    graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
+    pia_to_real_icaos: dict[str, str] = dict()
+    for component in nx.connected_components(graph):
+        component_flights = []
+        for flight_id in component:
+            flight = flight_index.get_flight_by_id(flight_id)
+            component_flights.append(flight)
+
+        real_icaos = {
+            flight.icao
+            for flight in component_flights
+            if flight.ladd
+        }
+        assert len(real_icaos) <= 1, f"Component has multiple real ICAOs: {real_icaos}"
+        if len(real_icaos) < 1:
+            continue
+
+        real_icao = next(iter(real_icaos))
+        for flight in component_flights:
+            if flight.pia:
+                pia_to_real_icaos[flight.icao] = real_icao
+
+    resolved_pia_icaos = {}
+    for pia_icao, real_icao in pia_to_real_icaos.items():
+        resolved_pia_icaos[pia_icao] = real_icao
+
+    return {
+        flight: resolved_pia_icaos[flight.icao]
+        for flight in flight_index.get_pia_flights()
+        if flight.icao in resolved_pia_icaos
+    }
 def resolve_pia_mappings(flights: list[Flight]) -> dict[Flight, str]:
     print(f"Number of flights: {len(flights)}")
     flight_index = FlightIndex(flights)
@@ -214,6 +241,7 @@ def resolve_pia_mappings(flights: list[Flight]) -> dict[Flight, str]:
     candidates = build_candidates(flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates = solve_links(flight_index, candidates)
+    create_graph_from_selected_candidates(selected_candidates, flight_index)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     print(f"Number of mappings: {len(mapping.keys())}")
