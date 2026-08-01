@@ -49,10 +49,11 @@ def test_simulator_flights_0():
 
 def test_real_flights_0():
     df_groundcontrol = load_ground_control_mappings()
-    start_date = date(2026,5,20)
-    end_date = date(2026,6,1)
+    start_date = date(2026,5,14)
+    end_date = date(2026,6,10)
     df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
     pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
+    print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
     mappings = main(start_date, end_date)
     correct = 0
     total = 0
