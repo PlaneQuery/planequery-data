@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta
 
-from flights_algorithm.main import AdsbPositionMessage, identify_flight_segments
+from flights_algorithm.main import (
+    AdsbPositionMessage,
+    _segments_to_flights_df,
+    identify_flight_segments,
+)
 from flights_algorithm.readsb_legs import mark_leg_indexes
 
 
@@ -16,6 +20,8 @@ def message(
     geom_altitude: int | None = None,
     lon: float | None = None,
     speed: float | None = None,
+    callsign: str | None = None,
+    registration: str | None = None,
 ) -> AdsbPositionMessage:
     return AdsbPositionMessage(
         time=START + timedelta(minutes=minutes),
@@ -26,6 +32,8 @@ def message(
         on_ground=on_ground,
         baro_altitude_ft=altitude,
         geom_altitude_ft=geom_altitude,
+        callsign=callsign,
+        registration=registration,
     )
 
 
@@ -160,3 +168,26 @@ def test_uses_geometric_altitude_when_baro_altitude_is_missing():
     ]
 
     assert mark_leg_indexes(messages) == [16]
+
+
+def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
+    messages = [
+        message(
+            index,
+            altitude,
+            on_ground=altitude == 0,
+            callsign="TEST123" if index != 4 else "OTHER456",
+            registration="N123AB" if index != 5 else "N999ZZ",
+        )
+        for index, altitude in enumerate(
+            [0, 0, 1_000, 5_000, 10_000, 10_000, 5_000, 0, 0]
+        )
+    ]
+
+    segments = identify_flight_segments(messages)
+    monkeypatch.setattr("flights_algorithm.main._get_airport_lookup", lambda: None)
+
+    flights = _segments_to_flights_df(segments)
+
+    assert flights.select("callsign").item() == "TEST123"
+    assert flights.select("registration").item() == "N123AB"
