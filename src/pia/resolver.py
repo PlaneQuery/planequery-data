@@ -20,7 +20,8 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
     # add scores to each edge. 
     candidates = []
-    for icao, flights in flight_index.ladd_flights_by_icao.items():
+    for icao, flights in flight_index.flights_by_icao.items():
+        next_flight = None
         for i in range(len(flights)):
             flight = flights[i]
             if i < len(flights) - 1:
@@ -35,11 +36,11 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 candidates.append(candidate)
             assert flight.last_lon is not None # TODO: Fix this in type
             assert flight.last_lat is not None
-            if next_flight is not None:
-                before_time = flight.takeoff_time
+            if i != len(flights) - 1 and next_flight is not None:
+                before_time = next_flight.takeoff_time
             else:
                 before_time = None
-            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lon, flight.last_lat, flight.landing_airport_ident, before_time = before_time)
+            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
             for pia_flight in pia_flights:
                 candidate = FlightLinkCandidate(
                     len(candidates),
@@ -48,9 +49,23 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     score = 1
                 )
                 candidates.append(candidate)
+            if flight.pia:
+                ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
+                for ladd_flight in ladd_flights:
+                    candidate = FlightLinkCandidate(
+                        len(candidates),
+                        flight.flight_id,
+                        ladd_flight.flight_id,
+                        score = 1
+                    )
+                    candidates.append(candidate)
 
     return candidates
-def solve_links(flights: list[Flight], candidates: list[FlightLinkCandidate]):
+def solve_links(
+    flights: list[Flight],
+    candidates: list[FlightLinkCandidate],
+    max_time_seconds: float = 60.0,
+):
     model = cp_model.CpModel()
     flight_ids = [flight.flight_id for flight in flights]
     candidate_ids = [candidate.id for candidate in candidates]
@@ -73,6 +88,8 @@ def solve_links(flights: list[Flight], candidates: list[FlightLinkCandidate]):
     model.maximize(sum(candidate.score * candidate_vars[candidate.id] for candidate in candidates))
     
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = max_time_seconds
+    print("Start Solver")
     status = solver.Solve(model)
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -82,7 +99,7 @@ def solve_links(flights: list[Flight], candidates: list[FlightLinkCandidate]):
         print('No solution found.')
         return []
 
-def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[str, str]:
+def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
     mapping = {}
     for candidate in selected_candidates:
         previous_flight = flight_index.get_flight_by_id(candidate.previous_flight_id)
@@ -90,12 +107,22 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
         assert previous_flight is not None
         assert next_flight is not None
         if previous_flight.pia:
-            mapping[previous_flight.flight_id] = next_flight.icao
+            mapping[previous_flight] = next_flight.icao
         if next_flight.pia:
-            mapping[next_flight.flight_id] = previous_flight.icao
+            mapping[next_flight] = previous_flight.icao
     return mapping
-def solve_flights():
-    pass
+def resolve_pia_mappings(flights: list[Flight]) -> dict[Flight, str]:
+    print(f"Number of flights: {len(flights)}")
+    flight_index = FlightIndex(flights)
+    pia_flights = flight_index.get_pia_flights()
+    print(f"Number of PIA flights: {len(pia_flights)}")
+    candidates = build_candidates(flight_index)
+    print(f"Number of candidates: {len(candidates)}")
+    selected_candidates = solve_links(flights, candidates)
+    print(f"Number of selected candidates: {len(selected_candidates)}")
+    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+    print(f"Number of mappings: {len(mapping.keys())}")
+    return mapping
 
 
 if __name__ == "__main__":
@@ -104,7 +131,6 @@ if __name__ == "__main__":
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     flights = flights_df_to_flights(df_flights)
-    print(f"Number of flights: {len(flights)}")
     flight_index = FlightIndex(flights)
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
