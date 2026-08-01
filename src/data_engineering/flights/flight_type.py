@@ -137,6 +137,10 @@ class FlightIndex:
         """Return the flight for ``flight_id``, or ``None`` when it is absent."""
         return self._flights_by_id.get(flight_id)
 
+    def get_flights_ids(self) -> list[str]:
+        """Return the IDs of all indexed flights."""
+        return list(self._flights_by_id)
+
     def get_pia_flights(self) -> list[Flight]:
         """Return all PIA flights in takeoff-time order."""
         return self._pia_flights.copy()

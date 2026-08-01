@@ -1,5 +1,5 @@
 
-from collections import deque
+from collections import defaultdict, deque
 from datetime import timedelta
 from itertools import combinations
 from dataclasses import dataclass
@@ -36,6 +36,9 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 candidates.append(candidate)
             assert flight.last_lon is not None # TODO: Fix this in type
             assert flight.last_lat is not None
+            if next_flight is not None and flight.landing_airport_ident == next_flight.takeoff_airport_ident:
+                continue
+
             if i != len(flights) - 1 and next_flight is not None:
                 before_time = next_flight.takeoff_time
             else:
@@ -62,27 +65,28 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
 
     return candidates
 def solve_links(
-    flights: list[Flight],
+    flight_index: FlightIndex,
     candidates: list[FlightLinkCandidate],
     max_time_seconds: float = 60.0,
 ):
     model = cp_model.CpModel()
-    flight_ids = [flight.flight_id for flight in flights]
-    candidate_ids = [candidate.id for candidate in candidates]
-    # create a variable for each candidate
-    candidate_vars = {}
+    candidate_vars: dict[int, cp_model.IntVar] = {}
+    outgoing_vars: defaultdict[str, list[cp_model.IntVar]] = defaultdict(list)
+    incoming_vars: defaultdict[str, list[cp_model.IntVar]] = defaultdict(list)
+
     for candidate in candidates:
-        candidate_vars[candidate.id] = model.new_bool_var(f'candidate_{candidate.id}')
+        candidate_var = model.new_bool_var(f'candidate_{candidate.id}')
+        candidate_vars[candidate.id] = candidate_var
+        outgoing_vars[candidate.previous_flight_id].append(candidate_var)
+        incoming_vars[candidate.next_flight_id].append(candidate_var)
     
     # add constraints to ensure that each flight is linked to at most one next flight
-    for flight_id in flight_ids:
-        next_candidates = [candidate_vars[candidate.id] for candidate in candidates if candidate.previous_flight_id == flight_id]
-        model.add(sum(next_candidates) <= 1)
+    for next_candidates in outgoing_vars.values():
+        model.add_at_most_one(next_candidates)
     
     # add constraints to ensure that each flight is linked to at most one previous flight
-    for flight_id in flight_ids:
-        prev_candidates = [candidate_vars[candidate.id] for candidate in candidates if candidate.next_flight_id == flight_id]
-        model.add(sum(prev_candidates) <= 1)
+    for prev_candidates in incoming_vars.values():
+        model.add_at_most_one(prev_candidates)
     
     # objective: maximize the total score of the selected candidates
     model.maximize(sum(candidate.score * candidate_vars[candidate.id] for candidate in candidates))
@@ -118,7 +122,7 @@ def resolve_pia_mappings(flights: list[Flight]) -> dict[Flight, str]:
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    selected_candidates = solve_links(flights, candidates)
+    selected_candidates = solve_links(flight_index, candidates)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     print(f"Number of mappings: {len(mapping.keys())}")
@@ -136,7 +140,7 @@ if __name__ == "__main__":
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    selected_candidates = solve_links(flights, candidates)
+    selected_candidates = solve_links(flight_index, candidates)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     print(f"Number of mappings: {len(mapping.keys())}")

@@ -69,6 +69,7 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
 def main(start_date, end_date):
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
     return mappings
 if __name__ == "__main__":

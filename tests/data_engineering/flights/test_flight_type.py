@@ -137,6 +137,7 @@ def test_flight_index_filters_pia_flights_by_time_and_location():
     ]
     assert index.get_flight_by_id("matching-airport_2026-01-01_12-00") is flights[1]
     assert index.get_flight_by_id("missing_2026-01-01_12-00") is None
+    assert index.get_flights_ids() == [flight.flight_id for flight in flights]
     assert [flight.icao for flight in index.get_pia_flights()] == [
         "too-early",
         "matching-airport",
