@@ -113,6 +113,7 @@ class FlightIndex:
 
     def __init__(self, flights: list[Flight]) -> None:
         """Index LADD flights by ICAO and PIA flights by takeoff time."""
+        self._flights_by_id = {flight.flight_id: flight for flight in flights}
         self.ladd_flights_by_icao: dict[str, list[Flight]] = {}
 
         pia_flights = []
@@ -127,6 +128,14 @@ class FlightIndex:
 
         self._pia_flights = sorted(pia_flights, key=lambda flight: flight.takeoff_time)
         self._pia_takeoff_times = [flight.takeoff_time for flight in self._pia_flights]
+
+    def get_flight_by_id(self, flight_id: str) -> Flight | None:
+        """Return the flight for ``flight_id``, or ``None`` when it is absent."""
+        return self._flights_by_id.get(flight_id)
+
+    def get_pia_flights(self) -> list[Flight]:
+        """Return all PIA flights in takeoff-time order."""
+        return self._pia_flights.copy()
 
     def pia_flights_after(
         self,
