@@ -7,7 +7,7 @@ from data_engineering.flights.flight_type import get_flights
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.flights.flight_type import flights_df_to_flights
 from data_engineering.utils import OUTPUT_DIR
-from pia.evaluation.ground_control import get_ground_control_mappings
+from pia.evaluation.ground_control import load_ground_control_mappings
 from pia.main import run_pia_algorithm
 from pia.evaluation.main import evaluation, visualize_graph
 
@@ -21,7 +21,7 @@ else:
     df_flights.write_parquet(DF_FLIGHTS_PATH)
 
 
-df_mappings = get_ground_control_mappings()
+df_mappings = load_ground_control_mappings()
 df_mappings = df_mappings.filter(pl.col("date") > start_date)
 real_icaos = df_mappings.get_column("icao").unique().to_list()
 pia_icaos = df_mappings.get_column("pia_icao").unique().to_list()
