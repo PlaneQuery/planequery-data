@@ -210,16 +210,14 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
             flight = flight_index.get_flight_by_id(flight_id)
             component_flights.append(flight)
 
-        real_icaos = {
-            flight.icao
-            for flight in component_flights
-            if flight.ladd
-        }
-        assert len(real_icaos) <= 1, f"Component has multiple real ICAOs: {real_icaos}"
-        if len(real_icaos) < 1:
+        real_icao = None
+        for f in component_flights:
+            if f.ladd:
+                real_icao = f.icao
+                break
+        if real_icao is None:
             continue
 
-        real_icao = next(iter(real_icaos))
         for flight in component_flights:
             if flight.pia:
                 pia_to_real_icaos[flight.icao] = real_icao
