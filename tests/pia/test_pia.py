@@ -59,13 +59,12 @@ def test_real_flights_0():
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
     mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
+    total_pia_known_flights = len(df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys())))
     correct = 0
-    total = 0
     for flight, real_icao in mappings.items():
         if flight.icao in pia_to_real_icao.keys():
             correct_real_icao = pia_to_real_icao[flight.icao]
             if real_icao == correct_real_icao:
                 correct += 1
-            total += 1
 
-    print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
+    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
