@@ -48,9 +48,14 @@ def test_simulator_flights_0():
     print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
 def test_real_flights_0():
-    df_groundcontrol = load_ground_control_mappings()
     start_date = date(2025,4,1)
     end_date = date(2025,7,16)
+    correct_number = 35
+    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number)
+    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+
+def pia_tester(start_date: date, end_date: date, correct_number: int):
+    df_groundcontrol = load_ground_control_mappings()
     df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
     pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
@@ -67,5 +72,5 @@ def test_real_flights_0():
             if real_icao == correct_real_icao:
                 correct += 1
 
-    assert correct == total_pia_known_flights == 35
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    assert correct == total_pia_known_flights == correct_number
+    return total_pia_known_flights,correct
