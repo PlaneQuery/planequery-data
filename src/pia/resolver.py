@@ -86,7 +86,7 @@ def edge_score(a: Flight, b: Flight) -> int:
     elif gap_minutes < 7 * 24 * 60:
         score -= 100
     else:
-        score -= 500
+        score -= 2000
 
     if a.icao == b.icao:
         score += 2000
