@@ -23,6 +23,7 @@ def test_flight(
     flight_id = icao + "_" + takeoff_time.strftime("%Y-%m-%d_%H-%M")
     defaults = {
         "pia": icao.startswith("pia"),
+        "ladd": not icao.startswith("pia"),
         "callsign": hashlib.sha1(flight_id.encode()).hexdigest()[:8].upper(),
     }
     defaults.update(kwargs)

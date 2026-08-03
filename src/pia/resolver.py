@@ -207,6 +207,69 @@ def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCa
     print (f"Number of connected components: {nx.number_connected_components(graph)}")
     return graph
 
+def create_graph_from_candidates(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+) -> nx.Graph:
+    """Build the complete, undirected flight-continuity candidate graph.
+
+    All indexed flights are included, even when they have no candidate edges.
+    That makes an isolated flight distinguishable from a flight missing from the
+    input when the graph is used to evaluate known PIA mappings.
+    """
+    graph = nx.Graph()
+    graph.add_nodes_from(flight_index.get_flights_ids())
+    graph.add_edges_from(
+        (candidate.previous_flight_id, candidate.next_flight_id)
+        for candidate in candidates
+    )
+    return graph
+
+
+def candidate_mapping_path_exists(
+    graph: nx.Graph,
+    flight_index: FlightIndex,
+    pia_icao: str,
+    real_icao: str,
+) -> bool:
+    """Return whether any candidate path supports a PIA-to-real ICAO mapping."""
+    pia_flight_ids = (
+        flight.flight_id
+        for flight in flight_index.flights_by_icao.get(pia_icao, ())
+    )
+    real_flight_ids = {
+        flight.flight_id
+        for flight in flight_index.flights_by_icao.get(real_icao, ())
+    }
+    if not real_flight_ids:
+        return False
+
+    for pia_flight_id in pia_flight_ids:
+        if pia_flight_id not in graph:
+            continue
+        component = nx.node_connected_component(graph, pia_flight_id)
+        if not component.isdisjoint(real_flight_ids):
+            return True
+    return False
+
+
+def check_candidate_mapping_paths(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+    pia_to_real_icao: dict[str, str],
+) -> dict[str, bool]:
+    """Check each known PIA mapping against the complete candidate graph."""
+    graph = create_graph_from_candidates(candidates, flight_index)
+    return {
+        pia_icao: candidate_mapping_path_exists(
+            graph,
+            flight_index,
+            pia_icao,
+            real_icao,
+        )
+        for pia_icao, real_icao in pia_to_real_icao.items()
+    }
+
 def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
     graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
     pia_to_real_icaos: dict[str, str] = dict()
