@@ -2,34 +2,29 @@ from datetime import date
 import os
 from pathlib import Path
 import polars as pl
-import pytest
 
-from data_engineering.ground_control import load_ground_control_mappings
-
-os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
+os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
-from data_engineering.flights.flight_type import flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
-from pia.resolver import resolve_pia_mappings
+from data_engineering.ground_control import load_ground_control_mappings
+from data_engineering.flights.flight_type import FlightIndex, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
+from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
 from pia.main import main
 from pia.evaluation.real_flights_0 import a039a2_flights
 
-@pytest.mark.skip(reason="Temporarily skipped")
 def test_flights_0_mapping():
-    mapping_dict, _graph = resolve_pia_mappings(flights_0)
+    mapping_dict = resolve_pia_mappings(flights_0)
     assert mapping_dict == test_mapping_dict_0
     
 
-@pytest.mark.skip(reason="Temporarily skipped")
 def test_flights_2_mapping():
-    mapping_dict, _graph = resolve_pia_mappings(flights_2)
+    mapping_dict = resolve_pia_mappings(flights_2)
     assert mapping_dict == test_mapping_dict_0
 
 
-@pytest.mark.skip(reason="Temporarily skipped")
 def test_flights_3_mapping():
-    mapping_dict, _graph = resolve_pia_mappings(flights_3)
+    mapping_dict = resolve_pia_mappings(flights_3)
     assert mapping_dict == test_mapping_dict_3
 
 
@@ -78,7 +73,27 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     if filter:
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
-    mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
+    flights = flights_df_to_flights(df_flights)
+    flight_index = FlightIndex(flights)
+    candidates = build_candidates(flight_index)
+    candidate_path_results = check_candidate_mapping_paths(
+        candidates,
+        flight_index,
+        pia_to_real_icao,
+    )
+    possible_mappings = sum(candidate_path_results.values())
+    print(
+        "Ground-control mappings with a path in the candidate graph: "
+        f"{possible_mappings}/{len(candidate_path_results)}"
+    )
+    for pia_icao, path_exists in candidate_path_results.items():
+        if not path_exists:
+            print(
+                "No candidate path for ground-control mapping: "
+                f"{pia_icao} -> {pia_to_real_icao[pia_icao]}"
+            )
+
+    mappings = resolve_pia_mappings(flights)
     total_pia_known_flights = len(df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys())))
     correct = 0
     for flight, real_icao in mappings.items():
