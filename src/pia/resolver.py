@@ -27,11 +27,12 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
             flight = flights[i]
             if i < len(flights) - 1:
                 next_flight = flights[i + 1]
+                score = edge_score(flight, next_flight)
                 candidate = FlightLinkCandidate(
                     len(candidates),
                     flight.flight_id,
                     next_flight.flight_id,
-                    score = 1
+                    score = score
                 )
                 # add edge from flight to next_flight
                 candidates.append(candidate)
@@ -105,7 +106,7 @@ def edge_score(a: Flight, b: Flight) -> int:
     if a.callsign and b.callsign and a.callsign == b.callsign:
         score += 250
 
-    score = max(-2000, min(score, 1000))
+    score = max(-2000, min(score, 6000))
     return score
 
 def solve_links(
