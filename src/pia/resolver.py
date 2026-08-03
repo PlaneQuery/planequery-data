@@ -7,8 +7,10 @@ import networkx as nx
 from ortools.sat.python import cp_model
 from itertools import groupby
 from datetime import date
+from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
 
+airport_lookup = AirportLookup()
 @dataclass(frozen=True, slots=True)
 class FlightLinkCandidate:
     id: int
@@ -91,6 +93,9 @@ def edge_score(a: Flight, b: Flight) -> int:
 
     if a.landing_airport_ident == b.takeoff_airport_ident:
         score += 1500
+    if airport_lookup.airport_ident_is_in_us_faa_airspace(a.takeoff_airport_ident) and not airport_lookup.airport_ident_is_in_us_faa_airspace(a.landing_airport_ident):
+        if a.icao == b.icao:
+            score += 2000
     if a.category and b.category:
         if a.category == b.category:
             score += 300
