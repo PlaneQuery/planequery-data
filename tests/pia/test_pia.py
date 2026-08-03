@@ -38,7 +38,6 @@ def test_simulator_flights_0():
     from pia.evaluation.simulator_flights import get_simulated_flights_0
 
     df_flights_sim, gold_mapping = get_simulated_flights_0()
-    print(len(df_flights_sim))
     mapping_dict = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
     correct = 0
     total = 0
@@ -47,7 +46,6 @@ def test_simulator_flights_0():
             total += 1
             if mapping_dict[flight] == real_icao:
                 correct += 1
-    print(mapping_dict)
     print(f"Accuracy: {correct}/{total} = {correct/total:.2%}")
 
 def test_real_flights_0():
