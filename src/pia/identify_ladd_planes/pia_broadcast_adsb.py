@@ -87,4 +87,5 @@ def get_pia_to_reg_broadcast_icaos(use_cache: bool = True):
     df.write_csv(output_path)
     return df
 
-print(pia_to_reg_broadcast_df())
+if __name__ == "__main__":
+    print(pia_to_reg_broadcast_df())
