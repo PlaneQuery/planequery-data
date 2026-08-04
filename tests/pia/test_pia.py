@@ -58,21 +58,33 @@ def test_real_flights_1():
     print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
 
 def test_real_flights_2():
-    start_date = date(2026,5,14)
-    end_date = date(2026,6,10)
+    start_date = date(2025,4,1)
+    end_date = date(2025,7,16)
     total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0)
+    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+def test_real_flights_3():
+    start_date = date(2025,4,1)
+    end_date = date(2025,7,16)
+    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
     
 def pia_tester(start_date: date, end_date: date, correct_number: int, filter=True):
     df_groundcontrol = load_ground_control_mappings()
     df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
     pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
-    print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
     df_flights = get_flights(start_date, end_date)
-    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
-    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
+    for pia_icao, real_icao in list(pia_to_real_icao.items()):
+        n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))
+        n_real_flights = len(df_flights.filter(pl.col("icao") == real_icao))
+        if n_pia_flights == 0 or n_real_flights == 0:
+            print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
+            pia_to_real_icao.pop(pia_icao) 
+    print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
     if filter:
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
+    else:
+        df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
+        df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     flights = flights_df_to_flights(df_flights)
     flight_index = FlightIndex(flights)
     candidates = build_candidates(flight_index)
