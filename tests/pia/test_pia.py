@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import polars as pl
 
+from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
+
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
@@ -68,10 +70,15 @@ def test_real_flights_3():
     total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
     
+def construct_ground_truth_mappings():
+    df_0 = load_ground_control_mappings().drop(["date"])
+    df_1 = get_pia_to_reg_broadcast_icaos()
+    df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
+    return df
+
 def pia_tester(start_date: date, end_date: date, correct_number: int, filter=True):
-    df_groundcontrol = load_ground_control_mappings()
-    df_groundcontrol = df_groundcontrol.filter((pl.col("date") > start_date) & (pl.col("date") < end_date)).sort("date")
-    pia_to_real_icao = dict(zip(df_groundcontrol["pia_icao"], df_groundcontrol["real_icao"]))
+    df_mappings = construct_ground_truth_mappings()
+    pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
         n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))
