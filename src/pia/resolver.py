@@ -270,6 +270,36 @@ def check_candidate_mapping_paths(
         for pia_icao, real_icao in pia_to_real_icao.items()
     }
 
+
+def get_flights_connected_to_icao(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+    icao: str,
+) -> list[Flight]:
+    """Return all flights in candidate components containing ``icao``."""
+    normalized_icao = icao.casefold()
+    target_flight_ids = {
+        flight.flight_id
+        for indexed_icao, flights in flight_index.flights_by_icao.items()
+        if indexed_icao.casefold() == normalized_icao
+        for flight in flights
+    }
+    if not target_flight_ids:
+        return []
+
+    graph = create_graph_from_candidates(candidates, flight_index)
+    connected_flight_ids: set[str] = set()
+    for flight_id in target_flight_ids:
+        connected_flight_ids.update(nx.node_connected_component(graph, flight_id))
+
+    return sorted(
+        (
+            flight_index.get_flight_by_id(flight_id)
+            for flight_id in connected_flight_ids
+        ),
+        key=lambda flight: flight.takeoff_time,
+    )
+
 def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
     graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
     pia_to_real_icaos: dict[str, str] = dict()

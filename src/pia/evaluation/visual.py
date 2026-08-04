@@ -37,6 +37,7 @@ from data_engineering.utils import OUTPUT_DIR
 from pia.resolver import (
     FlightLinkCandidate,
     build_candidates,
+    get_flights_connected_to_icao,
     mapping_from_selected_candidates,
     solve_links,
 )
@@ -479,12 +480,36 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_OUTPUT_PATH,
         help=f"Output HTML path (default: {DEFAULT_OUTPUT_PATH})",
     )
+    parser.add_argument(
+        "--icao",
+        help=(
+            "Render only flights in candidate-graph components connected to "
+            "this ICAO (for example: aa699e)"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> Path:
     args = _parse_args()
     flights = load_real_flight_case(args.start_date, args.end_date)
+    if args.icao is not None:
+        flight_index = FlightIndex(flights)
+        candidates = build_candidates(flight_index)
+        connected_flights = get_flights_connected_to_icao(
+            candidates,
+            flight_index,
+            args.icao,
+        )
+        if not connected_flights:
+            raise ValueError(
+                f"ICAO {args.icao!r} has no flights in the selected date range"
+            )
+        flights = connected_flights
+        print(
+            f"Rendering {len(flights)} flights connected to ICAO "
+            f"{args.icao.casefold()} in the candidate graph"
+        )
     _, output_path = visualize_resolve_pia_mappings(flights, args.output)
     print(f"Interactive graph written to {output_path.resolve()}")
     return output_path
