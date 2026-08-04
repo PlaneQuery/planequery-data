@@ -80,6 +80,7 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
             print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
             pia_to_real_icao.pop(pia_icao) 
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
+    print(pia_to_real_icao)
     if filter:
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
     else:
