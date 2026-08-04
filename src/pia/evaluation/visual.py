@@ -494,6 +494,9 @@ def main() -> Path:
     args = _parse_args()
     flights = load_real_flight_case(args.start_date, args.end_date)
     if args.icao is not None:
+        df_flights = get_flights(args.start_date, args.end_date)
+        df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+        flights = flights_df_to_flights(df_flights)
         flight_index = FlightIndex(flights)
         candidates = build_candidates(flight_index)
         connected_flights = get_flights_connected_to_icao(
