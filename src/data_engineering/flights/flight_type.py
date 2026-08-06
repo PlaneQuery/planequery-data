@@ -109,7 +109,7 @@ class Flight:
 
 
 class FlightIndex:
-    PIA_LOCATION_RADIUS_KM = 10
+    PIA_LOCATION_RADIUS_KM = 25
 
     def __init__(self, flights: list[Flight]) -> None:
         """Index flights by ICAO, with PIA and LADD time indexes."""
