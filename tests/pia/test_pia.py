@@ -69,7 +69,12 @@ def test_real_flights_3():
     end_date = date(2025,7,16)
     total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
-    
+def test_real_flights_4():
+    start_date = date(2026,1,1)
+    end_date = date(2026,7,1)
+    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+
 def construct_ground_truth_mappings():
     df_0 = load_ground_control_mappings().drop(["date"])
     df_1 = get_pia_to_reg_broadcast_icaos()
