@@ -104,10 +104,10 @@ def construct_ground_truth_mappings():
     print(f"Only in broadcast mappings: {len(only_broadcast)}")
     print(f"In both: {len(both)}")
     df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
-    return df
+    return df, icaos_0, icaos_1, both
 
 def pia_tester(start_date: date, end_date: date, correct_number: int, filter=True):
-    df_mappings = construct_ground_truth_mappings()
+    df_mappings, icaos_0, icaos_1, both = construct_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
@@ -117,12 +117,22 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
             # print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
             pia_to_real_icao.pop(pia_icao) 
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
+    surviving_icaos = set(pia_to_real_icao)
+    only_ground_control = surviving_icaos & (icaos_0 - icaos_1)
+    only_broadcast = surviving_icaos & (icaos_1 - icaos_0)
+    in_both = surviving_icaos & both
+    assert only_ground_control | only_broadcast | in_both == surviving_icaos
+    print(f"len(only_ground_control after filter): {len(only_ground_control)}")
+    print(f"len(only_broadcast after filter): {len(only_broadcast)}")
+    print(f"len(in both after filter): {len(in_both)}")
+
     print(pia_to_real_icao)
     if filter:
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
     else:
         df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    print(f"Number of unique pia icaos in flights: {df_flights.filter(pl.col('pia')).select('icao').n_unique()}")
     flights = flights_df_to_flights(df_flights)
     flight_index = FlightIndex(flights)
     candidates = build_candidates(flight_index)
