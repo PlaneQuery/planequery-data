@@ -2,7 +2,6 @@ from datetime import timedelta
 import os
 from pathlib import Path
 from data_engineering.flights.flight_type import Flight
-from pia.resolver import build_graph
 from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
 from data_engineering.utils import OUTPUT_DIR
@@ -366,6 +365,11 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
 
 from pia.evaluation.pia_graph_0 import flights_2, flights_3
 def main(flights = flights_3):
+    # This legacy graph visualizer depends on the graph-building API, while the
+    # evaluation metrics below do not. Keep the dependency local so metrics can
+    # be imported and tested independently.
+    from pia.resolver import build_graph
+
     print(f"{len(flights)} nodes")
     pia_flights = [flight for flight in flights if flight.pia]
     G = build_graph(flights)
@@ -378,6 +382,37 @@ def _mapping_key_flight_id(key) -> str:
     if isinstance(key, Flight):
         return key.flight_id
     return key
+
+
+def traceability_stats(mapping_dict, gold_dict):
+    """Measure whether each aircraft was followed through the full test window.
+
+    The aircraft cohort is the set of real ICAOs in ``gold_dict``. An aircraft
+    is traceable only when every expected PIA-flight mapping for that ICAO is
+    present and correct. Consequently, one broken mapping loses that aircraft
+    for the remainder of the evaluated history.
+
+    The returned index is the ratio of traceable aircraft to cohort aircraft.
+    A larger value therefore means greater traceability and less privacy.
+    """
+    expected_aircraft = set(gold_dict.values())
+    lost_aircraft = {
+        expected_icao
+        for flight, expected_icao in gold_dict.items()
+        if mapping_dict.get(flight) != expected_icao
+    }
+    traceable_aircraft = expected_aircraft - lost_aircraft
+    expected_count = len(expected_aircraft)
+
+    return {
+        "expected_aircraft": expected_count,
+        "traceable_aircraft": len(traceable_aircraft),
+        "lost_aircraft": len(lost_aircraft),
+        "traceability_index": (
+            len(traceable_aircraft) / expected_count if expected_count else 0
+        ),
+    }
+
 
 def evaluation(mapping_dict, gold_dict):
     comparison_schema = {
@@ -419,6 +454,7 @@ def evaluation(mapping_dict, gold_dict):
         "extra_predictions": df_mapping_comparison.filter(pl.col("extra_prediction")).height,
         "accuracy": correct_count / expected_count if expected_count else 0,
     }
+    stats.update(traceability_stats(mapping_dict, gold_dict))
     return stats
 
 if __name__ == "__main__":

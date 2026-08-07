@@ -3,14 +3,14 @@ import os
 from pathlib import Path
 import polars as pl
 
-from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
-
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
 from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.flights.flight_type import FlightIndex, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
+from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
+from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
 from pia.main import main
 from pia.evaluation.real_flights_0 import a039a2_flights
@@ -49,35 +49,60 @@ def test_real_flights_0():
     start_date = date(2025,4,1)
     end_date = date(2025,7,16)
     correct_number = 35
-    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number)
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    stats = pia_tester(start_date, end_date, correct_number)
+    print_real_flight_stats(stats)
 
 def test_real_flights_1():
     start_date = date(2025,4,1)
     end_date = date(2025,7,16)
     correct_number = 35
-    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number, filter=False)
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    stats = pia_tester(start_date, end_date, correct_number, filter=False)
+    print_real_flight_stats(stats)
 
 def test_real_flights_2():
     start_date = date(2025,4,1)
     end_date = date(2025,7,16)
-    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0)
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    stats = pia_tester(start_date, end_date, correct_number=0)
+    print_real_flight_stats(stats)
+
+
 def test_real_flights_3():
     start_date = date(2025,4,1)
     end_date = date(2025,7,16)
-    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    print_real_flight_stats(stats)
+
+
 def test_real_flights_4():
     start_date = date(2026,1,1)
     end_date = date(2026,7,1)
-    total_pia_known_flights, correct = pia_tester(start_date, end_date, correct_number=0, filter=False)
-    print(f"Accuracy: {correct}/{total_pia_known_flights} = {correct/total_pia_known_flights:.2%}")
+    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    print_real_flight_stats(stats)
+
+
+def print_real_flight_stats(stats):
+    print(
+        "Accuracy: "
+        f"{stats['correct_mappings']}/{stats['expected_mappings']} "
+        f"= {stats['accuracy']:.2%}"
+    )
+    print(
+        "Traceability: "
+        f"{stats['traceable_aircraft']}/{stats['expected_aircraft']} aircraft "
+        f"= {stats['traceability_index']:.2%}"
+    )
 
 def construct_ground_truth_mappings():
     df_0 = load_ground_control_mappings().drop(["date"])
     df_1 = get_pia_to_reg_broadcast_icaos()
+    icaos_0 = set(df_0["pia_icao"])
+    icaos_1 = set(df_1["pia_icao"])
+    only_ground_control = icaos_0 - icaos_1
+    only_broadcast = icaos_1 - icaos_0
+    both = icaos_0 & icaos_1
+    print(f"Only in ground_control mappings: {len(only_ground_control)}")
+    print(f"Only in broadcast mappings: {len(only_broadcast)}")
+    print(f"In both: {len(both)}")
     df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
     return df
 
@@ -89,7 +114,7 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
         n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))
         n_real_flights = len(df_flights.filter(pl.col("icao") == real_icao))
         if n_pia_flights == 0 or n_real_flights == 0:
-            print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
+            # print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
             pia_to_real_icao.pop(pia_icao) 
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
     print(pia_to_real_icao)
@@ -119,13 +144,17 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
             )
 
     mappings = resolve_pia_mappings(flights)
-    total_pia_known_flights = len(df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys())))
-    correct = 0
-    for flight, real_icao in mappings.items():
-        if flight.icao in pia_to_real_icao.keys():
-            correct_real_icao = pia_to_real_icao[flight.icao]
-            if real_icao == correct_real_icao:
-                correct += 1
+    gold_mapping = {
+        flight: pia_to_real_icao[flight.icao]
+        for flight in flights
+        if flight.icao in pia_to_real_icao
+    }
+    known_mappings = {
+        flight: real_icao
+        for flight, real_icao in mappings.items()
+        if flight in gold_mapping
+    }
+    stats = evaluation(known_mappings, gold_mapping)
 
-    # assert correct == total_pia_known_flights == correct_number
-    return total_pia_known_flights,correct
+    # assert stats["correct_mappings"] == stats["expected_mappings"] == correct_number
+    return stats
