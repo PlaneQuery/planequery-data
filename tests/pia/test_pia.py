@@ -83,6 +83,8 @@ def test_real_flights_4(request):
         filter=False,
         test_name=request.node.name,
     )
+    assert stats['accuracy'] >= 0.3633
+    assert stats['traceability_index'] >= 0.243
     print_real_flight_stats(stats)
 
 
