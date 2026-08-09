@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import os
 from pathlib import Path
 import polars as pl
@@ -73,10 +73,16 @@ def test_real_flights_3():
     print_real_flight_stats(stats)
 
 
-def test_real_flights_4():
+def test_real_flights_4(request):
     start_date = date(2026,1,1)
     end_date = date(2026,7,1)
-    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    stats = pia_tester(
+        start_date,
+        end_date,
+        correct_number=0,
+        filter=False,
+        test_name=request.node.name,
+    )
     print_real_flight_stats(stats)
 
 
@@ -106,7 +112,73 @@ def construct_ground_truth_mappings():
     df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
     return df, icaos_0, icaos_1, both
 
-def pia_tester(start_date: date, end_date: date, correct_number: int, filter=True):
+def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, test_name):
+    """Write the chronological per-flight PIA mapping audit for one test run."""
+    real_icaos = set(pia_to_real_icao.values())
+    audit_rows = []
+    for flight in flights:
+        expected_icao = gold_mapping.get(flight)
+        predicted_icao = mappings.get(flight)
+        if expected_icao is None:
+            mapping_status = "not_evaluated"
+        elif predicted_icao is None:
+            mapping_status = "missing_prediction"
+        elif predicted_icao == expected_icao:
+            mapping_status = "correct"
+        else:
+            mapping_status = "incorrect"
+
+        audit_rows.append({
+            "flight_id": flight.flight_id,
+            "takeoff_time": flight.takeoff_time,
+            "landing_time": flight.landing_time,
+            "observed_icao": flight.icao,
+            "pia_icao": flight.icao if flight.pia else None,
+            # Visible real-ICAO flights are included as history anchors.
+            "real_icao": expected_icao or (
+                flight.icao if flight.icao in real_icaos else None
+            ),
+            "predicted_icao": predicted_icao,
+            "correct": (
+                predicted_icao == expected_icao
+                if expected_icao is not None
+                else None
+            ),
+            "mapping_status": mapping_status,
+            "pia": flight.pia,
+            "callsign": flight.callsign,
+            "takeoff_airport_ident": flight.takeoff_airport_ident,
+            "landing_airport_ident": flight.landing_airport_ident,
+        })
+
+    safe_test_name = test_name or "pia_tester"
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = (
+        Path(os.environ["OUTPUT_DIR"])
+        / "data"
+        / "tests"
+        / "test_pia"
+        / safe_test_name
+        / f"test_pia_{safe_test_name}_{current_time}.parquet"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(audit_rows).sort("takeoff_time").write_parquet(output_path)
+    print(f"Wrote PIA mapping audit: {output_path}")
+    return output_path
+
+
+def pia_tester(
+    start_date: date,
+    end_date: date,
+    correct_number: int,
+    filter=True,
+    test_name=None,
+):
+    """Run the PIA evaluation and save a per-flight mapping audit as Parquet.
+
+    ``test_name`` controls the audit directory; pytest callers can pass
+    ``request.node.name``.
+    """
     df_mappings, icaos_0, icaos_1, both = construct_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
@@ -166,5 +238,12 @@ def pia_tester(start_date: date, end_date: date, correct_number: int, filter=Tru
     }
     stats = evaluation(known_mappings, gold_mapping)
 
-    # assert stats["correct_mappings"] == stats["expected_mappings"] == correct_number
+    save_pia_mapping_audit(
+        flights,
+        gold_mapping,
+        mappings,
+        pia_to_real_icao,
+        test_name,
+    )
+
     return stats
