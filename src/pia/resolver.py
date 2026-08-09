@@ -10,6 +10,7 @@ from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
 
+AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
 @dataclass(frozen=True, slots=True)
 class FlightLinkCandidate:
@@ -332,10 +333,10 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
     }
 def resolve_pia_mappings(
     flights: list[Flight],
-    pia_location_radius_km: float = 10,
+    airport_continuity_tolerance: float = 10,
 ) -> dict[Flight, str]:
     print(f"Number of flights: {len(flights)}")
-    flight_index = FlightIndex(flights, pia_location_radius_km)
+    flight_index = FlightIndex(flights, None)
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
