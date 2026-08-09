@@ -109,10 +109,15 @@ class Flight:
 
 
 class FlightIndex:
-    PIA_LOCATION_RADIUS_KM = 25
+    PIA_LOCATION_RADIUS_KM = 10
 
-    def __init__(self, flights: list[Flight]) -> None:
+    def __init__(
+        self,
+        flights: list[Flight],
+        pia_location_radius_km: float = 10,
+    ) -> None:
         """Index flights by ICAO, with PIA and LADD time indexes."""
+        self.pia_location_radius_km = pia_location_radius_km
         self._flights_by_id = {flight.flight_id: flight for flight in flights}
         self.flights_by_icao: dict[str, list[Flight]] = {}
 
@@ -220,7 +225,7 @@ class FlightIndex:
                     flight.first_lat is not None
                     and flight.first_lon is not None
                     and haversine(lat, lon, flight.first_lat, flight.first_lon)
-                    <= self.PIA_LOCATION_RADIUS_KM
+                    <= self.pia_location_radius_km
                 )
             )
         ]

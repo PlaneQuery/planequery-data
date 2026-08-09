@@ -192,6 +192,7 @@ def pia_tester(
     correct_number: int,
     filter=True,
     test_name=None,
+    pia_location_radius_km: float = 10,
 ):
     """Run the PIA evaluation and save a per-flight mapping audit as Parquet.
 
@@ -225,7 +226,7 @@ def pia_tester(
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     print(f"Number of unique pia icaos in flights: {df_flights.filter(pl.col('pia')).select('icao').n_unique()}")
     flights = flights_df_to_flights(df_flights)
-    flight_index = FlightIndex(flights)
+    flight_index = FlightIndex(flights, pia_location_radius_km)
     candidates = build_candidates(flight_index)
     candidate_path_results = check_candidate_mapping_paths(
         candidates,
@@ -244,7 +245,7 @@ def pia_tester(
                 f"{pia_icao} -> {pia_to_real_icao[pia_icao]}"
             )
 
-    mappings = resolve_pia_mappings(flights)
+    mappings = resolve_pia_mappings(flights, pia_location_radius_km)
     gold_mapping = {
         flight: pia_to_real_icao[flight.icao]
         for flight in flights
