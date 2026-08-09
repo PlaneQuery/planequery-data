@@ -3,12 +3,12 @@ import os
 from pathlib import Path
 import polars as pl
 
+from pia.ground_truth import construct_ground_truth_mappings
+
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
 
-from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.flights.flight_type import FlightIndex, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
-from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
@@ -99,20 +99,6 @@ def print_real_flight_stats(stats):
         f"{stats['traceable_aircraft']}/{stats['expected_aircraft']} aircraft "
         f"= {stats['traceability_index']:.2%}"
     )
-
-def construct_ground_truth_mappings():
-    df_0 = load_ground_control_mappings().drop(["date"])
-    df_1 = get_pia_to_reg_broadcast_icaos()
-    icaos_0 = set(df_0["pia_icao"])
-    icaos_1 = set(df_1["pia_icao"])
-    only_ground_control = icaos_0 - icaos_1
-    only_broadcast = icaos_1 - icaos_0
-    both = icaos_0 & icaos_1
-    print(f"Only in ground_control mappings: {len(only_ground_control)}")
-    print(f"Only in broadcast mappings: {len(only_broadcast)}")
-    print(f"In both: {len(both)}")
-    df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
-    return df, icaos_0, icaos_1, both
 
 def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, test_name):
     """Write the chronological per-flight PIA mapping audit for one test run."""
