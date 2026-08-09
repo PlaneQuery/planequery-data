@@ -162,7 +162,26 @@ def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, te
         / f"test_pia_{safe_test_name}_{current_time}.parquet"
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame(audit_rows).sort("takeoff_time").write_parquet(output_path)
+    audit_schema = {
+        "flight_id": pl.String,
+        "takeoff_time": pl.Datetime,
+        "landing_time": pl.Datetime,
+        "observed_icao": pl.String,
+        "pia_icao": pl.String,
+        "real_icao": pl.String,
+        "predicted_icao": pl.String,
+        "correct": pl.Boolean,
+        "mapping_status": pl.String,
+        "pia": pl.Boolean,
+        "callsign": pl.String,
+        "takeoff_airport_ident": pl.String,
+        "landing_airport_ident": pl.String,
+    }
+    (
+        pl.DataFrame(audit_rows, schema=audit_schema)
+        .sort("takeoff_time")
+        .write_parquet(output_path)
+    )
     print(f"Wrote PIA mapping audit: {output_path}")
     return output_path
 
