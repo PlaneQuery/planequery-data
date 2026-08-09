@@ -330,9 +330,12 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
         for flight in flight_index.get_pia_flights()
         if flight.icao in resolved_pia_icaos
     }
-def resolve_pia_mappings(flights: list[Flight]) -> dict[Flight, str]:
+def resolve_pia_mappings(
+    flights: list[Flight],
+    pia_location_radius_km: float = 10,
+) -> dict[Flight, str]:
     print(f"Number of flights: {len(flights)}")
-    flight_index = FlightIndex(flights)
+    flight_index = FlightIndex(flights, pia_location_radius_km)
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
