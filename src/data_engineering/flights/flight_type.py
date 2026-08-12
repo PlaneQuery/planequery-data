@@ -454,4 +454,5 @@ def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str],
         pl.Series("predicted_icao", real_icaos),
         pl.Series("correct", labels, dtype=pl.Boolean),
     )
+    df = df.sort(["real_icao", "takeoff_time"])
     return df
