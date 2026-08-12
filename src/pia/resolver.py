@@ -14,7 +14,6 @@ AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
 @dataclass(frozen=True, slots=True)
 class FlightLinkCandidate:
-    id: int
     previous_flight_id: str
     next_flight_id: str
     score: int
@@ -30,7 +29,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 next_flight = flights[i + 1]
                 score = edge_score(flight, next_flight)
                 candidate = FlightLinkCandidate(
-                    len(candidates),
                     flight.flight_id,
                     next_flight.flight_id,
                     score = score
@@ -52,7 +50,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
             for pia_flight in pia_flights:
                 score = edge_score(flight, pia_flight)
                 candidate = FlightLinkCandidate(
-                    len(candidates),
                     flight.flight_id,
                     pia_flight.flight_id,
                     score = score
@@ -63,7 +60,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 for ladd_flight in ladd_flights:
                     score = edge_score(flight, ladd_flight)
                     candidate = FlightLinkCandidate(
-                        len(candidates),
                         flight.flight_id,
                         ladd_flight.flight_id,
                         score = score
@@ -116,14 +112,13 @@ def solve_links(
     max_time_seconds: float = 60.0,
 ):
     model = cp_model.CpModel()
-    edge_vars: dict[int, cp_model.IntVar] = {}
+    edge_vars: list[cp_model.IntVar] = []
 
     incoming = defaultdict(list)
     outgoing = defaultdict(list)
     nodes = set()
     # we could have a required node that all the real icao flights have to be used. 
-    for edge in edges: # TODO: Have this syntax work: for i, (u, v, score) in enumerate(edges):
-        i = edge.id
+    for i, edge in enumerate(edges):
         u = edge.previous_flight_id
         v = edge.next_flight_id
         nodes.add(u)
@@ -131,7 +126,7 @@ def solve_links(
         x = model.new_bool_var(f'edge_{i}')
         incoming[v].append(x)
         outgoing[u].append(x)
-        edge_vars[i] = x
+        edge_vars.append(x)
 
     real_icaos = sorted({
         flight.icao
@@ -155,13 +150,15 @@ def solve_links(
             icao = f.icao
             flight_labels[node] = real_icao_labels[icao]
 
-    for edge in edges:
+    for edge, edge_var in zip(edges, edge_vars):
         u = edge.previous_flight_id
         v = edge.next_flight_id
-        model.add(flight_labels[u] == flight_labels[v]).OnlyEnforceIf(edge_vars[edge.id])   
+        model.add(flight_labels[u] == flight_labels[v]).OnlyEnforceIf(edge_var)
  
     # objective: maximize the total score of the selected candidates
-    model.maximize(sum(edge.score * edge_vars[edge.id] for edge in edges))
+    model.maximize(
+        sum(edge.score * edge_var for edge, edge_var in zip(edges, edge_vars))
+    )
     
     solver = cp_model.CpSolver()
     # solver.parameters.max_time_in_seconds = max_time_seconds
@@ -169,7 +166,11 @@ def solve_links(
     status = solver.Solve(model)
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        selected_candidates = [candidate for candidate in edges if solver.Value(edge_vars[candidate.id]) == 1]
+        selected_candidates = [
+            candidate
+            for candidate, edge_var in zip(edges, edge_vars)
+            if solver.Value(edge_var) == 1
+        ]
         return selected_candidates
     else:
         print('No solution found.')
