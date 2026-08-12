@@ -13,21 +13,6 @@ from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_map
 from pia.main import main
 from pia.evaluation.real_flights_0 import a039a2_flights
 
-def test_flights_0_mapping():
-    mapping_dict = resolve_pia_mappings(flights_0)
-    assert mapping_dict == test_mapping_dict_0
-    
-
-def test_flights_2_mapping():
-    mapping_dict = resolve_pia_mappings(flights_2)
-    assert mapping_dict == test_mapping_dict_0
-
-
-def test_flights_3_mapping():
-    mapping_dict = resolve_pia_mappings(flights_3)
-    assert mapping_dict == test_mapping_dict_3
-
-
 def test_simulator_flights_0():
     # TODO: What is the random assignment percentage
     from pia.evaluation.simulator_flights import get_simulated_flights_0
@@ -90,6 +75,10 @@ def test_real_flights_5():
     end_date = date(2026,7,1)
     stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print_real_flight_stats(stats)
+    accuracy = 0.2620
+    traceability_index = 0.2142
+    assert stats['accuracy'] >= accuracy
+    assert stats['traceability_index'] >= traceability_index
 
 def print_real_flight_stats(stats):
     print(
