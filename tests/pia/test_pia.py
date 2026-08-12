@@ -67,8 +67,8 @@ def test_real_flights_2():
 
 
 def test_real_flights_3():
-    start_date = date(2025,4,1)
-    end_date = date(2025,7,16)
+    start_date = date(2025,1,1)
+    end_date = date(2026,7,5)
     stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print_real_flight_stats(stats)
 
