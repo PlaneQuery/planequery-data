@@ -221,13 +221,6 @@ class FlightIndex:
             if (before_time is None or flight.landing_time < before_time)
             and (
                 flight.takeoff_airport_ident == airport_ident
-                or (
-                    self.airport_continuity_tolerance_km is not None
-                    and flight.first_lat is not None
-                    and flight.first_lon is not None
-                    and haversine(lat, lon, flight.first_lat, flight.first_lon)
-                    <= self.airport_continuity_tolerance_km
-                )
             )
         ]
 
