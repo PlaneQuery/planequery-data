@@ -3,12 +3,10 @@ import os
 from pathlib import Path
 import polars as pl
 
+from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import construct_ground_truth_mappings
 
-os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
-os.environ.setdefault("MPLCONFIGDIR", str(Path("tmp/matplotlib").resolve()))
-
-from data_engineering.flights.flight_type import FlightIndex, flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
+from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights, pia_or_american_ladd_icao_filter, create_pia_evaluation_df
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
@@ -142,7 +140,7 @@ def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, te
     safe_test_name = test_name or "pia_tester"
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = (
-        Path(os.environ["OUTPUT_DIR"])
+        OUTPUT_DIR
         / "data"
         / "tests"
         / "test_pia"
@@ -253,5 +251,9 @@ def pia_tester(
         pia_to_real_icao,
         test_name,
     )
-
+    evaluation_df = create_pia_evaluation_df(flights, known_mappings, gold_mapping)
+    output_path = OUTPUT_DIR / "data" / "tmp" / "pia_tester_flights_df.parquet"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    evaluation_df.write_parquet(output_path)
+    print(f"Wrote flights DataFrame with real_icao column: {output_path}")
     return stats
