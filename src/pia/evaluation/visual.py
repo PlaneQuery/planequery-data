@@ -326,11 +326,11 @@ def build_resolution_figure(
 
     flights_by_id = {flight.flight_id: flight for flight in flights}
     flight_lanes = _continuity_lanes(flights, resolution)
-    selected_ids = {candidate.id for candidate in resolution.selected_candidates}
+    selected_candidate_set = set(resolution.selected_candidates)
     other_candidates = [
         candidate
         for candidate in resolution.candidates
-        if candidate.id not in selected_ids
+        if candidate not in selected_candidate_set
     ]
     lane_first_takeoff: dict[str, datetime] = {}
     lane_counts: dict[str, int] = {}
