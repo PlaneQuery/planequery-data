@@ -3,8 +3,6 @@ from pathlib import Path
 
 import polars as pl
 
-os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
-
 from pia.identify_ladd_planes.pia_broadcast_adsb import (
     map_pia_n_numbers_to_real_icaos,
 )
