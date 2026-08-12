@@ -150,28 +150,14 @@ def solve_links(
             icao = f.icao
             flight_labels[node] = real_icao_labels[icao]
 
-    pia_is_unknown: dict[str, cp_model.IntVar] = {}
-    for pia_icao, label in pia_icao_labels.items():
-        is_unknown = model.new_bool_var(f'pia_is_unknown_{pia_icao}')
-        model.add(label == UNKNOWN_LABEL).OnlyEnforceIf(is_unknown)
-        model.add(label != UNKNOWN_LABEL).OnlyEnforceIf(is_unknown.Not())
-        pia_is_unknown[pia_icao] = is_unknown
-
     for edge, edge_var in zip(edges, edge_vars):
         u = edge.previous_flight_id
         v = edge.next_flight_id
         model.add(flight_labels[u] == flight_labels[v]).OnlyEnforceIf(edge_var)
  
-    UNKNOWN_BONUS = 1000
-
-    edge_objective = sum(edge.score * edge_var for edge, edge_var in zip(edges, edge_vars))
-    unknown_objective = sum(
-        UNKNOWN_BONUS * is_unknown
-        for is_unknown in pia_is_unknown.values()
-    )
-
+    # objective: maximize the total score of the selected candidates
     model.maximize(
-        edge_objective + unknown_objective
+        sum(edge.score * edge_var for edge, edge_var in zip(edges, edge_vars))
     )
     
     solver = cp_model.CpSolver()
