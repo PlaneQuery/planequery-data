@@ -1,12 +1,7 @@
 from datetime import timedelta
 import os
 from pathlib import Path
-
-
-os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
-
 import pytest
-
 from pia.evaluation.main import evaluation, traceability_stats
 from pia.evaluation.pia_graph_0 import test_flight as make_test_flight
 
