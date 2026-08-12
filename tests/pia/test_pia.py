@@ -85,6 +85,11 @@ def test_real_flights_4(request):
     assert stats['accuracy'] >= 0.3633
     assert stats['traceability_index'] >= 0.243
 
+def test_real_flights_5():
+    start_date = date(2026,5,1)
+    end_date = date(2026,7,1)
+    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    print_real_flight_stats(stats)
 
 def print_real_flight_stats(stats):
     print(

@@ -112,90 +112,64 @@ def edge_score(a: Flight, b: Flight) -> int:
 
 def solve_links(
     flight_index: FlightIndex,
-    candidates: list[FlightLinkCandidate],
+    edges: list[FlightLinkCandidate],
     max_time_seconds: float = 60.0,
 ):
     model = cp_model.CpModel()
-    candidate_vars: dict[int, cp_model.IntVar] = {}
-    outgoing_vars: defaultdict[str, list[cp_model.IntVar]] = defaultdict(list)
-    incoming_vars: defaultdict[str, list[cp_model.IntVar]] = defaultdict(list)
+    edge_vars: dict[int, cp_model.IntVar] = {}
 
-    for candidate in candidates:
-        candidate_var = model.new_bool_var(f'candidate_{candidate.id}')
-        candidate_vars[candidate.id] = candidate_var
-        outgoing_vars[candidate.previous_flight_id].append(candidate_var)
-        incoming_vars[candidate.next_flight_id].append(candidate_var)
+    incoming = defaultdict(list)
+    outgoing = defaultdict(list)
+    nodes = set()
+    # we could have a required node that all the real icao flights have to be used. 
+    for edge in edges: # TODO: Have this syntax work: for i, (u, v, score) in enumerate(edges):
+        i = edge.id
+        u = edge.previous_flight_id
+        v = edge.next_flight_id
+        nodes.add(u)
+        nodes.add(v)
+        x = model.new_bool_var(f'edge_{i}')
+        incoming[v].append(x)
+        outgoing[u].append(x)
+        edge_vars[i] = x
 
-    # A selected path may include a LADD ICAO more than once, but it may not
-    # connect flights from two distinct LADD ICAOs. A PIA ICAO also has one
-    # shared label across all of its flights, so it cannot join multiple LADD
-    # paths. Selecting an edge requires equal labels at both endpoints.
-    candidate_flight_ids = set(outgoing_vars) | set(incoming_vars)
-    ladd_icaos = set()
-    for flight_id in flight_index.get_flights_ids():
-        flight = flight_index.get_flight_by_id(flight_id)
-        if flight is not None and flight.ladd:
-            ladd_icaos.add(flight.icao)
-    ladd_icao_labels = {
-        icao: index
-        for index, icao in enumerate(sorted(ladd_icaos), start=1)
-    }
+    real_icaos = sorted({
+        flight.icao
+        for flight in flight_index.get_ladd_flights()
+    })
+    real_icao_labels = {icao: i for i, icao in enumerate(real_icaos)}
     pia_icao_labels: dict[str, cp_model.IntVar] = {}
-    flight_labels: dict[str, int | cp_model.IntVar] = {}
-    for flight_id in candidate_flight_ids:
-        flight = flight_index.get_flight_by_id(flight_id)
+    flight_labels: dict[str, cp_model.IntVar | int] = {}
+    UNKNOWN_LABEL = len(real_icaos)
+    for node in nodes:
+        model.add(sum(incoming[node]) <= 1)
+        model.add(sum(outgoing[node]) <= 1)
 
-        # An ICAO is known to be LADD when at least one of its flights is
-        # marked LADD.  Keep all non-PIA flights for that ICAO fixed to the
-        # same label, even if an individual flight's LADD flag is missing.
-        if flight.pia:
-            pia_icao_label = pia_icao_labels.get(flight.icao)
-            if pia_icao_label is None:
-                pia_icao_label = model.new_int_var(
-                    0,
-                    len(ladd_icao_labels),
-                    f"ladd_icao_label_{flight.icao}",
-                )
-                pia_icao_labels[flight.icao] = pia_icao_label
-            flight_labels[flight_id] = pia_icao_label
-        elif flight.icao in ladd_icao_labels:
-            flight_labels[flight_id] = ladd_icao_labels[flight.icao]
+        f = flight_index.get_flight_by_id(node)
+        if f.pia:
+            icao = f.icao
+            if icao not in pia_icao_labels:
+                pia_icao_labels[icao] = model.new_int_var(0, UNKNOWN_LABEL, f'pia_to_real_{icao}')
+            flight_labels[node] = pia_icao_labels[icao]
         else:
-            flight_labels[flight_id] = model.new_int_var(
-                0,
-                len(ladd_icao_labels),
-                f"ladd_icao_label_{flight_id}",
-            )
+            icao = f.icao
+            flight_labels[node] = real_icao_labels[icao]
 
-    for candidate in candidates:
-        previous_label = flight_labels[candidate.previous_flight_id]
-        next_label = flight_labels[candidate.next_flight_id]
-        if isinstance(previous_label, int) and isinstance(next_label, int):
-            if previous_label != next_label:
-                model.add(candidate_vars[candidate.id] == 0)
-        else:
-            model.add(previous_label == next_label).only_enforce_if(
-                candidate_vars[candidate.id]
-            )
-    
-    # add constraints to ensure that each flight is linked to at most one next flight
-    for next_candidates in outgoing_vars.values():
-        model.add_at_most_one(next_candidates)
-    
-    # add constraints to ensure that each flight is linked to at most one previous flight
-    for prev_candidates in incoming_vars.values():
-        model.add_at_most_one(prev_candidates)
-    
+    for edge in edges:
+        u = edge.previous_flight_id
+        v = edge.next_flight_id
+        model.add(flight_labels[u] == flight_labels[v]).OnlyEnforceIf(edge_vars[edge.id])   
+ 
     # objective: maximize the total score of the selected candidates
-    model.maximize(sum(candidate.score * candidate_vars[candidate.id] for candidate in candidates))
+    model.maximize(sum(edge.score * edge_vars[edge.id] for edge in edges))
     
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max_time_seconds
+    # solver.parameters.max_time_in_seconds = max_time_seconds
     print("Start Solver")
     status = solver.Solve(model)
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        selected_candidates = [candidate for candidate in candidates if solver.Value(candidate_vars[candidate.id]) == 1]
+        selected_candidates = [candidate for candidate in edges if solver.Value(edge_vars[candidate.id]) == 1]
         return selected_candidates
     else:
         print('No solution found.')
