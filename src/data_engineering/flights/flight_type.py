@@ -436,6 +436,7 @@ def pia_or_american_ladd_icao_filter() -> pl.Expr:
 
 def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str], gold_mappings: dict[Flight, str]) -> pl.DataFrame:
     labels = []
+    predicted_icaos = []
     real_icaos = []
     for flight in flights:
         if flight in mappings:
@@ -446,13 +447,16 @@ def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str],
                 labels.append(True)
             else:
                 labels.append(False)
-            real_icaos.append(real_icao)
+            predicted_icaos.append(real_icao)
+            real_icaos.append(gold_real_icao)
         else:
+            predicted_icaos.append(flight.icao)
             real_icaos.append(flight.icao)
             labels.append(None)
     df = flights_to_flights_df(flights).with_columns(
-        pl.Series("predicted_icao", real_icaos),
+        pl.Series("predicted_icao", predicted_icaos),
+        pl.Series("real_icao", real_icaos),
         pl.Series("correct", labels, dtype=pl.Boolean),
     )
-    df = df.sort(["real_icao", "takeoff_time"])
+    df = df.sort(["predicted_icao", "takeoff_time"])
     return df
