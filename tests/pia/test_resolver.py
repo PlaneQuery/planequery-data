@@ -35,7 +35,7 @@ test_flights_0 = [ # just a subgraph filter will get this
 
 ]
 selected_candidates_0 = [ # How to comapre these. 
-    FlightLinkCandidate(0, test_flights_0[0].flight_id, test_flights_0[1].flight_id, 1)
+    FlightLinkCandidate(test_flights_0[0].flight_id, test_flights_0[1].flight_id, 1)
 ]
 
 
