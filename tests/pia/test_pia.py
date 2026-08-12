@@ -67,7 +67,7 @@ def test_real_flights_4(request):
         test_name=request.node.name,
     )
     print_real_flight_stats(stats)
-    assert stats['overall_accuracy'] >= 0.3633
+    assert stats['flight_overall_accuracy'] >= 0.3633
     assert stats['traceability_index'] >= 0.243
 
 def test_real_flights_5():
@@ -75,35 +75,52 @@ def test_real_flights_5():
     end_date = date(2026,7,1)
     stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print_real_flight_stats(stats)
-    overall_accuracy = 0.2620
+    flight_overall_accuracy = 0.2620
     traceability_index = 0.2142
-    assert stats['overall_accuracy'] >= overall_accuracy
+    assert stats['flight_overall_accuracy'] >= flight_overall_accuracy
     assert stats['traceability_index'] >= traceability_index
 
 def print_real_flight_stats(stats):
     print(
-        "Coverage: "
-        f"{stats['resolved_expected_mappings']}/{stats['expected_mappings']} "
-        f"= {stats['coverage']:.2%}"
+        "PIA ICAO resolved accuracy: "
+        f"{stats['correct_pia_icaos']}/{stats['resolved_pia_icaos']} "
+        f"= {stats['pia_icao_resolved_accuracy']:.2%}"
     )
     print(
-        "Resolved accuracy: "
-        f"{stats['correct_mappings']}/{stats['resolved_expected_mappings']} "
-        f"= {stats['resolved_accuracy']:.2%}"
+        "PIA ICAO coverage: "
+        f"{stats['resolved_pia_icaos']}/{stats['expected_pia_icaos']} "
+        f"= {stats['pia_icao_coverage']:.2%}"
     )
     print(
-        "Overall accuracy: "
-        f"{stats['correct_mappings']}/{stats['expected_mappings']} "
-        f"= {stats['overall_accuracy']:.2%}"
+        "PIA ICAO overall accuracy: "
+        f"{stats['correct_pia_icaos']}/{stats['expected_pia_icaos']} "
+        f"= {stats['pia_icao_overall_accuracy']:.2%}"
+    )
+    print(
+        "Observed PIA ICAOs assigned UNKNOWN_LABEL: "
+        f"{stats['unknown_label_pia_icaos']}"
+    )
+    print(
+        "Flight coverage: "
+        f"{stats['resolved_expected_flight_mappings']}/"
+        f"{stats['expected_flight_mappings']} "
+        f"= {stats['flight_coverage']:.2%}"
+    )
+    print(
+        "Flight resolved accuracy: "
+        f"{stats['correct_flight_mappings']}/"
+        f"{stats['resolved_expected_flight_mappings']} "
+        f"= {stats['flight_resolved_accuracy']:.2%}"
+    )
+    print(
+        "Flight overall accuracy: "
+        f"{stats['correct_flight_mappings']}/{stats['expected_flight_mappings']} "
+        f"= {stats['flight_overall_accuracy']:.2%}"
     )
     print(
         "Traceability: "
         f"{stats['traceable_aircraft']}/{stats['expected_aircraft']} aircraft "
         f"= {stats['traceability_index']:.2%}"
-    )
-    print(
-        "Observed PIA ICAOs assigned UNKNOWN_LABEL: "
-        f"{stats['unknown_label_pia_icaos']}"
     )
 
 def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, test_name):
