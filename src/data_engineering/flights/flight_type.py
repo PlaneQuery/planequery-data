@@ -432,3 +432,26 @@ def _pia_or_american_ladd_filter() -> pl.Expr:
 
 def pia_or_american_ladd_icao_filter() -> pl.Expr:
     return _pia_or_american_ladd_filter().any().over("icao")
+
+
+def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str], gold_mappings: dict[Flight, str]) -> pl.DataFrame:
+    labels = []
+    real_icaos = []
+    for flight in flights:
+        if flight in mappings:
+            real_icao = mappings[flight]
+            assert flight in gold_mappings, f"Flight {flight.flight_id} is in mappings but not in gold_mappings"
+            gold_real_icao = gold_mappings[flight]
+            if real_icao == gold_real_icao:
+                labels.append(True)
+            else:
+                labels.append(False)
+            real_icaos.append(real_icao)
+        else:
+            real_icaos.append(flight.icao)
+            labels.append(None)
+    df = flights_to_flights_df(flights).with_columns(
+        pl.Series("predicted_icao", real_icaos),
+        pl.Series("correct", labels, dtype=pl.Boolean),
+    )
+    return df
