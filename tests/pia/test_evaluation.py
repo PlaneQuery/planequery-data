@@ -18,10 +18,13 @@ def test_evaluation_accepts_unresolved_pia_mapping():
     assert stats == {
         "expected_mappings": 1,
         "predicted_mappings": 1,
+        "resolved_expected_mappings": 0,
         "correct_mappings": 0,
         "missing_predictions": 1,
         "extra_predictions": 1,
-        "accuracy": 0.0,
+        "coverage": 0.0,
+        "resolved_accuracy": 0.0,
+        "overall_accuracy": 0.0,
         "expected_aircraft": 1,
         "traceable_aircraft": 0,
         "lost_aircraft": 1,
@@ -49,7 +52,9 @@ def test_traceability_requires_all_mappings_for_an_aircraft_to_be_correct():
 
     stats = evaluation(predicted_mapping, gold_mapping)
 
-    assert stats["accuracy"] == pytest.approx(2 / 3)
+    assert stats["coverage"] == 1.0
+    assert stats["resolved_accuracy"] == pytest.approx(2 / 3)
+    assert stats["overall_accuracy"] == pytest.approx(2 / 3)
     assert stats["expected_aircraft"] == 2
     assert stats["traceable_aircraft"] == 1
     assert stats["lost_aircraft"] == 1
@@ -74,6 +79,21 @@ def test_traceability_counts_a_missing_mapping_as_a_lost_aircraft():
         "lost_aircraft": 1,
         "traceability_index": 0.5,
     }
+
+
+def test_evaluation_reports_coverage_and_accuracy_when_predictions_are_missing():
+    flight_1 = make_test_flight("pia_a")
+    flight_2 = make_test_flight("pia_b")
+    flight_3 = make_test_flight("pia_c")
+
+    stats = evaluation(
+        {flight_1: "A00001", flight_2: "incorrect"},
+        {flight_1: "A00001", flight_2: "B00002", flight_3: "C00003"},
+    )
+
+    assert stats["coverage"] == pytest.approx(2 / 3)
+    assert stats["resolved_accuracy"] == pytest.approx(1 / 2)
+    assert stats["overall_accuracy"] == pytest.approx(1 / 3)
 
 
 def test_traceability_of_empty_cohort_is_zero():

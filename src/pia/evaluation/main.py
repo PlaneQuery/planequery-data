@@ -415,6 +415,12 @@ def traceability_stats(mapping_dict, gold_dict):
 
 
 def evaluation(mapping_dict, gold_dict):
+    """Compare resolved flight mappings with the expected mappings.
+
+    Coverage measures how often the resolver assigns an identity instead of
+    abstaining. Resolved accuracy measures correctness only among those
+    assignments, while overall accuracy includes unresolved expected flights.
+    """
     comparison_schema = {
         "flight_id": pl.String,
         "expected_icao": pl.String,
@@ -445,14 +451,22 @@ def evaluation(mapping_dict, gold_dict):
     expected_count = len(gold_dict)
     predicted_count = len(mapping_dict)
     correct_count = df_mapping_comparison.filter(pl.col("correct")).height
+    missing_count = df_mapping_comparison.filter(pl.col("missing_prediction")).height
+    extra_count = df_mapping_comparison.filter(pl.col("extra_prediction")).height
+    resolved_expected_count = expected_count - missing_count
 
     stats = {
         "expected_mappings": expected_count,
         "predicted_mappings": predicted_count,
+        "resolved_expected_mappings": resolved_expected_count,
         "correct_mappings": correct_count,
-        "missing_predictions": df_mapping_comparison.filter(pl.col("missing_prediction")).height,
-        "extra_predictions": df_mapping_comparison.filter(pl.col("extra_prediction")).height,
-        "accuracy": correct_count / expected_count if expected_count else 0,
+        "missing_predictions": missing_count,
+        "extra_predictions": extra_count,
+        "coverage": resolved_expected_count / expected_count if expected_count else 0,
+        "resolved_accuracy": (
+            correct_count / resolved_expected_count if resolved_expected_count else 0
+        ),
+        "overall_accuracy": correct_count / expected_count if expected_count else 0,
     }
     stats.update(traceability_stats(mapping_dict, gold_dict))
     return stats
