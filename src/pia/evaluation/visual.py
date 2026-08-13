@@ -18,6 +18,8 @@ from datetime import date, datetime
 import os
 from pathlib import Path
 
+from pia.graph import FlightLinkCandidate
+
 # ``data_engineering.utils`` reads OUTPUT_DIR at import time. Keep this module
 # directly runnable in a fresh shell, as well as under the project's tests.
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
@@ -35,7 +37,6 @@ from data_engineering.flights.flight_type import (
 from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.utils import OUTPUT_DIR
 from pia.resolver import (
-    FlightLinkCandidate,
     build_candidates,
     get_flights_connected_to_icao,
     mapping_from_selected_candidates,
