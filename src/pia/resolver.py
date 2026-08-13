@@ -9,7 +9,7 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
-from pia.graph import FlightLinkCandidate, create_graph_from_candidates
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
@@ -212,13 +212,6 @@ def solve_links(
     else:
         print('No solution found.')
         return []
-
-def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> nx.Graph:
-    graph = nx.Graph()
-    for candidate in selected_candidates:
-        graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id)
-    print (f"Number of connected components: {nx.number_connected_components(graph)}")
-    return graph
 
 def candidate_mapping_path_exists(
     graph: nx.Graph,
