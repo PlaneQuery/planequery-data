@@ -139,7 +139,7 @@ def edge_score(a: Flight, b: Flight) -> int:
 def solve_links(
     flight_index: FlightIndex,
     edges: list[FlightLinkCandidate],
-    max_time_seconds: float = 60.0,
+    forbidden_mapping: dict[str,str] | None = None # pia_icao -> real_icao
 ):
     model = cp_model.CpModel()
     edge_vars: list[cp_model.IntVar] = []
@@ -162,7 +162,10 @@ def solve_links(
         flight.icao
         for flight in flight_index.get_ladd_flights()
     })
-    real_icao_labels = {icao: i for i, icao in enumerate(real_icaos)}
+
+    real_icao_labels: dict[str, int] = dict()
+    for i, icao in enumerate(real_icaos):
+        real_icao_labels[icao] = i
     pia_icao_labels: dict[str, cp_model.IntVar] = {}
     flight_labels: dict[str, cp_model.IntVar | int] = {}
     UNKNOWN_LABEL = len(real_icaos)
@@ -174,7 +177,12 @@ def solve_links(
         if f.pia:
             icao = f.icao
             if icao not in pia_icao_labels:
-                pia_icao_labels[icao] = model.new_int_var(0, UNKNOWN_LABEL, f'pia_to_real_{icao}')
+                label =  model.new_int_var(0, UNKNOWN_LABEL, f'pia_to_real_{icao}')
+                if forbidden_mapping and icao in forbidden_mapping:
+                    forbidden_real_icao = forbidden_mapping[icao]
+                    forbidden_label = real_icao_labels[forbidden_real_icao]
+                    model.add(label != forbidden_label)
+                pia_icao_labels[icao] = label
             flight_labels[node] = pia_icao_labels[icao]
         else:
             icao = f.icao
@@ -321,6 +329,9 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
         for flight in flight_index.get_pia_flights()
         if flight.icao in resolved_pia_icaos
     }
+def icao_mapping_from_flight_mapping(mapping: dict[Flight, str]) -> dict[str, str]:
+    return {flight.icao: real_icao for flight, real_icao in mapping.items()}
+
 def resolve_pia_mappings(
     flights: list[Flight],
     # TODO: known_pia_users: list[str],
@@ -339,6 +350,10 @@ def resolve_pia_mappings(
         sel_candidates = solve_links(flight_index, candidates)
         selected_candidates.extend(sel_candidates)
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+    icao_mapping = icao_mapping_from_flight_mapping(mapping)
+    for candidates in candidate_subgroups:
+        sel_candidates = solve_links(flight_index, candidates, forbidden_mapping=icao_mapping)
+        # selected_candidates.extend(sel_candidates) 
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping
