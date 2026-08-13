@@ -30,3 +30,10 @@ def create_graph_from_candidates(
         for candidate in candidates
     )
     return graph
+
+def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> nx.Graph:
+    graph = nx.Graph()
+    for candidate in selected_candidates:
+        graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id)
+    print (f"Number of connected components: {nx.number_connected_components(graph)}")
+    return graph
