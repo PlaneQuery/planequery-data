@@ -4,6 +4,7 @@ from datetime import timedelta
 from itertools import combinations
 from dataclasses import dataclass
 import networkx as nx
+import polars as pl
 from ortools.sat.python import cp_model
 from itertools import groupby
 from datetime import date
@@ -17,6 +18,10 @@ class FlightLinkCandidate:
     previous_flight_id: str
     next_flight_id: str
     score: int
+
+    @property
+    def id(self) -> str:
+        return f"{self.previous_flight_id}_{self.next_flight_id}"
 
 def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
@@ -353,27 +358,51 @@ def resolve_pia_mappings(
     candidates = build_candidates(flight_index)
     candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    selected_candidates = solve_links(flight_index, candidates)
-    create_graph_from_selected_candidates(selected_candidates, flight_index)
+    candidate_subgroups = split_candidates_by_component(candidates, flight_index)
+    selected_candidates = []
+    mappings = {}
+    for candidates in candidate_subgroups:
+        sel_candidates = solve_links(flight_index, candidates)
+        selected_candidates.extend(sel_candidates)
+        mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+        mappings.update(mapping)
+        print(f"Number of mappings: {len(mapping.keys())}")
     print(f"Number of selected candidates: {len(selected_candidates)}")
-    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
-    print(f"Number of mappings: {len(mapping.keys())}")
+    print(f"Number of mappings: {len(mappings.keys())}")
     return mapping
 
+def split_candidates_by_component(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+) -> list[list[FlightLinkCandidate]]:
+    """Group candidates by connected component of the candidate graph."""
+    len_candidates = len(candidates)
+    graph = create_graph_from_candidates(candidates, flight_index)
+    components = list(nx.connected_components(graph))
+    component_by_flight_id = {
+        flight_id: component_index
+        for component_index, component in enumerate(components)
+        for flight_id in component
+    }
+    component_candidates: list[list[FlightLinkCandidate]] = [
+        [] for _ in components
+    ]
+
+    for candidate in candidates:
+        component_index = component_by_flight_id[candidate.previous_flight_id]
+        component_candidates[component_index].append(candidate)
+
+    print(f"Number of connected components: {len(components)}")
+    total_num_candidates = sum(len(component) for component in component_candidates)
+    assert total_num_candidates == len_candidates, (f"Total number of candidates in all components ({total_num_candidates}) ", f"does not match original number of candidates ({len_candidates})")
+    print(f"Total number of candidates in all components: {total_num_candidates}")
+    return component_candidates
 
 if __name__ == "__main__":
-    start_date = date(2026,5,20)
-    end_date = date(2026,5,22)
+    start_date = date(2026, 1, 1)
+    end_date = date(2026, 7, 1)
     df_flights = get_flights(start_date, end_date)
+    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     flights = flights_df_to_flights(df_flights)
-    flight_index = FlightIndex(flights)
-    pia_flights = flight_index.get_pia_flights()
-    print(f"Number of PIA flights: {len(pia_flights)}")
-    candidates = build_candidates(flight_index)
-    candidates = filter_candidates(candidates, flight_index)
-    print(f"Number of candidates: {len(candidates)}")
-    selected_candidates = solve_links(flight_index, candidates)
-    print(f"Number of selected candidates: {len(selected_candidates)}")
-    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
-    print(f"Number of mappings: {len(mapping.keys())}")
+    resolve_pia_mappings(flights)
