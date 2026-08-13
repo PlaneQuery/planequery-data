@@ -33,8 +33,9 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     next_flight.flight_id,
                     score = score
                 )
-                # add edge from flight to next_flight
-                candidates.append(candidate)
+                if flight.landing_airport_ident == next_flight.takeoff_airport_ident:
+                    # add edge from flight to next_flight
+                    candidates.append(candidate)
             else:
                 next_flight = None
             assert flight.last_lon is not None # TODO: Fix this in type
@@ -66,7 +67,41 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     )
                     candidates.append(candidate)
 
+
     return candidates
+
+def filter_candidates(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+) -> list[FlightLinkCandidate]:
+    """Remove disconnected multi-flight real ICAOs and their candidate edges."""
+    graph = create_graph_from_candidates(candidates, flight_index)
+    flight_ids_to_remove: set[str] = set()
+
+    for flights in flight_index.flights_by_icao.values():
+        if flights[0].pia or len(flights) == 1:
+            continue
+
+        first_flight_id = flights[0].flight_id
+        last_flight_id = flights[-1].flight_id
+        if not nx.has_path(graph, first_flight_id, last_flight_id):
+            flight_ids_to_remove.update(flight.flight_id for flight in flights)
+
+    filtered_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.previous_flight_id not in flight_ids_to_remove
+        and candidate.next_flight_id not in flight_ids_to_remove
+    ]
+    removed_candidate_count = len(candidates) - len(filtered_candidates)
+    print(
+        f"Filtered out {removed_candidate_count} candidates and "
+        f"{len(flight_ids_to_remove)} flights"
+    )
+
+    flight_index.remove_flights(flight_ids_to_remove)
+    return filtered_candidates
+
 
 def edge_score(a: Flight, b: Flight) -> int:
     score = 0
@@ -147,6 +182,8 @@ def solve_links(
     for real_icao in real_icaos:
         real_flights = flight_index.flights_by_icao[real_icao]
         real_flight_ids = [flight.flight_id for flight in real_flights]
+        if len(real_flight_ids) <= 1:
+            continue
         source_id = real_flight_ids[0]
         required_destinations = set(real_flight_ids[1:])
         flow_units = len(required_destinations)
@@ -360,6 +397,7 @@ def resolve_pia_mappings(
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
+    candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates = solve_links(flight_index, candidates)
     create_graph_from_selected_candidates(selected_candidates, flight_index)
@@ -379,6 +417,7 @@ if __name__ == "__main__":
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
+    candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates = solve_links(flight_index, candidates)
     print(f"Number of selected candidates: {len(selected_candidates)}")
