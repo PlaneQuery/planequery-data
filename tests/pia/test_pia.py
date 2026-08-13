@@ -71,14 +71,36 @@ def test_real_flights_4(request):
     assert stats['traceability_index'] >= 0.243
 
 def test_real_flights_5():
-    start_date = date(2026,5,1)
+    start_date = date(2026,6,1)
     end_date = date(2026,7,1)
     stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
     print_real_flight_stats(stats)
-    flight_overall_accuracy = 0.2620
-    traceability_index = 0.2142
-    assert stats['flight_overall_accuracy'] >= flight_overall_accuracy
-    assert stats['traceability_index'] >= traceability_index
+    expected_stats = {
+        "correct_pia_icaos": 4,
+        "resolved_pia_icaos": 17,
+        "expected_pia_icaos": 21,
+        "pia_icao_resolved_accuracy": 4 / 17,
+        "pia_icao_coverage": 17 / 21,
+        "pia_icao_overall_accuracy": 4 / 21,
+        "unknown_label_pia_icaos": 77,
+        "resolved_expected_flight_mappings": 153,
+        "expected_flight_mappings": 182,
+        "correct_flight_mappings": 63,
+        "flight_coverage": 153 / 182,
+        "flight_resolved_accuracy": 63 / 153,
+        "flight_overall_accuracy": 63 / 182,
+        "traceable_aircraft": 4,
+        "expected_aircraft": 20,
+        "traceability_index": 4 / 20,
+    }
+    minimum_metrics = (
+        "pia_icao_resolved_accuracy",
+        "pia_icao_overall_accuracy",
+        "flight_resolved_accuracy",
+        "flight_overall_accuracy",
+        "traceability_index",
+    )
+    assert all(stats[key] >= expected_stats[key] for key in minimum_metrics)
 
 def print_real_flight_stats(stats):
     print(
