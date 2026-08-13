@@ -2,7 +2,6 @@
 from collections import defaultdict, deque
 from datetime import timedelta
 from itertools import combinations
-from dataclasses import dataclass
 import networkx as nx
 import polars as pl
 from ortools.sat.python import cp_model
@@ -10,19 +9,10 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
-@dataclass(frozen=True, slots=True)
-class FlightLinkCandidate:
-    previous_flight_id: str
-    next_flight_id: str
-    score: int
-
-    @property
-    def id(self) -> str:
-        return f"{self.previous_flight_id}_{self.next_flight_id}"
-
 def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
     # add scores to each edge. 
@@ -221,25 +211,6 @@ def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCa
         graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id)
     print (f"Number of connected components: {nx.number_connected_components(graph)}")
     return graph
-
-def create_graph_from_candidates(
-    candidates: list[FlightLinkCandidate],
-    flight_index: FlightIndex,
-) -> nx.Graph:
-    """Build the complete, undirected flight-continuity candidate graph.
-
-    All indexed flights are included, even when they have no candidate edges.
-    That makes an isolated flight distinguishable from a flight missing from the
-    input when the graph is used to evaluate known PIA mappings.
-    """
-    graph = nx.Graph()
-    graph.add_nodes_from(flight_index.get_flights_ids())
-    graph.add_edges_from(
-        (candidate.previous_flight_id, candidate.next_flight_id)
-        for candidate in candidates
-    )
-    return graph
-
 
 def candidate_mapping_path_exists(
     graph: nx.Graph,
