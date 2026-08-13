@@ -1,4 +1,3 @@
-
 from collections import defaultdict, deque
 from datetime import timedelta
 from itertools import combinations
@@ -10,6 +9,7 @@ from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
+from pia.solver import resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
@@ -136,83 +136,6 @@ def edge_score(a: Flight, b: Flight) -> int:
     score = max(-2000, min(score, 6000))
     return score
 
-def solve_links(
-    flight_index: FlightIndex,
-    edges: list[FlightLinkCandidate],
-    forbidden_mapping: dict[str,str] | None = None # pia_icao -> real_icao
-):
-    model = cp_model.CpModel()
-    edge_vars: list[cp_model.IntVar] = []
-
-    incoming = defaultdict(list)
-    outgoing = defaultdict(list)
-    nodes = set()
-    # we could have a required node that all the real icao flights have to be used. 
-    for i, edge in enumerate(edges):
-        u = edge.previous_flight_id
-        v = edge.next_flight_id
-        nodes.add(u)
-        nodes.add(v)
-        x = model.new_bool_var(f'edge_{i}')
-        incoming[v].append(x)
-        outgoing[u].append(x)
-        edge_vars.append(x)
-
-    real_icaos = sorted({
-        flight.icao
-        for flight in flight_index.get_ladd_flights()
-    })
-
-    real_icao_labels: dict[str, int] = dict()
-    for i, icao in enumerate(real_icaos):
-        real_icao_labels[icao] = i
-    pia_icao_labels: dict[str, cp_model.IntVar] = {}
-    flight_labels: dict[str, cp_model.IntVar | int] = {}
-    UNKNOWN_LABEL = len(real_icaos)
-    for node in nodes:
-        model.add(sum(incoming[node]) <= 1)
-        model.add(sum(outgoing[node]) <= 1)
-
-        f = flight_index.get_flight_by_id(node)
-        if f.pia:
-            icao = f.icao
-            if icao not in pia_icao_labels:
-                label =  model.new_int_var(0, UNKNOWN_LABEL, f'pia_to_real_{icao}')
-                if forbidden_mapping and icao in forbidden_mapping:
-                    forbidden_real_icao = forbidden_mapping[icao]
-                    forbidden_label = real_icao_labels[forbidden_real_icao]
-                    model.add(label != forbidden_label)
-                pia_icao_labels[icao] = label
-            flight_labels[node] = pia_icao_labels[icao]
-        else:
-            icao = f.icao
-            flight_labels[node] = real_icao_labels[icao]
-
-    for edge, edge_var in zip(edges, edge_vars):
-        u = edge.previous_flight_id
-        v = edge.next_flight_id
-        model.add(flight_labels[u] == flight_labels[v]).OnlyEnforceIf(edge_var)
- 
-    # objective: maximize the total score of the selected candidates
-    model.maximize(
-        sum(edge.score * edge_var for edge, edge_var in zip(edges, edge_vars))
-    )
-    
-    solver = cp_model.CpSolver()
-    # solver.parameters.max_time_in_seconds = max_time_seconds
-    status = solver.Solve(model)
-    
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        selected_candidates = [
-            candidate
-            for candidate, edge_var in zip(edges, edge_vars)
-            if solver.Value(edge_var) == 1
-        ]
-        return selected_candidates
-    else:
-        print('No solution found.')
-        return []
-
 def candidate_mapping_path_exists(
     graph: nx.Graph,
     flight_index: FlightIndex,
@@ -337,45 +260,12 @@ def resolve_pia_mappings(
     candidates = build_candidates(flight_index)
     candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    candidate_subgroups = split_candidates_by_component(candidates, flight_index)
-    selected_candidates = []
-    for candidates in candidate_subgroups:
-        sel_candidates = solve_links(flight_index, candidates)
-        selected_candidates.extend(sel_candidates)
+    selected_candidates = resolve_links_with_margin(flight_index, candidates)
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
-    icao_mapping = icao_mapping_from_flight_mapping(mapping)
-    for candidates in candidate_subgroups:
-        sel_candidates = solve_links(flight_index, candidates, forbidden_mapping=icao_mapping)
-        # selected_candidates.extend(sel_candidates) 
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping
 
-def split_candidates_by_component(
-    candidates: list[FlightLinkCandidate],
-    flight_index: FlightIndex,
-) -> list[list[FlightLinkCandidate]]:
-    """Group candidates by connected component of the candidate graph."""
-    len_candidates = len(candidates)
-    graph = create_graph_from_candidates(candidates, flight_index)
-    components = list(nx.connected_components(graph))
-    component_by_flight_id = {
-        flight_id: component_index
-        for component_index, component in enumerate(components)
-        for flight_id in component
-    }
-    component_candidates: list[list[FlightLinkCandidate]] = [
-        [] for _ in components
-    ]
-
-    for candidate in candidates:
-        component_index = component_by_flight_id[candidate.previous_flight_id]
-        component_candidates[component_index].append(candidate)
-
-    total_num_candidates = sum(len(component) for component in component_candidates)
-    assert total_num_candidates == len_candidates, (f"Total number of candidates in all components ({total_num_candidates}) ", f"does not match original number of candidates ({len_candidates})")
-    print(f"Total number of candidates in all components: {total_num_candidates}")
-    return component_candidates
 
 if __name__ == "__main__":
     start_date = date(2026, 1, 1)
