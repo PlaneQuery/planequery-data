@@ -305,6 +305,11 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
 
         for flight in component_flights:
             if flight.pia:
+                if flight.pia in pia_to_real_icaos:
+                    assert pia_to_real_icaos[flight.icao] == real_icao, (
+                        f"Conflicting mappings for PIA ICAO {flight.icao}: "
+                        f"{pia_to_real_icaos[flight.icao]} vs {real_icao}"
+                    )
                 pia_to_real_icaos[flight.icao] = real_icao
 
     resolved_pia_icaos = {}
