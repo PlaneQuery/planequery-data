@@ -170,52 +170,6 @@ def solve_links(
     real_icao_labels = {icao: i for i, icao in enumerate(real_icaos)}
     pia_icao_labels: dict[str, cp_model.IntVar] = {}
     flight_labels: dict[str, cp_model.IntVar | int] = {}
-
-    edge_indexes_by_source: dict[str, list[int]] = defaultdict(list)
-    edge_indexes_by_destination: dict[str, list[int]] = defaultdict(list)
-
-    for index, edge in enumerate(edges):
-        edge_indexes_by_source[edge.previous_flight_id].append(index)
-        edge_indexes_by_destination[edge.next_flight_id].append(index)
-
-    all_flight_ids = flight_index.get_flights_ids()
-    for real_icao in real_icaos:
-        real_flights = flight_index.flights_by_icao[real_icao]
-        real_flight_ids = [flight.flight_id for flight in real_flights]
-        if len(real_flight_ids) <= 1:
-            continue
-        source_id = real_flight_ids[0]
-        required_destinations = set(real_flight_ids[1:])
-        flow_units = len(required_destinations)
-        flow_vars = []
-        for edge_index in range(len(edges)):
-            flow_var = model.new_int_var(0, flow_units, f'flow_{real_icao}_{edge_index}')
-            flow_vars.append(flow_var)
-
-        for edge_index, flow_var in enumerate(flow_vars):
-            model.add(
-                flow_var <= flow_units * edge_vars[edge_index]
-            )
-        
-        for flight_id in all_flight_ids:
-            outgoing_flow = sum(
-                flow_vars[index]
-                for index in edge_indexes_by_source[flight_id]
-            )
-            incoming_flow = sum(
-                flow_vars[index]
-                for index in edge_indexes_by_destination[flight_id]
-            )
-
-            if flight_id == source_id:
-                balance = flow_units
-            elif flight_id in required_destinations:
-                balance = -1
-            else:
-                balance = 0
-
-            model.add(outgoing_flow - incoming_flow == balance)
-
     UNKNOWN_LABEL = len(real_icaos)
     for node in nodes:
         model.add(sum(incoming[node]) <= 1)
