@@ -2,6 +2,7 @@ from datetime import date, datetime
 import os
 from pathlib import Path
 import polars as pl
+import pytest
 
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import construct_ground_truth_mappings
@@ -70,29 +71,65 @@ def test_real_flights_4(request):
     assert stats['flight_overall_accuracy'] >= 0.3633
     assert stats['traceability_index'] >= 0.243
 
-def test_real_flights_5():
-    start_date = date(2026,6,1)
+@pytest.mark.parametrize(
+    ("start_date", "expected_stats"),
+    [
+        pytest.param(
+            date(2026, 5, 1),
+            {
+                "correct_pia_icaos": 6,
+                "resolved_pia_icaos": 23,
+                "expected_pia_icaos": 30,
+                "pia_icao_resolved_accuracy": 6 / 23,
+                "pia_icao_coverage": 23 / 30,
+                "pia_icao_overall_accuracy": 6 / 30,
+                "unknown_label_pia_icaos": 93,
+                "resolved_expected_flight_mappings": 391,
+                "expected_flight_mappings": 454,
+                "correct_flight_mappings": 122,
+                "flight_coverage": 391 / 454,
+                "flight_resolved_accuracy": 122 / 391,
+                "flight_overall_accuracy": 122 / 454,
+                "traceable_aircraft": 5,
+                "expected_aircraft": 28,
+                "traceability_index": 5 / 28,
+            },
+            id="may",
+        ),
+        pytest.param(
+            date(2026, 6, 1),
+            {
+                "correct_pia_icaos": 4,
+                "resolved_pia_icaos": 17,
+                "expected_pia_icaos": 21,
+                "pia_icao_resolved_accuracy": 4 / 17,
+                "pia_icao_coverage": 17 / 21,
+                "pia_icao_overall_accuracy": 4 / 21,
+                "unknown_label_pia_icaos": 77,
+                "resolved_expected_flight_mappings": 153,
+                "expected_flight_mappings": 182,
+                "correct_flight_mappings": 63,
+                "flight_coverage": 153 / 182,
+                "flight_resolved_accuracy": 63 / 153,
+                "flight_overall_accuracy": 63 / 182,
+                "traceable_aircraft": 4,
+                "expected_aircraft": 20,
+                "traceability_index": 4 / 20,
+            },
+            id="june",
+        ),
+    ],
+)
+def test_real_flights_5(request, start_date, expected_stats):
     end_date = date(2026,7,1)
-    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    stats = pia_tester(
+        start_date,
+        end_date,
+        correct_number=0,
+        filter=False,
+        test_name=request.node.name,
+    )
     print_real_flight_stats(stats)
-    expected_stats = {
-        "correct_pia_icaos": 4,
-        "resolved_pia_icaos": 17,
-        "expected_pia_icaos": 21,
-        "pia_icao_resolved_accuracy": 4 / 17,
-        "pia_icao_coverage": 17 / 21,
-        "pia_icao_overall_accuracy": 4 / 21,
-        "unknown_label_pia_icaos": 77,
-        "resolved_expected_flight_mappings": 153,
-        "expected_flight_mappings": 182,
-        "correct_flight_mappings": 63,
-        "flight_coverage": 153 / 182,
-        "flight_resolved_accuracy": 63 / 153,
-        "flight_overall_accuracy": 63 / 182,
-        "traceable_aircraft": 4,
-        "expected_aircraft": 20,
-        "traceability_index": 4 / 20,
-    }
     minimum_metrics = (
         "pia_icao_resolved_accuracy",
         "pia_icao_overall_accuracy",
