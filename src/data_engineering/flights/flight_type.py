@@ -154,6 +154,36 @@ class FlightIndex:
         """Return all LADD flights in takeoff-time order."""
         return self._ladd_flights.copy()
 
+    def remove_flights(self, flight_ids: set[str]) -> None:
+        """Remove flights from every lookup maintained by the index."""
+        if not flight_ids:
+            return
+
+        for flight_id in flight_ids:
+            self._flights_by_id.pop(flight_id, None)
+
+        for icao, flights in list(self.flights_by_icao.items()):
+            remaining_flights = [
+                flight for flight in flights if flight.flight_id not in flight_ids
+            ]
+            if remaining_flights:
+                self.flights_by_icao[icao] = remaining_flights
+            else:
+                del self.flights_by_icao[icao]
+
+        self._pia_flights = [
+            flight for flight in self._pia_flights if flight.flight_id not in flight_ids
+        ]
+        self._pia_takeoff_times = [
+            flight.takeoff_time for flight in self._pia_flights
+        ]
+        self._ladd_flights = [
+            flight for flight in self._ladd_flights if flight.flight_id not in flight_ids
+        ]
+        self._ladd_takeoff_times = [
+            flight.takeoff_time for flight in self._ladd_flights
+        ]
+
     def pia_flights_after(
         self,
         time: datetime,
