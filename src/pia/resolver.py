@@ -202,7 +202,6 @@ def solve_links(
     
     solver = cp_model.CpSolver()
     # solver.parameters.max_time_in_seconds = max_time_seconds
-    print("Start Solver")
     status = solver.Solve(model)
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -360,15 +359,12 @@ def resolve_pia_mappings(
     print(f"Number of candidates: {len(candidates)}")
     candidate_subgroups = split_candidates_by_component(candidates, flight_index)
     selected_candidates = []
-    mappings = {}
     for candidates in candidate_subgroups:
         sel_candidates = solve_links(flight_index, candidates)
         selected_candidates.extend(sel_candidates)
-        mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
-        mappings.update(mapping)
-        print(f"Number of mappings: {len(mapping.keys())}")
+    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     print(f"Number of selected candidates: {len(selected_candidates)}")
-    print(f"Number of mappings: {len(mappings.keys())}")
+    print(f"Number of mappings: {len(mapping.keys())}")
     return mapping
 
 def split_candidates_by_component(
@@ -392,7 +388,6 @@ def split_candidates_by_component(
         component_index = component_by_flight_id[candidate.previous_flight_id]
         component_candidates[component_index].append(candidate)
 
-    print(f"Number of connected components: {len(components)}")
     total_num_candidates = sum(len(component) for component in component_candidates)
     assert total_num_candidates == len_candidates, (f"Total number of candidates in all components ({total_num_candidates}) ", f"does not match original number of candidates ({len_candidates})")
     print(f"Total number of candidates in all components: {total_num_candidates}")
