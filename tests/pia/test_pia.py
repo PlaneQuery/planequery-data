@@ -146,9 +146,15 @@ def print_real_flight_stats(stats):
         f"= {stats['pia_icao_resolved_accuracy']:.2%}"
     )
     print(
-        "PIA ICAO coverage: "
+        "Ground-truth PIA ICAO coverage: "
         f"{stats['resolved_pia_icaos']}/{stats['expected_pia_icaos']} "
         f"= {stats['pia_icao_coverage']:.2%}"
+    )
+    print(
+        "All-observed PIA ICAO coverage: "
+        f"{stats['resolved_observed_pia_icaos']}/"
+        f"{stats['observed_pia_icaos']} "
+        f"= {stats['observed_pia_icao_coverage']:.2%}"
     )
     print(
         "PIA ICAO overall accuracy: "
@@ -329,7 +335,13 @@ def pia_tester(
     stats = evaluation(known_mappings, gold_mapping)
     pia_icaos = {flight.icao for flight in flight_index.get_pia_flights()}
     resolved_pia_icaos = {flight.icao for flight in mappings}
-    stats["unknown_label_pia_icaos"] = len(pia_icaos - resolved_pia_icaos)
+    resolved_observed_pia_icaos = pia_icaos & resolved_pia_icaos
+    stats["observed_pia_icaos"] = len(pia_icaos)
+    stats["resolved_observed_pia_icaos"] = len(resolved_observed_pia_icaos)
+    stats["observed_pia_icao_coverage"] = (
+        len(resolved_observed_pia_icaos) / len(pia_icaos) if pia_icaos else 0
+    )
+    stats["unknown_label_pia_icaos"] = len(pia_icaos - resolved_observed_pia_icaos)
 
     save_pia_mapping_audit(
         flights,
