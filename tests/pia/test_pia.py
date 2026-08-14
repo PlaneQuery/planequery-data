@@ -19,7 +19,7 @@ def test_simulator_flights_0():
     from pia.evaluation.simulator_flights import get_simulated_flights_0
 
     df_flights_sim, gold_mapping = get_simulated_flights_0()
-    mapping_dict = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
+    mapping_dict, _ = resolve_pia_mappings(flights_df_to_flights(df_flights_sim))
     correct = 0
     total = 0
     for flight, real_icao in gold_mapping.items():
@@ -181,7 +181,13 @@ def print_real_flight_stats(stats):
         f"= {stats['traceability_index']:.2%}"
     )
 
-def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, test_name):
+def save_pia_mapping_audit(
+    flights,
+    gold_mapping,
+    mappings,
+    pia_to_real_icao,
+    run_dir,
+):
     """Write the chronological per-flight PIA mapping audit for one test run."""
     real_icaos = set(pia_to_real_icao.values())
     audit_rows = []
@@ -220,17 +226,7 @@ def save_pia_mapping_audit(flights, gold_mapping, mappings, pia_to_real_icao, te
             "landing_airport_ident": flight.landing_airport_ident,
         })
 
-    safe_test_name = test_name or "pia_tester"
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = (
-        OUTPUT_DIR
-        / "data"
-        / "tests"
-        / "test_pia"
-        / safe_test_name
-        / f"test_pia_{safe_test_name}_{current_time}.parquet"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = run_dir / "pia_mapping_audit.parquet"
     audit_schema = {
         "flight_id": pl.String,
         "takeoff_time": pl.Datetime,
@@ -265,9 +261,21 @@ def pia_tester(
 ):
     """Run the PIA evaluation and save a per-flight mapping audit as Parquet.
 
-    ``test_name`` controls the audit directory; pytest callers can pass
+    ``test_name`` controls the artifact directory; pytest callers can pass
     ``request.node.name``.
     """
+    safe_test_name = test_name or "pia_tester"
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = (
+        OUTPUT_DIR
+        / "data"
+        / "tests"
+        / "test_pia"
+        / safe_test_name
+        / f"test_pia_{safe_test_name}_{current_time}"
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+
     df_mappings, icaos_0, icaos_1, both = construct_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
@@ -314,7 +322,7 @@ def pia_tester(
                 f"{pia_icao} -> {pia_to_real_icao[pia_icao]}"
             )
 
-    mappings = resolve_pia_mappings(flights, pia_location_radius_km)
+    mappings, df_margins = resolve_pia_mappings(flights, pia_location_radius_km)
     gold_mapping = {
         flight: pia_to_real_icao[flight.icao]
         for flight in flights
@@ -341,11 +349,14 @@ def pia_tester(
         gold_mapping,
         mappings,
         pia_to_real_icao,
-        test_name,
+        run_dir,
     )
     evaluation_df = create_pia_evaluation_df(flights, known_mappings, gold_mapping)
-    output_path = OUTPUT_DIR / "data" / "tmp" / "pia_tester_flights_df.parquet"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    evaluation_df.write_parquet(output_path)
-    print(f"Wrote flights DataFrame with real_icao column: {output_path}")
+    evaluation_path = run_dir / "pia_evaluation_flights.parquet"
+    evaluation_df.write_parquet(evaluation_path)
+    print(f"Wrote flights DataFrame with real_icao column: {evaluation_path}")
+    margins_path = run_dir / "margins.csv"
+    df_margins.write_csv(margins_path)
+    print(f"Wrote margins: {margins_path}")
+    print(f"Wrote PIA test artifacts: {run_dir}")
     return stats
