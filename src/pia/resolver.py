@@ -216,17 +216,20 @@ def resolve_pia_mappings(
     flights: list[Flight],
     # TODO: known_pia_users: list[str],
     airport_continuity_tolerance: float = 10,
-) -> dict[Flight, str]:
+) -> tuple[dict[Flight, str], pl.DataFrame]:
     print(f"Number of flights: {len(flights)}")
     flight_index = FlightIndex(flights, None)
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    selected_candidates, mapping = resolve_links_with_margin(flight_index, candidates)
+    selected_candidates, mapping, df_margins = resolve_links_with_margin(
+        flight_index,
+        candidates,
+    )
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
-    return mapping
+    return mapping, df_margins
 
 
 if __name__ == "__main__":
