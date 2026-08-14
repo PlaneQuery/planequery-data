@@ -13,20 +13,38 @@ from data_engineering.flights.flight_type import FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 
 
-def _resolve_links(flight_index, candidates):
+def _resolve_links(flight_index, candidates, forbidden_mapping: dict[str,str] | None = None):
     candidate_subgroups = split_candidates_by_component(candidates, flight_index)
     selected_candidates = []
     for candidates in candidate_subgroups:
-        sel_candidates = solve_links(flight_index, candidates)
+        sel_candidates = solve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
         selected_candidates.extend(sel_candidates)
-    return selected_candidates
+    score = 0
+    for candidate in selected_candidates:
+        score += candidate.score
+    return selected_candidates, score
+
+MINIMUM_SCORE_MARGIN = 10000
 def resolve_links_with_margin(flight_index, candidates):
-    selected_candidates = _resolve_links(flight_index, candidates)
+    real_icaos = sorted({
+        flight.icao
+        for flight in flight_index.get_ladd_flights()
+    })
+    selected_candidates, score = _resolve_links(flight_index, candidates)
+    print(f"Initial score: {score}", f"Number of selected candidates: {len(selected_candidates)}")
     icao_mapping = pia_icao_mapping_from_selected_candidates(selected_candidates, flight_index)
+    return selected_candidates
     for pia_icao, real_icao in icao_mapping.items():
-        if pia_icao == real_icao:
-            continue
-        
+        assert pia_icao != real_icao, f"PIA ICAO {pia_icao} should not be the same as real ICAO {real_icao}"
+        forbidden_mapping = {pia_icao: real_icao}
+        try:
+            selected_candidates, next_best_score = _resolve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
+            margin = score - next_best_score
+            if margin < MINIMUM_SCORE_MARGIN:
+                icao_mapping.pop(pia_icao)
+            print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin {margin}")
+        except Exception as e:
+            print(f"Error resolving links with forbidden mapping {forbidden_mapping}: {e}")
     return selected_candidates
 
 
@@ -115,6 +133,8 @@ def solve_links(
             flight_labels[node] = pia_icao_labels[icao]
         else:
             icao = f.icao
+            if len(flight_index.flights_by_icao[f.icao]) > 1:
+                model.add(sum(incoming[node]) + sum(outgoing[node]) >= 1)
             flight_labels[node] = real_icao_labels[icao]
 
     for edge, edge_var in zip(edges, edge_vars):
