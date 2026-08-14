@@ -3,10 +3,10 @@ import polars as pl
 from datetime import date
 
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
+from data_engineering.utils import OUTPUT_DIR
 
 def load_ground_control_mappings():
-    mappings_path = Path("/Users/jonahgoode/Documents/PlaneQuery/r-piaicao jacksweeney mappings.csv")
-
+    mappings_path = OUTPUT_DIR / 'data/raw/groundcontrol/r-piaicao jacksweeney mappings.csv'
     df_mappings = pl.read_csv(mappings_path).rename(
         {
             "PIA ICAO": "pia_icao",
