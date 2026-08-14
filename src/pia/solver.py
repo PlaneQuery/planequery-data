@@ -24,7 +24,7 @@ def _resolve_links(flight_index, candidates, forbidden_mapping: dict[str,str] | 
         score += candidate.score
     return selected_candidates, score
 
-MINIMUM_SCORE_MARGIN = 10000
+MINIMUM_SCORE_MARGIN = 1000
 def resolve_links_with_margin(flight_index, candidates):
     candidate_components = [
         component
