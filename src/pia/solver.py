@@ -1,9 +1,11 @@
 import networkx as nx
+import polars as pl
 from collections import defaultdict
 from ortools.sat.python import cp_model
+from data_engineering.utils import OUTPUT_DIR
 from data_engineering.flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
-
+DEBUG = True
 MINIMUM_SCORE_MARGIN = 1000
 def resolve_links_with_margin(flight_index, candidates):
     candidate_components = [
@@ -48,6 +50,10 @@ def resolve_links_with_margin(flight_index, candidates):
             icao_mapping[flight.icao] = real_icao
         flights_by_icao[flight.icao].append(flight)
 
+    margin_by_pia_icao: dict[str, int | None] = {
+        flight.icao: None
+        for flight in flight_index.get_pia_flights()
+    }
     margins = []
     for pia_icao, real_icao in list(icao_mapping.items()):
         assert pia_icao != real_icao, f"PIA ICAO {pia_icao} should not be the same as real ICAO {real_icao}"
@@ -70,6 +76,7 @@ def resolve_links_with_margin(flight_index, candidates):
             )
 
         margin = original_affected_score - alternative_affected_score
+        margin_by_pia_icao[pia_icao] = margin
         margins.append(margin)
         if margin < MINIMUM_SCORE_MARGIN:
             flights = flights_by_icao[pia_icao]
@@ -84,6 +91,25 @@ def resolve_links_with_margin(flight_index, candidates):
 
     if margins:
         print(f"Margins: count={len(margins)}, max={max(margins)}, min={min(margins)}, average={sum(margins) / len(margins)}")
+
+    if DEBUG:
+        pia_icaos = sorted(margin_by_pia_icao)
+        margins_path = OUTPUT_DIR / "tmp" / "margins.csv"
+        margins_path.parent.mkdir(parents=True, exist_ok=True)
+        pl.DataFrame(
+            {
+                "pia_icao": pl.Series(pia_icaos, dtype=pl.String),
+                "predicted_icao": pl.Series(
+                    [icao_mapping.get(pia_icao) for pia_icao in pia_icaos],
+                    dtype=pl.String,
+                ),
+                "margin": pl.Series(
+                    [margin_by_pia_icao[pia_icao] for pia_icao in pia_icaos],
+                    dtype=pl.Int64,
+                ),
+            }
+        ).write_csv(margins_path)
+        print(f"Wrote margins to {margins_path}")
 
     return selected_candidates, mapping
 
