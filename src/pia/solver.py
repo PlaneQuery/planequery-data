@@ -1,28 +1,8 @@
 import networkx as nx
-from collections import defaultdict, deque
-from datetime import timedelta
-from itertools import combinations
-import networkx as nx
-import polars as pl
-from ortools.sat.python import cp_model
-from itertools import groupby
-from datetime import date
-from airports.airport_lookup import AirportLookup
+from collections import defaultdict
 from ortools.sat.python import cp_model
 from data_engineering.flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
-
-
-def _resolve_links(flight_index, candidates, forbidden_mapping: dict[str,str] | None = None):
-    candidate_subgroups = split_candidates_by_component(candidates, flight_index)
-    selected_candidates = []
-    for candidates in candidate_subgroups:
-        sel_candidates = solve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
-        selected_candidates.extend(sel_candidates)
-    score = 0
-    for candidate in selected_candidates:
-        score += candidate.score
-    return selected_candidates, score
 
 MINIMUM_SCORE_MARGIN = 1000
 def resolve_links_with_margin(flight_index, candidates):
@@ -54,8 +34,7 @@ def resolve_links_with_margin(flight_index, candidates):
         for selected in selected_by_component
         for candidate in selected
     ]
-    score = sum(score_by_component)
-    print(f"Initial score: {score}", f"Number of selected candidates: {len(selected_candidates)}")
+    print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     icao_mapping: dict[str, str] = {}
     flights_by_icao: dict[str, list[Flight]] = defaultdict(list)
@@ -78,11 +57,6 @@ def resolve_links_with_margin(flight_index, candidates):
             score_by_component[index]
             for index in affected_components
         )
-        original_affected_count = sum(
-            len(selected_by_component[index])
-            for index in affected_components
-        )
-        new_selected_candidates = []
         alternative_affected_score = 0
 
         for index in affected_components:
@@ -91,29 +65,22 @@ def resolve_links_with_margin(flight_index, candidates):
                 candidate_components[index],
                 forbidden_mapping=forbidden_mapping,
             )
-            new_selected_candidates.extend(alternative)
             alternative_affected_score += sum(
                 candidate.score for candidate in alternative
             )
 
-        next_best_score = (
-            score - original_affected_score + alternative_affected_score
-        )
-        next_best_count = (
-            len(selected_candidates)
-            - original_affected_count
-            + len(new_selected_candidates)
-        )
-        if next_best_count == 0:
-            print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin N/A (no solution found)")
-            continue
-        margin = score - next_best_score
+        margin = original_affected_score - alternative_affected_score
         margins.append(margin)
         if margin < MINIMUM_SCORE_MARGIN:
             flights = flights_by_icao[pia_icao]
             for flight in flights:
                 mapping.pop(flight)
-        print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin {margin}")
+        print(
+            f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: "
+            f"Original affected score {original_affected_score}, "
+            f"alternative affected score {alternative_affected_score}, "
+            f"margin {margin}"
+        )
 
     if margins:
         print(f"Margins: count={len(margins)}, max={max(margins)}, min={min(margins)}, average={sum(margins) / len(margins)}")
