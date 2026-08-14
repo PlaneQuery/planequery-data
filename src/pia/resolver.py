@@ -28,9 +28,8 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     next_flight.flight_id,
                     score = score
                 )
-                if flight.landing_airport_ident == next_flight.takeoff_airport_ident:
-                    # add edge from flight to next_flight
-                    candidates.append(candidate)
+
+                candidates.append(candidate)
             else:
                 next_flight = None
             assert flight.last_lon is not None # TODO: Fix this in type
