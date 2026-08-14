@@ -8,7 +8,7 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
-from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates
 from pia.solver import resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
@@ -28,7 +28,7 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     next_flight.flight_id,
                     score = score
                 )
-
+                # if flight.landing_airport_ident == next_flight.takeoff_airport_ident:
                 candidates.append(candidate)
             else:
                 next_flight = None
@@ -209,41 +209,6 @@ def get_flights_connected_to_icao(
         key=lambda flight: flight.takeoff_time,
     )
 
-def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
-    graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
-    pia_to_real_icaos: dict[str, str] = dict()
-    for component in nx.connected_components(graph):
-        component_flights = []
-        for flight_id in component:
-            flight = flight_index.get_flight_by_id(flight_id)
-            component_flights.append(flight)
-
-        real_icao = None
-        for f in component_flights:
-            if f.ladd:
-                real_icao = f.icao
-                break
-        if real_icao is None:
-            continue
-
-        for flight in component_flights:
-            if flight.pia:
-                if flight.pia in pia_to_real_icaos:
-                    assert pia_to_real_icaos[flight.icao] == real_icao, (
-                        f"Conflicting mappings for PIA ICAO {flight.icao}: "
-                        f"{pia_to_real_icaos[flight.icao]} vs {real_icao}"
-                    )
-                pia_to_real_icaos[flight.icao] = real_icao
-
-    resolved_pia_icaos = {}
-    for pia_icao, real_icao in pia_to_real_icaos.items():
-        resolved_pia_icaos[pia_icao] = real_icao
-
-    return {
-        flight: resolved_pia_icaos[flight.icao]
-        for flight in flight_index.get_pia_flights()
-        if flight.icao in resolved_pia_icaos
-    }
 def icao_mapping_from_flight_mapping(mapping: dict[Flight, str]) -> dict[str, str]:
     return {flight.icao: real_icao for flight, real_icao in mapping.items()}
 
@@ -257,10 +222,8 @@ def resolve_pia_mappings(
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
-    candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
-    selected_candidates = resolve_links_with_margin(flight_index, candidates)
-    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+    selected_candidates, mapping = resolve_links_with_margin(flight_index, candidates)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping
