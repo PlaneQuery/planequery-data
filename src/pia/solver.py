@@ -9,7 +9,7 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from ortools.sat.python import cp_model
-from data_engineering.flights.flight_type import FlightIndex
+from data_engineering.flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 
 
@@ -26,26 +26,41 @@ def _resolve_links(flight_index, candidates, forbidden_mapping: dict[str,str] | 
 
 MINIMUM_SCORE_MARGIN = 10000
 def resolve_links_with_margin(flight_index, candidates):
-    real_icaos = sorted({
-        flight.icao
-        for flight in flight_index.get_ladd_flights()
-    })
     selected_candidates, score = _resolve_links(flight_index, candidates)
     print(f"Initial score: {score}", f"Number of selected candidates: {len(selected_candidates)}")
-    icao_mapping = pia_icao_mapping_from_selected_candidates(selected_candidates, flight_index)
-    return selected_candidates
-    for pia_icao, real_icao in icao_mapping.items():
+    mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
+    icao_mapping: dict[str, str] = {}
+    flights_by_icao: dict[str, list[Flight]] = defaultdict(list)
+    for flight, real_icao in mapping.items():
+        if flight.icao in icao_mapping:
+            assert icao_mapping[flight.icao] == real_icao, (
+                f"Conflicting mappings for PIA ICAO {flight.icao}: "
+                f"{icao_mapping[flight.icao]} vs {real_icao}"
+            )
+        else:
+            icao_mapping[flight.icao] = real_icao
+        flights_by_icao[flight.icao].append(flight)
+
+    margins = []
+    for pia_icao, real_icao in list(icao_mapping.items()):
         assert pia_icao != real_icao, f"PIA ICAO {pia_icao} should not be the same as real ICAO {real_icao}"
         forbidden_mapping = {pia_icao: real_icao}
-        try:
-            selected_candidates, next_best_score = _resolve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
-            margin = score - next_best_score
-            if margin < MINIMUM_SCORE_MARGIN:
-                icao_mapping.pop(pia_icao)
-            print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin {margin}")
-        except Exception as e:
-            print(f"Error resolving links with forbidden mapping {forbidden_mapping}: {e}")
-    return selected_candidates
+        new_selected_candidates, next_best_score = _resolve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
+        if len(new_selected_candidates) == 0:
+            print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin N/A (no solution found)")
+            continue
+        margin = score - next_best_score
+        margins.append(margin)
+        if margin < MINIMUM_SCORE_MARGIN:
+            flights = flights_by_icao[pia_icao]
+            for flight in flights:
+                mapping.pop(flight)
+        print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin {margin}")
+
+    if margins:
+        print(f"Margins: count={len(margins)}, max={max(margins)}, min={min(margins)}, average={sum(margins) / len(margins)}")
+
+    return selected_candidates, mapping
 
 
 def pia_icao_mapping_from_selected_candidates(
@@ -185,5 +200,44 @@ def split_candidates_by_component(
 
     total_num_candidates = sum(len(component) for component in component_candidates)
     assert total_num_candidates == len_candidates, (f"Total number of candidates in all components ({total_num_candidates}) ", f"does not match original number of candidates ({len_candidates})")
-    print(f"Total number of candidates in all components: {total_num_candidates}")
+    print(f"Total number of componenets: {len(components)}")
     return component_candidates
+
+
+def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
+    graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
+    pia_to_real_icaos: dict[str, str] = dict()
+    components = nx.connected_components(graph)
+    print(f"Number of connected components: {nx.number_connected_components(graph)}")
+    for component in components:
+        component_flights = []
+        for flight_id in component:
+            flight = flight_index.get_flight_by_id(flight_id)
+            component_flights.append(flight)
+
+        real_icao = None
+        for f in component_flights:
+            if f.ladd:
+                real_icao = f.icao
+                break
+        if real_icao is None:
+            continue
+
+        for flight in component_flights:
+            if flight.pia:
+                if flight.icao in pia_to_real_icaos:
+                    assert pia_to_real_icaos[flight.icao] == real_icao, (
+                        f"Conflicting mappings for PIA ICAO {flight.icao}: "
+                        f"{pia_to_real_icaos[flight.icao]} vs {real_icao}"
+                    )
+                pia_to_real_icaos[flight.icao] = real_icao
+
+    resolved_pia_icaos = {}
+    for pia_icao, real_icao in pia_to_real_icaos.items():
+        resolved_pia_icaos[pia_icao] = real_icao
+
+    return {
+        flight: resolved_pia_icaos[flight.icao]
+        for flight in flight_index.get_pia_flights()
+        if flight.icao in resolved_pia_icaos
+    }
