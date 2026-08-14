@@ -23,3 +23,4 @@ def construct_ground_truth_mappings():
     print(f"In both: {len(both)}")
     df = pl.concat([df_0, df_1], how="vertical").unique(subset=["pia_icao"], keep="first")
     return df, icaos_0, icaos_1, both
+    # TODO: Add assert that a pia_icao is only ever mapped to 1 real icao. 
