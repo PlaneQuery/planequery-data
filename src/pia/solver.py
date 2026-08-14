@@ -2,7 +2,6 @@ import networkx as nx
 import polars as pl
 from collections import defaultdict
 from ortools.sat.python import cp_model
-from data_engineering.utils import OUTPUT_DIR
 from data_engineering.flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 DEBUG = True
@@ -94,9 +93,7 @@ def resolve_links_with_margin(flight_index, candidates):
 
     if DEBUG:
         pia_icaos = sorted(margin_by_pia_icao)
-        margins_path = OUTPUT_DIR / "tmp" / "margins.csv"
-        margins_path.parent.mkdir(parents=True, exist_ok=True)
-        pl.DataFrame(
+        df_margins = pl.DataFrame(
             {
                 "pia_icao": pl.Series(pia_icaos, dtype=pl.String),
                 "predicted_icao": pl.Series(
@@ -108,10 +105,10 @@ def resolve_links_with_margin(flight_index, candidates):
                     dtype=pl.Int64,
                 ),
             }
-        ).write_csv(margins_path)
-        print(f"Wrote margins to {margins_path}")
-
-    return selected_candidates, mapping
+        )
+    else:
+        df_margins = pl.DataFrame()
+    return selected_candidates, mapping, df_margins
 
 
 def pia_icao_mapping_from_selected_candidates(
@@ -199,10 +196,10 @@ def solve_links(
             flight_labels[node] = pia_icao_labels[icao]
         else:
             icao = f.icao
-            if len(flight_index.flights_by_icao[f.icao]) > 1:
-                model.add(sum(incoming[node]) + sum(outgoing[node]) >= 1)
             flight_labels[node] = real_icao_labels[icao]
 
+        if len(flight_index.flights_by_icao[f.icao]) > 1:
+            model.add(sum(incoming[node]) + sum(outgoing[node]) >= 1)
     for edge, edge_var in zip(edges, edge_vars):
         u = edge.previous_flight_id
         v = edge.next_flight_id
