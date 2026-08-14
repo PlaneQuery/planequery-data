@@ -39,8 +39,8 @@ def run_pia_algorithm(df_flights):
     '''
     flights = flights_df_to_flights(df_flights)
     print("start resolver")
-    mappings,g = resolve_pia_mappings(flights)
-    return mappings,g
+    mappings, df_margins = resolve_pia_mappings(flights)
+    return mappings, df_margins
 
 def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
     return (
@@ -70,7 +70,7 @@ def main(start_date, end_date):
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
-    mappings = resolve_pia_mappings(flights_df_to_flights(df_flights))
+    mappings, _ = resolve_pia_mappings(flights_df_to_flights(df_flights))
     return mappings
 if __name__ == "__main__":
     main(date(2025,5,15), date(2025,5,21))
