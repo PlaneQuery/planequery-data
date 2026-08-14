@@ -26,7 +26,35 @@ def _resolve_links(flight_index, candidates, forbidden_mapping: dict[str,str] | 
 
 MINIMUM_SCORE_MARGIN = 10000
 def resolve_links_with_margin(flight_index, candidates):
-    selected_candidates, score = _resolve_links(flight_index, candidates)
+    candidate_components = [
+        component
+        for component in split_candidates_by_component(candidates, flight_index)
+        if component
+    ]
+    selected_by_component: list[list[FlightLinkCandidate]] = []
+    score_by_component: list[int] = []
+    components_by_pia: dict[str, set[int]] = defaultdict(set)
+
+    for component_index, component in enumerate(candidate_components):
+        selected = solve_links(flight_index, component)
+        selected_by_component.append(selected)
+        score_by_component.append(sum(candidate.score for candidate in selected))
+
+        for candidate in component:
+            for flight_id in (
+                candidate.previous_flight_id,
+                candidate.next_flight_id,
+            ):
+                flight = flight_index.get_flight_by_id(flight_id)
+                if flight.pia:
+                    components_by_pia[flight.icao].add(component_index)
+
+    selected_candidates = [
+        candidate
+        for selected in selected_by_component
+        for candidate in selected
+    ]
+    score = sum(score_by_component)
     print(f"Initial score: {score}", f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     icao_mapping: dict[str, str] = {}
@@ -45,8 +73,38 @@ def resolve_links_with_margin(flight_index, candidates):
     for pia_icao, real_icao in list(icao_mapping.items()):
         assert pia_icao != real_icao, f"PIA ICAO {pia_icao} should not be the same as real ICAO {real_icao}"
         forbidden_mapping = {pia_icao: real_icao}
-        new_selected_candidates, next_best_score = _resolve_links(flight_index, candidates, forbidden_mapping=forbidden_mapping)
-        if len(new_selected_candidates) == 0:
+        affected_components = components_by_pia[pia_icao]
+        original_affected_score = sum(
+            score_by_component[index]
+            for index in affected_components
+        )
+        original_affected_count = sum(
+            len(selected_by_component[index])
+            for index in affected_components
+        )
+        new_selected_candidates = []
+        alternative_affected_score = 0
+
+        for index in affected_components:
+            alternative = solve_links(
+                flight_index,
+                candidate_components[index],
+                forbidden_mapping=forbidden_mapping,
+            )
+            new_selected_candidates.extend(alternative)
+            alternative_affected_score += sum(
+                candidate.score for candidate in alternative
+            )
+
+        next_best_score = (
+            score - original_affected_score + alternative_affected_score
+        )
+        next_best_count = (
+            len(selected_candidates)
+            - original_affected_count
+            + len(new_selected_candidates)
+        )
+        if next_best_count == 0:
             print(f"PIA ICAO {pia_icao} -> Real ICAO {real_icao}: Score {score}, Next Best Score {next_best_score}, Margin N/A (no solution found)")
             continue
         margin = score - next_best_score
