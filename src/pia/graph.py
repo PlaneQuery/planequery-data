@@ -16,16 +16,14 @@ class FlightLinkCandidate:
 def create_graph_from_candidates(
     candidates: list[FlightLinkCandidate],
     flight_index: FlightIndex,
-) -> nx.DiGraph:
-    """Build the complete, directed flight-continuity candidate graph.
+) -> nx.Graph:
+    """Build the complete, undirected flight-continuity candidate graph.
 
     All indexed flights are included, even when they have no candidate edges.
     That makes an isolated flight distinguishable from a flight missing from the
     input when the graph is used to evaluate known PIA mappings.
-
-    Edges point from each previous flight to its candidate next flight.
     """
-    graph = nx.DiGraph()
+    graph = nx.Graph()
     graph.add_nodes_from(flight_index.get_flights_ids())
     graph.add_edges_from(
         (candidate.previous_flight_id, candidate.next_flight_id)
