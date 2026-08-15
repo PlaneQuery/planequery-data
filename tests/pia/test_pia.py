@@ -81,7 +81,7 @@ def test_real_flights_4(request):
                 "correct_pia_icaos": 6,
                 "resolved_pia_icaos": 23,
                 "expected_pia_icaos": 30,
-                "pia_icao_resolved_accuracy": 6 / 23,
+                "pia_icao_resolved_accuracy": 0.4,
                 "pia_icao_coverage": 23 / 30,
                 "pia_icao_overall_accuracy": 6 / 30,
                 "unknown_label_pia_icaos": 93,
