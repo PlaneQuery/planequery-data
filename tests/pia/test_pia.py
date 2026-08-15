@@ -1,6 +1,7 @@
 from datetime import date, datetime
-import os
-from pathlib import Path
+import json
+import re
+
 import polars as pl
 import pytest
 
@@ -66,6 +67,7 @@ def test_real_flights_4(request):
         correct_number=0,
         filter=False,
         test_name=request.node.name,
+        label=request.config.getoption("label"),
     )
     print_real_flight_stats(stats)
     assert stats['pia_icao_resolved_accuracy'] >= 0.4
@@ -127,6 +129,7 @@ def test_real_flights_5(request, start_date, expected_stats):
         correct_number=0,
         filter=False,
         test_name=request.node.name,
+        label=request.config.getoption("label"),
     )
     print_real_flight_stats(stats)
     minimum_metrics = (
@@ -256,22 +259,32 @@ def pia_tester(
     correct_number: int,
     filter=True,
     test_name=None,
+    label=None,
     pia_location_radius_km: float = 10,
 ):
     """Run the PIA evaluation and save a per-flight mapping audit as Parquet.
 
     ``test_name`` controls the artifact directory; pytest callers can pass
-    ``request.node.name``.
+    ``request.node.name``. When provided, ``label`` is appended to the
+    timestamped run directory.
     """
     safe_test_name = test_name or "pia_tester"
+    safe_label = None
+    if label:
+        safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-._")
+        if not safe_label:
+            raise ValueError("label must contain at least one letter or number")
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"test_pia_{safe_test_name}_{current_time}"
+    if safe_label:
+        run_name = f"{run_name}_{safe_label}"
     run_dir = (
         OUTPUT_DIR
         / "data"
         / "tests"
         / "test_pia"
         / safe_test_name
-        / f"test_pia_{safe_test_name}_{current_time}"
+        / run_name
     )
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -342,6 +355,13 @@ def pia_tester(
         len(resolved_observed_pia_icaos) / len(pia_icaos) if pia_icaos else 0
     )
     stats["unknown_label_pia_icaos"] = len(pia_icaos - resolved_observed_pia_icaos)
+
+    print(f"Evaluation stats: {stats}")
+    stats_path = run_dir / "evaluation_stats.json"
+    with stats_path.open("w") as stats_file:
+        json.dump(stats, stats_file, indent=2, sort_keys=True)
+        stats_file.write("\n")
+    print(f"Wrote evaluation stats: {stats_path}")
 
     save_pia_mapping_audit(
         flights,
