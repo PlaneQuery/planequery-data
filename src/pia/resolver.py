@@ -35,8 +35,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 next_flight = None
             assert flight.last_lon is not None # TODO: Fix this in type
             assert flight.last_lat is not None
-            if next_flight is not None and flight.landing_airport_ident == next_flight.takeoff_airport_ident:
-                continue
 
             if i != len(flights) - 1 and next_flight is not None:
                 before_time = next_flight.takeoff_time
