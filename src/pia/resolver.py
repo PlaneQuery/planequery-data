@@ -103,21 +103,6 @@ def filter_candidates(
 
 def edge_score(a: Flight, b: Flight) -> int:
     score = 0
-    gap = b.takeoff_time - a.landing_time
-    gap_minutes = gap.total_seconds() / 60
-
-    if gap_minutes < 15:
-        score -= 300
-    elif gap_minutes < 6 * 60:
-        score += 1000
-    elif gap_minutes < 24 * 60:
-        score += 700
-    elif gap_minutes < 3 * 24 * 60:
-        score += 250
-    elif gap_minutes < 7 * 24 * 60:
-        score -= 100
-    else:
-        score -= 2000
 
     if a.icao == b.icao:
         score += 2000
@@ -127,12 +112,6 @@ def edge_score(a: Flight, b: Flight) -> int:
     if airport_lookup.airport_ident_is_in_us_faa_airspace(a.takeoff_airport_ident) and not airport_lookup.airport_ident_is_in_us_faa_airspace(a.landing_airport_ident):
         if a.icao == b.icao:
             score += 2000
-    if a.category and b.category:
-        if a.category == b.category:
-            score += 300
-        else:
-            score -= 300
-
     if a.callsign and b.callsign and a.callsign == b.callsign:
         score += 250
 
