@@ -6,7 +6,7 @@ from data_engineering.flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 DEBUG = True
 MINIMUM_SCORE_MARGIN = 1000
-def resolve_links_with_margin(flight_index, candidates, no_margin_solve = True):
+def resolve_links_with_margin(flight_index, candidates, use_margin_solve = False):
     candidate_components = [
         component
         for component in split_candidates_by_component(candidates, flight_index)
@@ -37,7 +37,7 @@ def resolve_links_with_margin(flight_index, candidates, no_margin_solve = True):
     ]
     print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
-    if no_margin_solve:
+    if not use_margin_solve:
         return selected_candidates, mapping, pl.DataFrame()
     icao_mapping: dict[str, str] = {}
     flights_by_icao: dict[str, list[Flight]] = defaultdict(list)
