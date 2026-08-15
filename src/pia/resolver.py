@@ -1,5 +1,6 @@
 from collections import defaultdict, deque
 from datetime import timedelta
+import time
 from itertools import combinations
 import networkx as nx
 import polars as pl
@@ -210,7 +211,7 @@ def resolve_pia_mappings(
         flight_index,
         candidates,
     )
-    # overlaps = check_selected_candidates(flight_index, mapping)
+    overlaps = check_selected_candidates(flight_index, mapping)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping, df_margins
@@ -220,6 +221,7 @@ def check_selected_candidates(
     mapping: dict[Flight, str],
 ) -> list[tuple[str, Flight, Flight]]:
     """Find overlapping flights assigned to the same real aircraft."""
+    start_time = time.time()
     mapped_real_icaos = set(mapping.values())
     flights_by_real_icao: dict[str, dict[str, Flight]] = defaultdict(dict)
 
@@ -258,6 +260,7 @@ def check_selected_candidates(
             active.append(flight)
 
     print(f"Number of overlapping flights assigned to the same real aircraft: {len(overlaps)}")
+    print(f"Time taken to check for overlaps: {time.time() - start_time:.2f} seconds")
     print(overlaps)
     return overlaps
 
