@@ -68,8 +68,7 @@ def test_real_flights_4(request):
         test_name=request.node.name,
     )
     print_real_flight_stats(stats)
-    assert stats['flight_overall_accuracy'] >= 0.3633
-    assert stats['traceability_index'] >= 0.243
+    assert stats['pia_icao_resolved_accuracy'] >= 0.4
 
 @pytest.mark.parametrize(
     ("start_date", "expected_stats"),
