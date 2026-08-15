@@ -8,7 +8,7 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
-from pia.graph import FlightLinkCandidate, create_graph_from_candidates
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 from pia.solver import resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
@@ -210,10 +210,56 @@ def resolve_pia_mappings(
         flight_index,
         candidates,
     )
+    # overlaps = check_selected_candidates(flight_index, mapping)
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping, df_margins
 
+def check_selected_candidates(
+    flight_index: FlightIndex,
+    mapping: dict[Flight, str],
+) -> list[tuple[str, Flight, Flight]]:
+    """Find overlapping flights assigned to the same real aircraft."""
+    mapped_real_icaos = set(mapping.values())
+    flights_by_real_icao: dict[str, dict[str, Flight]] = defaultdict(dict)
+
+    for icao_flights in flight_index.flights_by_icao.values():
+        for flight in icao_flights:
+            if flight in mapping:
+                # Resolved PIA flight.
+                real_icao = mapping[flight]
+            else:
+                # Visible flight belonging to a resolved real ICAO.
+                real_icao = flight.icao
+
+            # Keying by flight_id prevents duplicates.
+            flights_by_real_icao[real_icao][flight.flight_id] = flight
+
+    overlaps: list[tuple[str, Flight, Flight]] = []
+
+    for real_icao, flights_by_id in flights_by_real_icao.items():
+        flights = sorted(
+            flights_by_id.values(),
+            key=lambda flight: flight.takeoff_time,
+        )
+        active: list[Flight] = []
+
+        for flight in flights:
+            active = [
+                previous
+                for previous in active
+                if previous.landing_time > flight.takeoff_time
+            ]
+
+            for previous in active:
+                print(real_icao, previous, flight)
+                overlaps.append((real_icao, previous, flight))
+
+            active.append(flight)
+
+    print(f"Number of overlapping flights assigned to the same real aircraft: {len(overlaps)}")
+    print(overlaps)
+    return overlaps
 
 if __name__ == "__main__":
     start_date = date(2026, 1, 1)
