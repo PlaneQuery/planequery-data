@@ -43,6 +43,8 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 before_time = None
             pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
             for pia_flight in pia_flights:
+                if pia_flight.category != flight.category:
+                    continue
                 score = edge_score(flight, pia_flight)
                 candidate = FlightLinkCandidate(
                     flight.flight_id,
@@ -53,6 +55,8 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
             if flight.pia:
                 ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
                 for ladd_flight in ladd_flights:
+                    if ladd_flight.category != flight.category:
+                        continue
                     score = edge_score(flight, ladd_flight)
                     candidate = FlightLinkCandidate(
                         flight.flight_id,
