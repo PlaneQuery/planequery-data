@@ -73,16 +73,25 @@ def filter_candidates(
 ) -> list[FlightLinkCandidate]:
     """Remove disconnected multi-flight real ICAOs and their candidate edges."""
     graph = create_graph_from_candidates(candidates, flight_index)
+    icaos_to_remove: set[str] = set()
     flight_ids_to_remove: set[str] = set()
 
     for flights in flight_index.flights_by_icao.values():
-        if flights[0].pia or len(flights) == 1:
+        if len(flights) == 1:
             continue
-
+        icao = flights[0].icao
         first_flight_id = flights[0].flight_id
         last_flight_id = flights[-1].flight_id
         if not nx.has_path(graph, first_flight_id, last_flight_id):
-            flight_ids_to_remove.update(flight.flight_id for flight in flights)
+            icaos_to_remove.add(icao)
+
+    for candidate in candidates:
+        previous_flight = flight_index.get_flight_by_id(candidate.previous_flight_id)
+        next_flight = flight_index.get_flight_by_id(candidate.next_flight_id)
+        if previous_flight.icao in icaos_to_remove:
+            flight_ids_to_remove.add(previous_flight.flight_id)
+        if next_flight.icao in icaos_to_remove:
+            flight_ids_to_remove.add(next_flight.flight_id)
 
     filtered_candidates = [
         candidate
