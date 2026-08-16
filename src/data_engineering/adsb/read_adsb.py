@@ -170,6 +170,7 @@ def create_adsb_parquet_for_day(
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day
     create_parquet_for_day(
         current_day,
+        keep_folders=False,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
 
