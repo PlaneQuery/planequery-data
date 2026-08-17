@@ -124,7 +124,7 @@ def pia_icao_mapping_from_selected_candidates(
     )
     pia_to_real_icaos: dict[str, str] = {}
 
-    for component in nx.connected_components(graph):
+    for component in nx.weakly_connected_components(graph):
         component_flights = [
             flight_index.get_flight_by_id(flight_id)
             for flight_id in component
@@ -234,7 +234,7 @@ def split_candidates_by_component(
     """Group candidates by connected component of the candidate graph."""
     len_candidates = len(candidates)
     graph = create_graph_from_candidates(candidates, flight_index)
-    components = list(nx.connected_components(graph))
+    components = list(nx.weakly_connected_components(graph))
     component_by_flight_id = {
         flight_id: component_index
         for component_index, component in enumerate(components)
@@ -257,8 +257,8 @@ def split_candidates_by_component(
 def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> dict[Flight, str]:
     graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
     pia_to_real_icaos: dict[str, str] = dict()
-    components = nx.connected_components(graph)
-    print(f"Number of connected components: {nx.number_connected_components(graph)}")
+    components = list(nx.weakly_connected_components(graph))
+    print(f"Number of connected components: {len(components)}")
     for component in components:
         component_flights = []
         for flight_id in component:
