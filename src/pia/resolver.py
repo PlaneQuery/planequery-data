@@ -9,7 +9,7 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
-from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
+from pia.graph import FlightLinkCandidate, check_selected_candidates_graph, create_graph_from_candidates, create_graph_from_selected_candidates
 from pia.solver import resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
@@ -127,7 +127,7 @@ def edge_score(a: Flight, b: Flight) -> int:
     return score
 
 def candidate_mapping_path_exists(
-    graph: nx.Graph,
+    graph: nx.DiGraph,
     flight_index: FlightIndex,
     pia_icao: str,
     real_icao: str,
@@ -144,10 +144,14 @@ def candidate_mapping_path_exists(
     if not real_flight_ids:
         return False
 
+    undirected_graph = graph.to_undirected(as_view=True)
     for pia_flight_id in pia_flight_ids:
         if pia_flight_id not in graph:
             continue
-        component = nx.node_connected_component(graph, pia_flight_id)
+        component = nx.node_connected_component(
+            undirected_graph,
+            pia_flight_id,
+        )
         if not component.isdisjoint(real_flight_ids):
             return True
     return False
@@ -188,9 +192,12 @@ def get_flights_connected_to_icao(
         return []
 
     graph = create_graph_from_candidates(candidates, flight_index)
+    undirected_graph = graph.to_undirected(as_view=True)
     connected_flight_ids: set[str] = set()
     for flight_id in target_flight_ids:
-        connected_flight_ids.update(nx.node_connected_component(graph, flight_id))
+        connected_flight_ids.update(
+            nx.node_connected_component(undirected_graph, flight_id)
+        )
 
     return sorted(
         (
@@ -272,7 +279,7 @@ def check_selected_candidates(
     return overlaps
 
 if __name__ == "__main__":
-    start_date = date(2026, 1, 1)
+    start_date = date(2026, 6, 1)
     end_date = date(2026, 7, 1)
     df_flights = get_flights(start_date, end_date)
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
