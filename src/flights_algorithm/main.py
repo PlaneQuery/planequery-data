@@ -18,6 +18,7 @@ from data_engineering.adsb.read_adsb import (
     ensure_adsb_source_data,
     get_icaos_in_adsb,
     read_adsb,
+    remove_adsb_parquet_days,
 )
 from data_engineering.flights.flight_type import flights_algorithm_output_path
 from data_engineering.utils import OUTPUT_DIR
@@ -860,7 +861,7 @@ def main(
 
     day_start, day_end = _day_bounds(target_date)
     read_start, read_end = _source_read_window(day_start, day_end)
-    ensure_adsb_source_data(
+    created_parquet_days = ensure_adsb_source_data(
         read_start,
         read_end,
         source=source,
@@ -889,8 +890,10 @@ def main(
             )
             for icao_list in icao_lists
         ]
-        flights_dfs = [future.result() for future in futures]
+    flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
+    if source == "adsblol":
+        remove_adsb_parquet_days(created_parquet_days)
     return flights_df
 
 
