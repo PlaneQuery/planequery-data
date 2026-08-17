@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 import os
+import shutil
 from pathlib import Path
 from typing import Literal, overload
 
@@ -161,11 +162,12 @@ def create_adsb_parquet_for_day(
     current_day: date,
     *,
     pia_or_american_ladd_only: bool = False,
-):
+) -> bool:
+    """Ensure a parquet partition exists and report whether it was created locally."""
     if not _parquet_day_has_data(current_day):
         _restore_partition_from_s3(_parquet_day_dir(current_day))
     if _parquet_day_has_data(current_day):
-        return
+        return False
 
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day
     create_parquet_for_day(
@@ -173,6 +175,16 @@ def create_adsb_parquet_for_day(
         keep_folders=False,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
+    return _parquet_day_has_data(current_day)
+
+
+def remove_adsb_parquet_days(days: Sequence[date]) -> None:
+    """Remove locally-created adsb.lol parquet partitions after their final use."""
+    for day in days:
+        partition_dir = _parquet_day_dir(day)
+        if partition_dir.exists():
+            print(f"Removing temporary parquet partition: {partition_dir}")
+            shutil.rmtree(partition_dir)
 
 
 def scan_adsb(
@@ -318,7 +330,7 @@ def ensure_adsb_source_data(
     *,
     source: str = "adsblol",
     pia_or_american_ladd_only: bool = False,
-) -> None:
+) -> list[date]:
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -328,11 +340,14 @@ def ensure_adsb_source_data(
 
     days = _date_range_for_interval(start_dt, end_dt)
     if source == "adsblol":
-        for day in days:
-            create_adsb_parquet_for_day(
+        return [
+            day
+            for day in days
+            if create_adsb_parquet_for_day(
                 day,
                 pia_or_american_ladd_only=pia_or_american_ladd_only,
             )
+        ]
     elif source == "adsbx":
         for day in days:
             create_adsbx_parquet_for_day(day)
@@ -345,6 +360,7 @@ def ensure_adsb_source_data(
             write_opensky_state_vectors_cache_for_day(day)
     else:
         raise ValueError(f"Unknown ADS-B source: {source!r}")
+    return []
 
 
 @overload
