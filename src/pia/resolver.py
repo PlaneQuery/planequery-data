@@ -230,52 +230,44 @@ def resolve_pia_mappings(
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping, df_margins
 
+def flight_overlaps(
+    flight_a,
+    flight_b,
+) -> bool:
+    """Return True if the two flights overlap in time."""
+    return not (
+        flight_a.landing_time <= flight_b.takeoff_time
+        or flight_b.landing_time <= flight_a.takeoff_time
+    )
+
 def check_selected_candidates(
     flight_index: FlightIndex,
     mapping: dict[Flight, str],
 ) -> list[tuple[str, Flight, Flight]]:
     """Find overlapping flights assigned to the same real aircraft."""
-    start_time = time.time()
-    mapped_real_icaos = set(mapping.values())
-    flights_by_real_icao: dict[str, dict[str, Flight]] = defaultdict(dict)
+    real_icao_to_pia_icaos: dict[str, list[str]] = dict()
+    for flight, icao in mapping.items():
+        if flight.pia:
+            real_icao_to_pia_icaos.setdefault(icao, []).append(flight.icao)
 
-    for icao_flights in flight_index.flights_by_icao.values():
-        for flight in icao_flights:
-            if flight in mapping:
-                # Resolved PIA flight.
-                real_icao = mapping[flight]
-            else:
-                # Visible flight belonging to a resolved real ICAO.
-                real_icao = flight.icao
-
-            # Keying by flight_id prevents duplicates.
-            flights_by_real_icao[real_icao][flight.flight_id] = flight
-
+    for real_icao, pia_icaos in real_icao_to_pia_icaos.items():
+        icaos = [real_icao] + pia_icaos
+        flights = []
+        for icao in icaos:
+            flights.extend(flight_index.flights_by_icao[icao])
+        for i in range(len(flights)):
+            flight_a = flights[i]
+            other_flights = flights.copy()
+            other_flights.pop(i)
+            for flight_b in other_flights:
+                if flight_overlaps(flight_a, flight_b):
+                    print(
+                        f"Flights {flight_a.flight_id} and {flight_b.flight_id} "
+                        f"overlap in time but are assigned to the same real aircraft "
+                        f"{real_icao}"
+                    )
     overlaps: list[tuple[str, Flight, Flight]] = []
-
-    for real_icao, flights_by_id in flights_by_real_icao.items():
-        flights = sorted(
-            flights_by_id.values(),
-            key=lambda flight: flight.takeoff_time,
-        )
-        active: list[Flight] = []
-
-        for flight in flights:
-            active = [
-                previous
-                for previous in active
-                if previous.landing_time > flight.takeoff_time
-            ]
-
-            for previous in active:
-                print(real_icao, previous, flight)
-                overlaps.append((real_icao, previous, flight))
-
-            active.append(flight)
-
-    print(f"Number of overlapping flights assigned to the same real aircraft: {len(overlaps)}")
-    print(f"Time taken to check for overlaps: {time.time() - start_time:.2f} seconds")
-    print(overlaps)
+    # Logic to populate overlaps goes here.
     return overlaps
 
 if __name__ == "__main__":
