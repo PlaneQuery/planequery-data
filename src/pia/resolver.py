@@ -71,41 +71,66 @@ def filter_candidates(
     candidates: list[FlightLinkCandidate],
     flight_index: FlightIndex,
 ) -> list[FlightLinkCandidate]:
-    """Remove disconnected multi-flight real ICAOs and their candidate edges."""
     graph = create_graph_from_candidates(candidates, flight_index)
-    icaos_to_remove: set[str] = set()
-    flight_ids_to_remove: set[str] = set()
-
-    for flights in flight_index.flights_by_icao.values():
-        if len(flights) == 1:
+    icaos_sets_to_eliminate = set()
+    icaos_sets = set()
+    paths_to_eliminate = []
+    for icao, flights in flight_index.flights_by_icao.items():
+        if len(flights) < 2:
             continue
-        icao = flights[0].icao
-        first_flight_id = flights[0].flight_id
-        last_flight_id = flights[-1].flight_id
-        if not nx.has_path(graph, first_flight_id, last_flight_id):
-            icaos_to_remove.add(icao)
+        first_flight = flights[0]
+        last_flight = flights[-1]
+        if first_flight.pia:
+            continue
+        paths = nx.all_simple_paths(graph, source=first_flight.flight_id, target=last_flight.flight_id)
+        for path in paths:
+            icaos = set()
+            check_path = False
+            for node in path:
+                flight = flight_index.get_flight_by_id(node)
+                if flight.pia:
+                    check_path = True
+                icaos.add(flight.icao)
+            if not check_path:
+                continue
+            icaos = frozenset(icaos)
+            if icaos in icaos_sets_to_eliminate:
+                paths_to_eliminate.append(path)
+                continue
+            elif icaos in icaos_sets:
+                continue
+            flights = []
+            for icao in icaos:
+                flights.extend(flight_index.flights_by_icao[icao])
+            for i in range(len(flights) - 1):
+                flight_a = flights[i]
+                other_flights = flights.copy()
+                other_flights.pop(i)
+                for flight_b in other_flights:
+                    overlaps = flight_overlaps(flight_a, flight_b)
+                    if overlaps:
+                        print(f"Flights {flight_a.flight_id} and {flight_b.flight_id} overlap in time but are connected in the graph.")
+                        icaos_sets.add(icaos)
+                        icaos_sets_to_eliminate.add(icaos)
+                        paths_to_eliminate.append(path)
+                        break
+            icaos_sets.add(icaos)
 
-    for candidate in candidates:
-        previous_flight = flight_index.get_flight_by_id(candidate.previous_flight_id)
-        next_flight = flight_index.get_flight_by_id(candidate.next_flight_id)
-        if previous_flight.icao in icaos_to_remove:
-            flight_ids_to_remove.add(previous_flight.flight_id)
-        if next_flight.icao in icaos_to_remove:
-            flight_ids_to_remove.add(next_flight.flight_id)
+    edges_to_remove: set[tuple[str, str]] = set()
+    for path in paths_to_eliminate:
+        for i in range(len(path) - 1):
+            edges_to_remove.add((path[i], path[i + 1]))
 
     filtered_candidates = [
         candidate
         for candidate in candidates
-        if candidate.previous_flight_id not in flight_ids_to_remove
-        and candidate.next_flight_id not in flight_ids_to_remove
+        if (candidate.previous_flight_id, candidate.next_flight_id)
+        not in edges_to_remove
     ]
-    removed_candidate_count = len(candidates) - len(filtered_candidates)
     print(
-        f"Filtered out {removed_candidate_count} candidates and "
-        f"{len(flight_ids_to_remove)} flights"
+        f"Filtered {len(candidates) - len(filtered_candidates)} candidates due to "
+        "overlapping flights in the same connected component."
     )
-
-    flight_index.remove_flights(flight_ids_to_remove)
     return filtered_candidates
 
 
@@ -220,6 +245,7 @@ def resolve_pia_mappings(
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
+    candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates, mapping, df_margins = resolve_links_with_margin(
         flight_index,
@@ -245,13 +271,13 @@ def check_selected_candidates(
     mapping: dict[Flight, str],
 ) -> list[tuple[str, Flight, Flight]]:
     """Find overlapping flights assigned to the same real aircraft."""
-    real_icao_to_pia_icaos: dict[str, list[str]] = dict()
+    real_icao_to_pia_icaos: dict[str, set[str]] = dict()
     for flight, icao in mapping.items():
         if flight.pia:
-            real_icao_to_pia_icaos.setdefault(icao, []).append(flight.icao)
+            real_icao_to_pia_icaos.setdefault(icao, set()).add(flight.icao)
 
     for real_icao, pia_icaos in real_icao_to_pia_icaos.items():
-        icaos = [real_icao] + pia_icaos
+        icaos = [real_icao] + list(pia_icaos)
         flights = []
         for icao in icaos:
             flights.extend(flight_index.flights_by_icao[icao])
