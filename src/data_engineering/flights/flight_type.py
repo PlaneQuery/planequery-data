@@ -349,6 +349,14 @@ def _get_algorithm_flights_for_day(
         adsb_src=adsb_src,
         no_airports_model=no_airports_model,
     )
+    if not no_airports_model and not path.exists():
+        no_airports_path = flights_algorithm_output_path(
+            target_date,
+            adsb_src=adsb_src,
+            no_airports_model=True,
+        )
+        if no_airports_path.exists():
+            path = no_airports_path
     df = pl.read_parquet(path)
     return with_flight_schema_columns(df)
 
