@@ -38,6 +38,15 @@ def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCa
     print (f"Number of connected components: {nx.number_weakly_connected_components(graph)}")
     return graph
 
+def flight_overlaps(
+    flight_a,
+    flight_b,
+) -> bool:
+    """Return True if the two flights overlap in time."""
+    return not (
+        flight_a.landing_time <= flight_b.takeoff_time
+        or flight_b.landing_time <= flight_a.takeoff_time
+    )
 def check_graph_for_overlap(graph: nx.DiGraph, flight_index: FlightIndex):
     for icao, flights in flight_index.flights_by_icao.items():
         if len(flights) < 2:
