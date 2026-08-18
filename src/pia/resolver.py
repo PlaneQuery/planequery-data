@@ -10,6 +10,8 @@ from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
 from pia.graph import FlightLinkCandidate, check_selected_candidates_graph, create_graph_from_candidates, create_graph_from_selected_candidates
+from datetime import datetime
+import heapq
 from pia.solver import resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
@@ -17,6 +19,7 @@ airport_lookup = AirportLookup()
 def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
     # add scores to each edge. 
+    overlapping_pairs = find_overlapping_icao_pairs(flight_index)
     candidates = []
     for icao, flights in flight_index.flights_by_icao.items():
         for i in range(len(flights)):
@@ -42,7 +45,10 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 before_time = None
             pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
             for pia_flight in pia_flights:
+                icao_pair = tuple(sorted((icao, pia_flight.icao)))
                 if pia_flight.category != flight.category:
+                    continue
+                if icao_pair in overlapping_pairs:
                     continue
                 score = edge_score(flight, pia_flight)
                 candidate = FlightLinkCandidate(
@@ -54,6 +60,9 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
             if flight.pia:
                 ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
                 for ladd_flight in ladd_flights:
+                    icao_pair = tuple(sorted((icao, ladd_flight.icao)))
+                    if icao_pair in overlapping_pairs:
+                        continue
                     if ladd_flight.category != flight.category:
                         continue
                     score = edge_score(flight, ladd_flight)
@@ -66,6 +75,53 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
 
 
     return candidates
+
+def find_overlapping_icao_pairs(flight_index: FlightIndex) -> set[tuple[str, str]]:
+    """Return ICAO pairs whose flight histories overlap in time.
+
+    Flights are processed with a sweep line, so the work is proportional to
+    the number of flights that are simultaneously active rather than to every
+    possible pair of flights. Real-to-real pairs do not need constraints
+    because distinct real ICAOs already have distinct fixed solver labels.
+    """
+    pia_icaos = {flight.icao for flight in flight_index.get_pia_flights()}
+    flights = sorted(
+        (
+            flight
+            for icao_flights in flight_index.flights_by_icao.values()
+            for flight in icao_flights
+        ),
+        key=lambda flight: flight.takeoff_time,
+    )
+
+    active_heap: list[tuple[datetime, str]] = []
+    active_flights: dict[str, Flight] = {}
+    overlapping_pairs: set[tuple[str,str]] = set()
+
+    for flight in flights:
+        while active_heap and active_heap[0][0] <= flight.takeoff_time:
+            _, finished_flight_id = heapq.heappop(active_heap)
+            active_flights.pop(finished_flight_id, None)
+
+        for active_flight in active_flights.values():
+            if active_flight.icao == flight.icao:
+                continue
+            if (
+                active_flight.icao not in pia_icaos
+                and flight.icao not in pia_icaos
+            ):
+                continue
+            overlapping_pairs.add(
+                tuple(sorted((active_flight.icao, flight.icao)))
+            )
+
+        active_flights[flight.flight_id] = flight
+        heapq.heappush(
+            active_heap,
+            (flight.landing_time, flight.flight_id),
+        )
+    print(f"Found {len(overlapping_pairs)} overlapping ICAO pairs.")
+    return overlapping_pairs
 
 def filter_candidates(
     candidates: list[FlightLinkCandidate],
@@ -245,7 +301,6 @@ def resolve_pia_mappings(
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)
-    candidates = filter_candidates(candidates, flight_index)
     print(f"Number of candidates: {len(candidates)}")
     selected_candidates, mapping, df_margins = resolve_links_with_margin(
         flight_index,
