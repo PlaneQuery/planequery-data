@@ -296,7 +296,7 @@ def resolve_pia_mappings(
     flights: list[Flight],
     # TODO: known_pia_users: list[str],
     airport_continuity_tolerance: float = 10,
-) -> tuple[dict[Flight, str], pl.DataFrame]:
+) -> tuple[dict[Flight, str], pl.DataFrame, pl.DataFrame]:
     print(f"Number of flights: {len(flights)}")
     flight_index = FlightIndex(flights, None)
     pia_flights = flight_index.get_pia_flights()
@@ -315,31 +315,15 @@ def resolve_pia_mappings(
     flight_index,
     )
     pia_mapping_stats_dict = create_mapping_stats(graph, flight_index, pia_icao_mapping)
-
-    scores = [stats["score"] for stats in pia_mapping_stats_dict.values()]
-    number_of_flights_list = [stats["number_of_flights"] for stats in pia_mapping_stats_dict.values()]
-    score_threshold = (
-        float(np.percentile(scores, 78)) if scores else 0
+    df_mapping_stats = pl.DataFrame(
+        [
+            {"pia_icao": pia_icao, **stats}
+            for pia_icao, stats in pia_mapping_stats_dict.items()
+        ]
     )
-    number_of_flights_threshold = (
-        float(np.percentile(number_of_flights_list, 85)) if number_of_flights_list else 0
-    )
-    print(f"Score threshold (78th percentile): {score_threshold}")
-    print(f"Number of flights threshold (85th percentile): {number_of_flights_threshold}")
-
-    for flight in mapping.copy():
-        icao = flight.icao
-        if icao in pia_mapping_stats_dict:
-            assert flight.pia
-            stats = pia_mapping_stats_dict[icao]
-            if stats["number_of_flights"] > number_of_flights_threshold and stats["score"] > score_threshold:
-                continue
-            mapping.pop(flight)
-            
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
-    return mapping, df_margins
-
+    return mapping, df_margins, df_mapping_stats
 
 def flight_overlaps(
     flight_a,
