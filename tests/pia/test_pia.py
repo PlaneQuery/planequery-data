@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 
 from data_engineering.utils import OUTPUT_DIR
-from pia.ground_truth import construct_ground_truth_mappings
+from pia.ground_truth import get_ground_truth_mappings
 
 from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights, pia_or_american_ladd_icao_filter, create_pia_evaluation_df
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
@@ -288,7 +288,7 @@ def pia_tester(
     )
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    df_mappings, icaos_0, icaos_1, both = construct_ground_truth_mappings()
+    df_mappings = get_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
@@ -298,15 +298,6 @@ def pia_tester(
             # print(f"Warning: No flights found for pia_icao {pia_icao} or real_icao {real_icao}")
             pia_to_real_icao.pop(pia_icao) 
     print(f"len(pia_to_real_icao): {len(pia_to_real_icao)}")
-    surviving_icaos = set(pia_to_real_icao)
-    only_ground_control = surviving_icaos & (icaos_0 - icaos_1)
-    only_broadcast = surviving_icaos & (icaos_1 - icaos_0)
-    in_both = surviving_icaos & both
-    assert only_ground_control | only_broadcast | in_both == surviving_icaos
-    print(f"len(only_ground_control after filter): {len(only_ground_control)}")
-    print(f"len(only_broadcast after filter): {len(only_broadcast)}")
-    print(f"len(in both after filter): {len(in_both)}")
-
     print(pia_to_real_icao)
     if filter:
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
