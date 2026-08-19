@@ -5,13 +5,14 @@ from datetime import date, datetime, time, timedelta
 
 import polars as pl
 
+from data_engineering.openairframes.read import scan_latest_icao_info_for_join
 from data_engineering.utils import OUTPUT_DIR
 
 
 BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 DEFAULT_START_DATE = date(2025, 1, 1)
 DEFAULT_END_DATE = date(2026, 7, 1)
-DEFAULT_TIME_TOLERANCE = timedelta(minutes=3600)
+DEFAULT_TIME_TOLERANCE = timedelta(minutes=200)
 
 # FAA registration format, excluding I and O, which are not permitted as suffixes.
 # The characters following N may contain at most five digits, or four characters
@@ -203,7 +204,7 @@ def get_pia_callsign_switch_icaos(
     end_date: date = DEFAULT_END_DATE,
     use_cache: bool = True,
 ) -> pl.DataFrame:
-    """Return matches, optionally using a local parquet cache."""
+    """Return PIA-to-LADD mappings enriched with LADD registrations."""
     output_path = (
         OUTPUT_DIR
         / "tmp"
@@ -212,13 +213,27 @@ def get_pia_callsign_switch_icaos(
     if use_cache and output_path.exists():
         return pl.read_parquet(output_path)
 
-    matches = pia_callsign_switch_df(
+    df = pia_callsign_switch_df(
         start_date=start_date,
         end_date=end_date,
     )
+
+    registrations = scan_latest_icao_info_for_join().select(
+        pl.col("icao").str.strip_chars().str.to_lowercase().alias("real_icao"),
+        pl.col("registration").str.strip_chars().str.to_uppercase(),
+    )
+    df = (
+        df.lazy()
+        .rename({"ladd_icao": "real_icao"})
+        .with_columns(pl.col("real_icao").str.strip_chars().str.to_lowercase())
+        .join(registrations, on="real_icao", how="left")
+        .select("pia_icao", "registration", "real_icao")
+        .unique()
+        .collect()
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    matches.write_parquet(output_path)
-    return matches
+    df.write_parquet(output_path)
+    return df
 
 
 if __name__ == "__main__":
