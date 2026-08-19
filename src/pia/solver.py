@@ -258,7 +258,6 @@ def mapping_from_selected_candidates(selected_candidates: list[FlightLinkCandida
     graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
     pia_to_real_icaos: dict[str, str] = dict()
     components = list(nx.weakly_connected_components(graph))
-    print(f"Number of connected components: {len(components)}")
     for component in components:
         component_flights = []
         for flight_id in component:

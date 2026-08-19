@@ -305,27 +305,14 @@ def pia_tester(
         df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
     print(f"Number of unique pia icaos in flights: {df_flights.filter(pl.col('pia')).select('icao').n_unique()}")
+    icaos_to_filter = set(pia_to_real_icao.keys()) | set(pia_to_real_icao.values())
+    df_flights = df_flights.filter(~pl.col("icao").is_in(icaos_to_filter))
     flights = flights_df_to_flights(df_flights)
     flight_index = FlightIndex(flights, pia_location_radius_km)
-    candidates = build_candidates(flight_index)
-    candidate_path_results = check_candidate_mapping_paths(
-        candidates,
-        flight_index,
-        pia_to_real_icao,
-    )
-    possible_mappings = sum(candidate_path_results.values())
-    print(
-        "Ground-control mappings with a path in the candidate graph: "
-        f"{possible_mappings}/{len(candidate_path_results)}"
-    )
-    for pia_icao, path_exists in candidate_path_results.items():
-        if not path_exists:
-            print(
-                "No candidate path for ground-control mapping: "
-                f"{pia_icao} -> {pia_to_real_icao[pia_icao]}"
-            )
+    # candidates = build_candidates(flight_index)
+    # check_candidate_path_is_possible(pia_to_real_icao, flight_index, candidates)
 
-    mappings, df_margins = resolve_pia_mappings(flights, pia_location_radius_km)
+    mappings, df_margins, df_mapping_stats = resolve_pia_mappings(flights, pia_location_radius_km)
     gold_mapping = {
         flight: pia_to_real_icao[flight.icao]
         for flight in flights
@@ -367,6 +354,28 @@ def pia_tester(
     print(f"Wrote flights DataFrame with real_icao column: {evaluation_path}")
     margins_path = run_dir / "margins.csv"
     df_margins.write_csv(margins_path)
+    mapping_stats_path = run_dir / "mapping_stats.csv"
+    df_mapping_stats.write_csv(mapping_stats_path)
+
     print(f"Wrote margins: {margins_path}")
+    print(f"Wrote mapping stats: {mapping_stats_path}")
     print(f"Wrote PIA test artifacts: {run_dir}")
     return stats
+
+def check_candidate_path_is_possible(pia_to_real_icao, flight_index, candidates):
+    candidate_path_results = check_candidate_mapping_paths(
+        candidates,
+        flight_index,
+        pia_to_real_icao,
+    )
+    possible_mappings = sum(candidate_path_results.values())
+    print(
+        "Ground-control mappings with a path in the candidate graph: "
+        f"{possible_mappings}/{len(candidate_path_results)}"
+    )
+    for pia_icao, path_exists in candidate_path_results.items():
+        if not path_exists:
+            print(
+                "No candidate path for ground-control mapping: "
+                f"{pia_icao} -> {pia_to_real_icao[pia_icao]}"
+            )
