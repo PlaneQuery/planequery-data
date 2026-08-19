@@ -4,15 +4,16 @@ import time
 from itertools import combinations
 import networkx as nx
 import polars as pl
+import numpy as np
 from ortools.sat.python import cp_model
 from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, pia_or_american_ladd_icao_filter, get_flights
-from pia.graph import FlightLinkCandidate, check_selected_candidates_graph, create_graph_from_candidates, create_graph_from_selected_candidates
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 from datetime import datetime
 import heapq
-from pia.solver import resolve_links_with_margin
+from pia.solver import pia_icao_mapping_from_selected_candidates, resolve_links_with_margin
 
 AIRPORT_CONTINUITY_TOLERANCE = 10
 airport_lookup = AirportLookup()
@@ -307,9 +308,38 @@ def resolve_pia_mappings(
         candidates,
     )
     overlaps = check_selected_candidates(flight_index, mapping)
+    graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
+    # selected_graph_stats(graph, flight_index)
+    pia_icao_mapping = pia_icao_mapping_from_selected_candidates(
+    selected_candidates,
+    flight_index,
+    )
+    pia_mapping_stats_dict = create_mapping_stats(graph, flight_index, pia_icao_mapping)
+
+    scores = [stats["score"] for stats in pia_mapping_stats_dict.values()]
+    number_of_flights_list = [stats["number_of_flights"] for stats in pia_mapping_stats_dict.values()]
+    score_threshold = (
+        float(np.percentile(scores, 78)) if scores else 0
+    )
+    number_of_flights_threshold = (
+        float(np.percentile(number_of_flights_list, 85)) if number_of_flights_list else 0
+    )
+    print(f"Score threshold (78th percentile): {score_threshold}")
+    print(f"Number of flights threshold (85th percentile): {number_of_flights_threshold}")
+
+    for flight in mapping.copy():
+        icao = flight.icao
+        if icao in pia_mapping_stats_dict:
+            assert flight.pia
+            stats = pia_mapping_stats_dict[icao]
+            if stats["number_of_flights"] > number_of_flights_threshold and stats["score"] > score_threshold:
+                continue
+            mapping.pop(flight)
+            
     print(f"Number of selected candidates: {len(selected_candidates)}")
     print(f"Number of mappings: {len(mapping.keys())}")
     return mapping, df_margins
+
 
 def flight_overlaps(
     flight_a,
@@ -320,6 +350,44 @@ def flight_overlaps(
         flight_a.landing_time <= flight_b.takeoff_time
         or flight_b.landing_time <= flight_a.takeoff_time
     )
+
+def selected_graph_stats(graph: nx.DiGraph, flight_index: FlightIndex):
+    # I should only get 1 path that contains real_flights[0] and real_flights[-1] maybe 0? 
+    for icao, flights in flight_index.flights_by_icao.items():
+        if len(flights) < 2:
+            continue
+        first_flight = flights[0]
+        last_flight = flights[-1]
+        if first_flight.pia:
+            continue
+        paths = list(nx.all_simple_paths(graph, source=first_flight.flight_id, target=last_flight.flight_id))
+        assert len(paths) == 1, f"Expected 1 path for {icao}, but found {len(paths)}"
+
+def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: dict):
+    pia_icao_mapping_stats = dict()
+    for nodes in nx.weakly_connected_components(graph):
+        component = graph.subgraph(nodes)
+        longest_path = nx.dag_longest_path(component)
+        path_edges = [
+        (u, v, component.edges[u, v])
+        for u, v in nx.utils.pairwise(longest_path)
+        ]
+        score = 0
+        for u, v, edge_data in path_edges:
+            score += edge_data["score"]
+        number_of_flights = len(longest_path)
+        # calculate score on this.
+        pia_icaos = set()
+        for node in longest_path:
+            flight = flight_index.get_flight_by_id(node)
+            if flight.icao in mapping:
+                pia_icaos.add(flight.icao)
+        for pia_icao in pia_icaos:
+            pia_icao_mapping_stats[pia_icao] = {
+                "score": score,
+                "number_of_flights": number_of_flights,
+            }
+    return pia_icao_mapping_stats
 
 def check_selected_candidates(
     flight_index: FlightIndex,
