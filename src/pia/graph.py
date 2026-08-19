@@ -34,7 +34,7 @@ def create_graph_from_candidates(
 def create_graph_from_selected_candidates(selected_candidates: list[FlightLinkCandidate], flight_index: FlightIndex) -> nx.DiGraph:
     graph = nx.DiGraph()
     for candidate in selected_candidates:
-        graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id)
+        graph.add_edge(candidate.previous_flight_id, candidate.next_flight_id, score=candidate.score)
     print (f"Number of connected components: {nx.number_weakly_connected_components(graph)}")
     return graph
 
