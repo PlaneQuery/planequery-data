@@ -413,6 +413,27 @@ def get_flights(
         for target_date in _date_range(start_date, end_date)
     ])
 
+def make_pia_consistent(df: pl.DataFrame) -> pl.DataFrame:
+    '''
+    due to notebooks/pia/a0fe1f_switched_between_pia_true_false.ipynb
+    '''
+    icao_pia_switch = (
+    df.group_by("icao")
+    .agg(pl.col("pia").n_unique().alias("pia_variants"))
+    .filter(pl.col("pia_variants") > 1)
+)
+    df = df.with_columns(
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"]))
+        .then(True)
+        .otherwise(pl.col("pia"))
+        .alias("pia"),
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"]))
+        .then(False)
+        .otherwise(pl.col("ladd"))
+        .alias("ladd")
+    )
+    return df
+
 def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     from airports.airport_lookup import AirportLookup
 
