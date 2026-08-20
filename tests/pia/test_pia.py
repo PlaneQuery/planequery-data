@@ -291,6 +291,7 @@ def pia_tester(
     df_mappings = get_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
     df_flights = get_flights(start_date, end_date)
+    df_flights = make_pia_consistent(df_flights)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
         n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))
         n_real_flights = len(df_flights.filter(pl.col("icao") == real_icao))
