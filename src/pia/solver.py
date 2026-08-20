@@ -35,7 +35,6 @@ def resolve_links_with_margin(flight_index, candidates, use_margin_solve = False
         for selected in selected_by_component
         for candidate in selected
     ]
-    print(f"Number of selected candidates: {len(selected_candidates)}")
     mapping = mapping_from_selected_candidates(selected_candidates, flight_index)
     if not use_margin_solve:
         return selected_candidates, mapping, pl.DataFrame()
