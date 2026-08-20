@@ -305,9 +305,12 @@ def pia_tester(
     else:
         df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
         df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
-    print(f"Number of unique pia icaos in flights: {df_flights.filter(pl.col('pia')).select('icao').n_unique()}")
-    icaos_to_filter = set(pia_to_real_icao.keys()) | set(pia_to_real_icao.values())
-    df_flights = df_flights.filter(~pl.col("icao").is_in(icaos_to_filter))
+    # icaos_to_filter = set(pia_to_real_icao.keys()) | set(pia_to_real_icao.values())
+    # df_flights = df_flights.filter(~pl.col("icao").is_in(icaos_to_filter))
+    pia_icao_count = df_flights.filter(pl.col("pia")).select("icao").n_unique()
+    real_icao_count = df_flights.filter(~pl.col("pia")).select("icao").n_unique()
+    total_icao_count = pia_icao_count + real_icao_count
+    print(f"(Real), (PIA), Total ICAO counts in flights: ({real_icao_count}), ({pia_icao_count}), ({total_icao_count})")
     flights = flights_df_to_flights(df_flights)
     flight_index = FlightIndex(flights, pia_location_radius_km)
     # candidates = build_candidates(flight_index)
