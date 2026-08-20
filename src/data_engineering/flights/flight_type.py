@@ -423,11 +423,11 @@ def make_pia_consistent(df: pl.DataFrame) -> pl.DataFrame:
     .filter(pl.col("pia_variants") > 1)
 )
     df = df.with_columns(
-        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"]))
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
         .then(True)
         .otherwise(pl.col("pia"))
         .alias("pia"),
-        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"]))
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
         .then(False)
         .otherwise(pl.col("ladd"))
         .alias("ladd")
