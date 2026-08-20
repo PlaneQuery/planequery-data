@@ -349,7 +349,9 @@ def selected_graph_stats(graph: nx.DiGraph, flight_index: FlightIndex):
 
 def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: dict):
     pia_icao_mapping_stats = dict()
+    component_count = 0
     for nodes in nx.weakly_connected_components(graph):
+        component_count += 1
         component = graph.subgraph(nodes)
         longest_path = nx.dag_longest_path(component)
         path_edges = [
@@ -371,6 +373,7 @@ def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: 
                 "score": score,
                 "number_of_flights": number_of_flights,
             }
+    print(f"Number of connected components in selected graph: {component_count}")
     return pia_icao_mapping_stats
 
 def check_selected_candidates(
