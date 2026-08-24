@@ -124,73 +124,6 @@ def find_overlapping_icao_pairs(flight_index: FlightIndex) -> set[tuple[str, str
     print(f"Found {len(overlapping_pairs)} overlapping ICAO pairs.")
     return overlapping_pairs
 
-def filter_candidates(
-    candidates: list[FlightLinkCandidate],
-    flight_index: FlightIndex,
-) -> list[FlightLinkCandidate]:
-    graph = create_graph_from_candidates(candidates, flight_index)
-    icaos_sets_to_eliminate = set()
-    icaos_sets = set()
-    paths_to_eliminate = []
-    for icao, flights in flight_index.flights_by_icao.items():
-        if len(flights) < 2:
-            continue
-        first_flight = flights[0]
-        last_flight = flights[-1]
-        if first_flight.pia:
-            continue
-        paths = nx.all_simple_paths(graph, source=first_flight.flight_id, target=last_flight.flight_id)
-        for path in paths:
-            icaos = set()
-            check_path = False
-            for node in path:
-                flight = flight_index.get_flight_by_id(node)
-                if flight.pia:
-                    check_path = True
-                icaos.add(flight.icao)
-            if not check_path:
-                continue
-            icaos = frozenset(icaos)
-            if icaos in icaos_sets_to_eliminate:
-                paths_to_eliminate.append(path)
-                continue
-            elif icaos in icaos_sets:
-                continue
-            flights = []
-            for icao in icaos:
-                flights.extend(flight_index.flights_by_icao[icao])
-            for i in range(len(flights) - 1):
-                flight_a = flights[i]
-                other_flights = flights.copy()
-                other_flights.pop(i)
-                for flight_b in other_flights:
-                    overlaps = flight_overlaps(flight_a, flight_b)
-                    if overlaps:
-                        print(f"Flights {flight_a.flight_id} and {flight_b.flight_id} overlap in time but are connected in the graph.")
-                        icaos_sets.add(icaos)
-                        icaos_sets_to_eliminate.add(icaos)
-                        paths_to_eliminate.append(path)
-                        break
-            icaos_sets.add(icaos)
-
-    edges_to_remove: set[tuple[str, str]] = set()
-    for path in paths_to_eliminate:
-        for i in range(len(path) - 1):
-            edges_to_remove.add((path[i], path[i + 1]))
-
-    filtered_candidates = [
-        candidate
-        for candidate in candidates
-        if (candidate.previous_flight_id, candidate.next_flight_id)
-        not in edges_to_remove
-    ]
-    print(
-        f"Filtered {len(candidates) - len(filtered_candidates)} candidates due to "
-        "overlapping flights in the same connected component."
-    )
-    return filtered_candidates
-
-
 def edge_score(a: Flight, b: Flight) -> int:
     score = 0
 
@@ -290,6 +223,7 @@ def get_flights_connected_to_icao(
     )
 
 def icao_mapping_from_flight_mapping(mapping: dict[Flight, str]) -> dict[str, str]:
+    '''pia icao: real icao'''
     return {flight.icao: real_icao for flight, real_icao in mapping.items()}
 
 def resolve_pia_mappings(
@@ -308,6 +242,7 @@ def resolve_pia_mappings(
         candidates,
     )
     overlaps = check_selected_candidates(flight_index, mapping)
+    check_flights_are_continuous(flight_index, mapping)
     graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
     # selected_graph_stats(graph, flight_index)
     pia_icao_mapping = pia_icao_mapping_from_selected_candidates(
@@ -405,6 +340,34 @@ def check_selected_candidates(
     overlaps: list[tuple[str, Flight, Flight]] = []
     # Logic to populate overlaps goes here.
     return overlaps
+
+def check_flights_are_continuous(flight_index: FlightIndex, mapping: dict[Flight, str]):
+    icao_mapping = icao_mapping_from_flight_mapping(mapping)
+    # real icao -> pia icao
+    real_icao_to_pia_icaos: dict[str, set[str]] = dict()
+    for pia_icao, real_icao in icao_mapping.items():
+        real_icao_to_pia_icaos.setdefault(real_icao, set()).add(pia_icao)
+    for real_icao, pia_icaos in real_icao_to_pia_icaos.items():
+        icaos = [real_icao] + list(pia_icaos)
+        all_flights = []
+        for icao in icaos:
+            flights = flight_index.flights_by_icao[icao]
+            all_flights.extend(flights)
+        all_flights.sort(key=lambda flight: flight.takeoff_time)
+        for i in range(len(all_flights) - 1):
+            flight_a = all_flights[i]
+            flight_b = all_flights[i + 1]
+            if flight_a.icao == flight_b.icao:
+                continue
+            if flight_a.landing_airport_ident != flight_b.takeoff_airport_ident:
+                print(
+                    f"Flights {flight_a.flight_id} and {flight_b.flight_id} "
+                    f"have a discontinuity in airports: "
+                    f"{flight_a.landing_airport_ident} -> {flight_b.takeoff_airport_ident} "
+                )
+
+
+    pass
 
 if __name__ == "__main__":
     start_date = date(2026, 6, 1)
