@@ -470,22 +470,6 @@ def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     df = add_airport_coords(df, "takeoff")
     return add_airport_coords(df, "landing")
 
-def _is_american_icao_expr() -> pl.Expr:
-    icao = pl.col("icao").str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def _pia_or_american_ladd_filter() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (_is_american_icao_expr() & pl.col("ladd").fill_null(False))
-    )
-
-
-def pia_or_american_ladd_icao_filter() -> pl.Expr:
-    return _pia_or_american_ladd_filter().any().over("icao")
-
-
 def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str], gold_mappings: dict[Flight, str]) -> pl.DataFrame:
     labels = []
     predicted_icaos = []

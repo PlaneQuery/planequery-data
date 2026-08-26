@@ -5,10 +5,11 @@ import re
 import polars as pl
 import pytest
 
+from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import get_ground_truth_mappings
 
-from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights, make_pia_consistent, pia_or_american_ladd_icao_filter, create_pia_evaluation_df
+from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights, make_pia_consistent
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
@@ -304,7 +305,7 @@ def pia_tester(
         df_flights = df_flights.filter(pl.col("icao").is_in(pia_to_real_icao.keys() | pia_to_real_icao.values()))
     else:
         df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
-        df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+        df_flights = df_flights.filter(pia_or_american_ladd_icao())
     # icaos_to_filter = set(pia_to_real_icao.keys()) | set(pia_to_real_icao.values())
     # df_flights = df_flights.filter(~pl.col("icao").is_in(icaos_to_filter))
     pia_icao_count = df_flights.filter(pl.col("pia")).select("icao").n_unique()
