@@ -5,7 +5,8 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import polars as pl
 
-from data_engineering.flights.flight_type import flights_df_to_flights, get_flights, pia_or_american_ladd_icao_filter
+from data_engineering.filters import pia_or_american_ladd_icao
+from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
 from pia.flight_continuity import make_flights_continuous
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 from pia.resolver import resolve_pia_mappings
@@ -68,7 +69,7 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
 
 def main(start_date, end_date):
     df_flights = get_flights(start_date, end_date)
-    df_flights = df_flights.filter(pia_or_american_ladd_icao_filter())
+    df_flights = df_flights.filter(pia_or_american_ladd_icao())
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     mappings, _ = resolve_pia_mappings(flights_df_to_flights(df_flights))
     return mappings
