@@ -1,5 +1,6 @@
 from datetime import date, datetime
 import json
+import pickle
 import re
 
 import polars as pl
@@ -353,6 +354,11 @@ def pia_tester(
         pia_to_real_icao,
         run_dir,
     )
+    mappings_path = run_dir / "mappings.pkl"
+    with mappings_path.open("wb") as mappings_file:
+        pickle.dump(mappings, mappings_file)
+    print(f"Wrote PIA mappings: {mappings_path}")
+
     evaluation_df = create_pia_evaluation_df(flights, known_mappings, gold_mapping)
     evaluation_path = run_dir / "pia_evaluation_flights.parquet"
     evaluation_df.write_parquet(evaluation_path)
