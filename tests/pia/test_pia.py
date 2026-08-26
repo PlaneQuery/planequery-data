@@ -32,31 +32,17 @@ def test_simulator_flights_0():
                 correct += 1
     print(f"Resolved accuracy: {correct}/{total} = {correct/total:.2%}")
 
-def test_real_flights_0():
-    start_date = date(2025,4,1)
-    end_date = date(2025,7,16)
-    correct_number = 35
-    stats = pia_tester(start_date, end_date, correct_number)
-    print_real_flight_stats(stats)
-
-def test_real_flights_1():
-    start_date = date(2025,4,1)
-    end_date = date(2025,7,16)
-    correct_number = 35
-    stats = pia_tester(start_date, end_date, correct_number, filter=False)
-    print_real_flight_stats(stats)
-
-def test_real_flights_2():
-    start_date = date(2025,4,1)
-    end_date = date(2025,7,16)
-    stats = pia_tester(start_date, end_date, correct_number=0)
-    print_real_flight_stats(stats)
-
-
-def test_real_flights_3():
+def test_real_flights_2(request):
     start_date = date(2024,1,1)
     end_date = date(2026,7,1)
-    stats = pia_tester(start_date, end_date, correct_number=0, filter=False)
+    stats = pia_tester(start_date, end_date, correct_number=0, test_name=request.node.name,label=request.config.getoption("label"))
+    print_real_flight_stats(stats)
+
+
+def test_real_flights_3(request):
+    start_date = date(2025,1,1)
+    end_date = date(2026,7,1)
+    stats = pia_tester(start_date, end_date, correct_number=0, test_name=request.node.name,label=request.config.getoption("label"),)
     print_real_flight_stats(stats)
 
 
@@ -67,7 +53,6 @@ def test_real_flights_4(request):
         start_date,
         end_date,
         correct_number=0,
-        filter=False,
         test_name=request.node.name,
         label=request.config.getoption("label"),
     )
@@ -259,7 +244,7 @@ def pia_tester(
     start_date: date,
     end_date: date,
     correct_number: int,
-    filter=True,
+    filter=False,
     test_name=None,
     label=None,
     pia_location_radius_km: float = 10,
