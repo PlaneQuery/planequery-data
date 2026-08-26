@@ -7,6 +7,7 @@ from typing import Literal, overload
 
 import polars as pl
 
+from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
@@ -476,22 +477,6 @@ def get_icaos_in_adsb(current_day: date, source: str = "adsblol") -> list[str]:
         df = scan_adsb(current_day, columns=["icao"]).filter(exclude_invalid_icaos()).unique().collect()
         return df["icao"].to_list()
     raise ValueError(f"Unknown ADS-B source: {source!r}")
-
-def is_american_icao(col: str = "icao") -> pl.Expr:
-    icao = pl.col(col).str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def pia_or_american_ladd() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (is_american_icao() & pl.col("ladd").fill_null(False))
-    )
-
-
-def pia_or_american_ladd_icao() -> pl.Expr:
-    return pia_or_american_ladd().any().over("icao")
-
 
 def exclude_invalid_icaos(col: str = "icao") -> pl.Expr:
     return (pl.col(col) >= "010000") & (pl.col(col) != "ffffff") & ~pl.col(col).str.starts_with("~")
