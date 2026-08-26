@@ -4,6 +4,7 @@ from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+from data_engineering.filters import pia_or_american_ladd
 
 from data_engineering.flights.flight_type import ALGORITHM_ADSB_SOURCES, get_flights
 from data_engineering.eurocontrol.read import read_eurocontrol_flights
@@ -65,19 +66,6 @@ def is_helicopter_expr(
             .str.contains(HELICOPTER_PATTERN)
         )
     )
-
-
-def is_american_icao_expr(icao_col: str = "icao") -> pl.Expr:
-    icao = pl.col(icao_col).str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def pia_or_american_ladd_expr() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (is_american_icao_expr() & pl.col("ladd").fill_null(False))
-    )
-
 
 
 def read_fr24_flights(target_date: date) -> pl.DataFrame:
@@ -251,8 +239,8 @@ def main(
                     df_test = df_test.filter(expr)
                     df_gold = df_gold.filter(expr)
                     if pia_or_american_ladd_only:
-                        df_test = df_test.filter(pia_or_american_ladd_expr())
-                        df_gold = df_gold.filter(pia_or_american_ladd_expr())
+                        df_test = df_test.filter(pia_or_american_ladd())
+                        df_gold = df_gold.filter(pia_or_american_ladd())
                     if not use_all_icaos:
                         matching_cache_key = (
                             test_date,
