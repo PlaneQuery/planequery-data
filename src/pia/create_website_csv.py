@@ -27,10 +27,10 @@ def create_pia_mappings_dataframe(
     )
 
 
-def main():
-    all_pia_icaos = get_unique_pia_icaos_from_adsblol()
+def main(use_cache: bool = True):
+    all_pia_icaos = get_unique_pia_icaos_from_adsblol(use_cache=use_cache)
     print(f"Found {len(all_pia_icaos)} unique PIA ICAOs in ADS-B data.")
-    df_groundtruth = get_ground_truth_mappings(use_cache=False)
+    df_groundtruth = get_ground_truth_mappings(use_cache=use_cache)
     print(f"Found {len(df_groundtruth)} unique PIA ICAOs in ground truth mappings.")
 
     df = create_pia_mappings_dataframe(all_pia_icaos, df_groundtruth)
