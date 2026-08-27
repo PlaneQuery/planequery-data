@@ -125,7 +125,9 @@ def test_cached_observed_pia_csv_avoids_parquet_scan(tmp_path, monkeypatch):
     assert result.to_list() == ["a0b001", "a0b002"]
 
 
-def test_ground_truth_propagates_use_cache_to_mapping_sources(monkeypatch):
+def test_ground_truth_propagates_use_cache_to_mapping_sources(
+    monkeypatch, capsys
+):
     calls = []
     ground_control = pl.DataFrame(
         {
@@ -157,10 +159,16 @@ def test_ground_truth_propagates_use_cache_to_mapping_sources(monkeypatch):
         "get_pia_callsign_switch_icaos",
         lambda use_cache: calls.append(("callsign", use_cache)) or source_mapping,
     )
+    monkeypatch.setattr(
+        ground_truth,
+        "load_graph_solve_mappings",
+        lambda: source_mapping.clear(),
+    )
 
     ground_truth.get_ground_truth_mappings(use_cache=True)
 
     assert calls == [("broadcast", True), ("callsign", True)]
+    assert "Mappings found only in ground control: 1" in capsys.readouterr().out
 
 
 def test_ground_truth_reports_cross_source_disagreements(monkeypatch, capsys):
@@ -193,6 +201,11 @@ def test_ground_truth_reports_cross_source_disagreements(monkeypatch, capsys):
         "get_pia_callsign_switch_icaos",
         lambda use_cache: empty,
     )
+    monkeypatch.setattr(
+        ground_truth,
+        "load_graph_solve_mappings",
+        lambda: empty,
+    )
 
     result = ground_truth.get_ground_truth_mappings(use_cache=True)
 
@@ -200,6 +213,59 @@ def test_ground_truth_reports_cross_source_disagreements(monkeypatch, capsys):
         {"pia_icao": "pia001", "registration": "N100", "real_icao": "a0b001"}
     ]
     output = capsys.readouterr().out
+    assert "ground_control" in output
+    assert "pia_broadcast_adsb" in output
+
+
+def test_graph_solve_has_highest_priority_and_reports_disagreements(
+    monkeypatch, capsys
+):
+    graph_solve = pl.DataFrame(
+        {
+            "pia_icao": ["pia001"],
+            "registration": ["N300"],
+            "real_icao": ["a0b003"],
+        }
+    )
+    ground_control = pl.DataFrame(
+        {
+            "pia_icao": ["pia001"],
+            "registration": ["N100"],
+            "real_icao": ["a0b001"],
+            "date": [date(2025, 1, 1)],
+        }
+    )
+    broadcast = pl.DataFrame(
+        {
+            "pia_icao": ["pia001"],
+            "registration": ["N200"],
+            "real_icao": ["a0b002"],
+        }
+    )
+    monkeypatch.setattr(
+        ground_truth, "load_graph_solve_mappings", lambda: graph_solve
+    )
+    monkeypatch.setattr(
+        ground_truth, "load_ground_control_mappings", lambda: ground_control
+    )
+    monkeypatch.setattr(
+        ground_truth,
+        "get_pia_to_reg_broadcast_icaos",
+        lambda use_cache: broadcast,
+    )
+    monkeypatch.setattr(
+        ground_truth,
+        "get_pia_callsign_switch_icaos",
+        lambda use_cache: broadcast.clear(),
+    )
+
+    result = ground_truth.get_ground_truth_mappings(use_cache=True)
+
+    assert result.to_dicts() == [
+        {"pia_icao": "pia001", "registration": "N300", "real_icao": "a0b003"}
+    ]
+    output = capsys.readouterr().out
+    assert "graph_solve" in output
     assert "ground_control" in output
     assert "pia_broadcast_adsb" in output
 
