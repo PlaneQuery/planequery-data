@@ -2,6 +2,7 @@
 
 import argparse
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import polars as pl
 
@@ -13,6 +14,9 @@ BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 DEFAULT_START_DATE = date(2025, 1, 1)
 DEFAULT_END_DATE = date(2026, 7, 1)
 DEFAULT_TIME_TOLERANCE = timedelta(minutes=200)
+PIA_CALLSIGN_SWITCH_CACHE_PATH = Path(
+    "resources/pia/real_and_pia_icao_equal_callsign_close.csv"
+)
 
 # FAA registration format, excluding I and O, which are not permitted as suffixes.
 # The characters following N may contain at most five digits, or four characters
@@ -210,13 +214,19 @@ def get_pia_callsign_switch_icaos(
         / "tmp"
         / f"pia_callsign_switch_{start_date.isoformat()}_{end_date.isoformat()}.parquet"
     )
-    if use_cache and output_path.exists():
-        return pl.read_parquet(output_path)
-
-    df = pia_callsign_switch_df(
-        start_date=start_date,
-        end_date=end_date,
-    )
+    if use_cache:
+        df = pl.read_csv(
+            PIA_CALLSIGN_SWITCH_CACHE_PATH,
+            schema_overrides={
+                "pia_icao": pl.String,
+                "ladd_icao": pl.String,
+            },
+        )
+    else:
+        df = pia_callsign_switch_df(
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     registrations = scan_latest_icao_info_for_join().select(
         pl.col("icao").str.strip_chars().str.to_lowercase().alias("real_icao"),
@@ -231,8 +241,34 @@ def get_pia_callsign_switch_icaos(
         .unique()
         .collect()
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(output_path)
+    unmatched = df.filter(
+        pl.col("registration").is_null() | (pl.col("registration") == "")
+    )
+    if not unmatched.is_empty():
+        print(
+            f"{unmatched.height} PIA callsign-switch mappings did not "
+            "join to an OpenAirframes registration: "
+            f"{unmatched.select('pia_icao', 'real_icao').sort(['pia_icao', 'real_icao']).to_dicts()}"
+        )
+    df = df.filter(
+        pl.col("registration").is_not_null() & (pl.col("registration") != "")
+    )
+
+    conflicting_pia_icaos = (
+        df.group_by("pia_icao")
+        .agg(pl.col("real_icao").n_unique().alias("real_icao_count"))
+        .filter(pl.col("real_icao_count") > 1)
+        .sort("pia_icao")
+    )
+    if not conflicting_pia_icaos.is_empty():
+        print(
+            "Callsign-switch mappings contain PIA ICAOs with multiple "
+            f"real ICAOs: {conflicting_pia_icaos.to_dicts()}"
+        )
+
+    if not use_cache:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(output_path)
     return df
 
 
