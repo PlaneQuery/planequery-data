@@ -1,4 +1,5 @@
 from data_engineering.ground_control import load_ground_control_mappings
+from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
 import polars as pl
@@ -38,6 +39,30 @@ def construct_ground_truth_mappings_with_stats():
     return df, icaos_0, icaos_1, icaos_2, both
     # TODO: Add assert that a pia_icao is only ever mapped to 1 real icao. 
 
+BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+def get_unique_pia_icaos_from_adsblol() -> pl.Series:
+    return (
+        pl.scan_parquet(
+            str(BASE_PATH / "year=*/month=*/day=*/icao_bucket=5/data.parquet"),
+            hive_partitioning=True,
+            missing_columns="insert",
+        )
+        .filter(pl.col("pia"))
+        .select(pl.col("icao").str.to_lowercase())
+        .unique()
+        .sort("icao")
+        .collect()
+        .get_column("icao")
+    )
+
+def create_pia_csv() -> pl.DataFrame:
+    output_path = OUTPUT_DIR / "data" /"pia" / "all_pia_icaos.csv"
+    pia_icaos = get_unique_pia_icaos_from_adsblol()
+    df = pl.DataFrame({"pia_icao": pia_icaos})
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    print(output_path)
+    df.write_csv(output_path)
+    return df
+
 if __name__ == "__main__":
-    df = get_ground_truth_mappings(use_cache=False)
-    print(df)
+    print(create_pia_csv())
