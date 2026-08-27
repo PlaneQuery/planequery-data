@@ -1,5 +1,5 @@
 import polars as pl
-
+from pathlib import Path
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import (
     get_ground_truth_mappings,
@@ -34,7 +34,7 @@ def main(use_cache: bool = True):
     print(f"Found {len(df_groundtruth)} unique PIA ICAOs in ground truth mappings.")
 
     df = create_pia_mappings_dataframe(all_pia_icaos, df_groundtruth)
-    output_path = OUTPUT_DIR / "data" / "pia" / "pia_mappings.csv"
+    output_path = Path("resources/pia/pia_mappings.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(output_path)
     print(f"Wrote {len(df)} PIA mappings to {output_path}.")
