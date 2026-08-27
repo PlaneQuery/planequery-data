@@ -1,6 +1,9 @@
+from pathlib import Path
+
+import polars as pl
+
 from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
-import polars as pl
 
 '''
 Get percentage of pia icaos seen that broadcast an N-number 
@@ -11,6 +14,7 @@ Checks that a pia icao isen't assigned to multiple N-numbers
 ACCIDENTAL_CALLSIGNS = ["N12345", "N123AB"]
 
 BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+PIA_BROADCAST_CACHE_PATH = Path("resources/pia/pia_broadcast_adsb.csv")
 
 def longest_period_between_icao_usage(df):
     df_icao_first_last = (
@@ -126,9 +130,36 @@ def map_pia_n_numbers_to_real_icaos(
     )
 
 def get_pia_to_reg_broadcast_icaos(use_cache: bool = True):
+    """Return broadcast PIA mappings, using the resource CSV when cached."""
+    if use_cache:
+        cached_mappings = (
+            pl.read_csv(
+                PIA_BROADCAST_CACHE_PATH,
+                schema_overrides={"pia_icao": pl.String, "registration": pl.String},
+            )
+            .select("pia_icao", "registration")
+            .with_columns(
+                pl.col("pia_icao").str.strip_chars().str.to_lowercase(),
+                pl.col("registration").str.strip_chars().str.to_uppercase(),
+            )
+            .unique()
+        )
+        registration_icaos = map_reg_to_icao(get_openairframes_faa_df())
+        joined = cached_mappings.join(
+            registration_icaos,
+            on="registration",
+            how="left",
+        )
+        unmatched = joined.filter(pl.col("real_icao").is_null())
+        if not unmatched.is_empty():
+            print(
+                f"{unmatched.height} cached PIA broadcast registrations did not "
+                "join to a unique FAA ICAO: "
+                f"{unmatched.get_column('registration').sort().to_list()}"
+            )
+        return joined.filter(pl.col("real_icao").is_not_null())
+
     output_path = OUTPUT_DIR / "tmp" / "pia_to_reg_broadcast_df.csv"
-    if use_cache and output_path.exists():
-        return pl.read_csv(output_path)
     df = pia_to_reg_broadcast_df()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(output_path)
