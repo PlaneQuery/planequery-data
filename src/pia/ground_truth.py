@@ -1,5 +1,5 @@
+from datetime import date
 from data_engineering.ground_control import load_ground_control_mappings
-from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
 from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
@@ -9,11 +9,12 @@ from pia.identify_ladd_planes.pia_callsign_switch import get_pia_callsign_switch
 
 OUTPUT_PATH = OUTPUT_DIR / "cache/pia"
 
-def get_ground_truth_mappings(use_cache = True):
-    output_path = OUTPUT_PATH / "ground_truth_mappings.parquet"
+def get_ground_truth_mappings(use_cache = True, start_date = date(2024,1,1)) -> pl.DataFrame:
+    start_date_str = start_date.isoformat()
+    output_path = OUTPUT_PATH / f"ground_truth_mappings_start_date={start_date_str}.parquet"
     if use_cache and output_path.exists():
         return pl.read_parquet(output_path)
-    df_0 = load_ground_control_mappings().drop(["date"])
+    df_0 = load_ground_control_mappings().filter(pl.col("date") > start_date).drop(["date"])
     df_1 = get_pia_to_reg_broadcast_icaos()
     df_2 = get_pia_callsign_switch_icaos()
     df = pl.concat([df_0, df_1, df_2], how="vertical").unique(subset=["pia_icao"], keep="first")
@@ -42,7 +43,7 @@ def construct_ground_truth_mappings_with_stats():
 
 BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 def get_unique_pia_icaos_from_adsblol() -> pl.Series:
-    return (
+    pia_icaos = (
         pl.scan_parquet(
             str(BASE_PATH / "year=*/month=*/day=*/icao_bucket=5/data.parquet"),
             hive_partitioning=True,
@@ -55,6 +56,8 @@ def get_unique_pia_icaos_from_adsblol() -> pl.Series:
         .collect()
         .get_column("icao")
     )
+    assert_pia_icaos_not_in_faa(pia_icaos)
+    return pia_icaos
 
 
 def assert_pia_icaos_not_in_faa(pia_icaos: pl.Series) -> None:
