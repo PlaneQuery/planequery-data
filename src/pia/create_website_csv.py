@@ -1,6 +1,7 @@
-import polars as pl
 from pathlib import Path
-from data_engineering.utils import OUTPUT_DIR
+
+import polars as pl
+
 from pia.ground_truth import (
     get_ground_truth_mappings,
     get_unique_pia_icaos_from_adsblol,
@@ -20,7 +21,9 @@ def create_pia_mappings_dataframe(
     )
 
     return pl.DataFrame({"icao": all_pia_icaos}).join(
-        df_groundtruth.select("pia_icao", "real_icao", "registration"),
+        df_groundtruth.select(
+            "pia_icao", "real_icao", "registration", "source"
+        ),
         left_on="icao",
         right_on="pia_icao",
         how="left",
@@ -34,6 +37,11 @@ def main(use_cache: bool = True):
     print(f"Found {len(df_groundtruth)} unique PIA ICAOs in ground truth mappings.")
 
     df = create_pia_mappings_dataframe(all_pia_icaos, df_groundtruth)
+    source_counts = dict(
+        df.drop_nulls("source").group_by("source").len().iter_rows()
+    )
+    for source in ("graph-solve", "groundcontrol", "callsign"):
+        print(f"{source} mappings: {source_counts.get(source, 0)}")
     output_path = Path("resources/pia/pia_mappings.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_csv(output_path)
