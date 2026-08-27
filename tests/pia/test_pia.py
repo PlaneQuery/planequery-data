@@ -17,6 +17,7 @@ from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_map
 from pia.main import main
 from pia.evaluation.real_flights_0 import a039a2_flights
 
+END_DATE = date(2026,8,24)
 def test_simulator_flights_0():
     # TODO: What is the random assignment percentage
     from pia.evaluation.simulator_flights import get_simulated_flights_0
@@ -34,21 +35,21 @@ def test_simulator_flights_0():
 
 def test_real_flights_2(request):
     start_date = date(2024,1,1)
-    end_date = date(2026,7,1)
+    end_date = END_DATE
     stats = pia_tester(start_date, end_date, correct_number=0, test_name=request.node.name,label=request.config.getoption("label"))
     print_real_flight_stats(stats)
 
 
 def test_real_flights_3(request):
     start_date = date(2025,1,1)
-    end_date = date(2026,7,1)
+    end_date = END_DATE
     stats = pia_tester(start_date, end_date, correct_number=0, test_name=request.node.name,label=request.config.getoption("label"),)
     print_real_flight_stats(stats)
 
 
 def test_real_flights_4(request):
     start_date = date(2026,1,1)
-    end_date = date(2026,7,1)
+    end_date = END_DATE
     stats = pia_tester(
         start_date,
         end_date,
@@ -109,7 +110,7 @@ def test_real_flights_4(request):
     ],
 )
 def test_real_flights_5(request, start_date, expected_stats):
-    end_date = date(2026,7,1)
+    end_date = END_DATE
     stats = pia_tester(
         start_date,
         end_date,
