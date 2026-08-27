@@ -24,6 +24,12 @@ MAPPING_SOURCE_PRIORITIES = {
     "pia_broadcast_adsb": 2,
     "pia_callsign_switch": 3,
 }
+MAPPING_SOURCE_LABELS = {
+    "graph_solve": "graph-solve",
+    "ground_control": "groundcontrol",
+    "pia_broadcast_adsb": "callsign",
+    "pia_callsign_switch": "callsign",
+}
 
 
 def load_graph_solve_mappings() -> pl.DataFrame:
@@ -149,7 +155,12 @@ def get_ground_truth_mappings(
     df = (
         mappings.sort(["source_priority", "pia_icao", "real_icao"])
         .unique(subset=["pia_icao"], keep="first", maintain_order=True)
-        .select(MAPPING_COLUMNS)
+        .with_columns(
+            pl.col("mapping_source")
+            .replace_strict(MAPPING_SOURCE_LABELS)
+            .alias("source")
+        )
+        .select(*MAPPING_COLUMNS, "source")
     )
     if not use_cache:
         output_path.parent.mkdir(parents=True, exist_ok=True)
