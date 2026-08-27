@@ -15,8 +15,8 @@ def get_ground_truth_mappings(use_cache = True, start_date = date(2024,1,1)) -> 
     if use_cache and output_path.exists():
         return pl.read_parquet(output_path)
     df_0 = load_ground_control_mappings().filter(pl.col("date") > start_date).drop(["date"])
-    df_1 = get_pia_to_reg_broadcast_icaos()
-    df_2 = get_pia_callsign_switch_icaos()
+    df_1 = get_pia_to_reg_broadcast_icaos(use_cache=use_cache)
+    df_2 = get_pia_callsign_switch_icaos(use_cache=use_cache)
     df = pl.concat([df_0, df_1, df_2], how="vertical").unique(subset=["pia_icao"], keep="first")
     os.makedirs(OUTPUT_PATH, exist_ok=True)
     df.write_parquet(output_path)
@@ -57,15 +57,5 @@ def assert_pia_icaos_not_in_faa(pia_icaos: pl.Series) -> None:
     )
 
 
-def create_pia_csv() -> pl.DataFrame:
-    output_path = OUTPUT_DIR / "data" /"pia" / "all_pia_icaos.csv"
-    pia_icaos = get_unique_pia_icaos_from_adsblol()
-    assert_pia_icaos_not_in_faa(pia_icaos)
-    df = pl.DataFrame({"pia_icao": pia_icaos})
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    print(output_path)
-    df.write_csv(output_path)
-    return df
-
 if __name__ == "__main__":
-    print(create_pia_csv())
+    print(get_ground_truth_mappings(use_cache=False))

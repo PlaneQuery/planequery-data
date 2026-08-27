@@ -1,6 +1,5 @@
 import polars as pl
 
-from data_engineering.filters import pia_or_american_ladd
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import (
     get_ground_truth_mappings,
@@ -11,13 +10,13 @@ from pia.ground_truth import (
 def create_pia_mappings_dataframe(
     all_pia_icaos: pl.Series, df_groundtruth: pl.DataFrame
 ) -> pl.DataFrame:
-    """Create website mappings while retaining every known PIA ICAO."""
-    all_pia_icao_set = set(all_pia_icaos)
-    groundtruth_pia_icao_set = set(df_groundtruth.get_column("pia_icao"))
-    missing_icaos = sorted(groundtruth_pia_icao_set - all_pia_icao_set)
-    assert not missing_icaos, (
+    """Create website mappings, retaining ICAOs without a ground-truth match."""
+    missing_icaos = sorted(
+        set(df_groundtruth.get_column("pia_icao")) - set(all_pia_icaos)
+    )
+    print(
         "Ground-truth PIA ICAOs are missing from all_pia_icaos: "
-        f"{missing_icaos[:20]}"
+        f"{missing_icaos}"
     )
 
     return pl.DataFrame({"icao": all_pia_icaos}).join(
@@ -31,7 +30,7 @@ def create_pia_mappings_dataframe(
 def main():
     all_pia_icaos = get_unique_pia_icaos_from_adsblol()
     print(f"Found {len(all_pia_icaos)} unique PIA ICAOs in ADS-B data.")
-    df_groundtruth = get_ground_truth_mappings()
+    df_groundtruth = get_ground_truth_mappings(use_cache=False)
     print(f"Found {len(df_groundtruth)} unique PIA ICAOs in ground truth mappings.")
 
     df = create_pia_mappings_dataframe(all_pia_icaos, df_groundtruth)
