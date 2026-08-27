@@ -20,9 +20,9 @@ GRAPH_SOLVE_PATH = Path("resources/pia/graph_solve.csv")
 MAPPING_COLUMNS = ["pia_icao", "registration", "real_icao"]
 MAPPING_SOURCE_PRIORITIES = {
     "graph_solve": 0,
-    "ground_control": 1,
-    "pia_broadcast_adsb": 2,
-    "pia_callsign_switch": 3,
+    "pia_broadcast_adsb": 1,
+    "pia_callsign_switch": 2,
+    "ground_control": 3,
 }
 MAPPING_SOURCE_LABELS = {
     "graph_solve": "graph-solve",
