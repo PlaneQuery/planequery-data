@@ -4,7 +4,10 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.ground_control import load_ground_control_mappings
-from data_engineering.openairframes.read import get_openairframes_faa_df
+from data_engineering.openairframes.read import (
+    get_openairframes_faa_df,
+    scan_latest_faa_registration_icao_for_join,
+)
 from data_engineering.utils import OUTPUT_DIR
 from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
 from pia.identify_ladd_planes.pia_callsign_switch import get_pia_callsign_switch_icaos
@@ -13,12 +16,52 @@ OUTPUT_PATH = OUTPUT_DIR / "cache/pia"
 ALL_PIA_ICAOS_CACHE_PATH = Path(
     "resources/pia/all_pias_observed_2024-01-01_2026-08-26.csv"
 )
+GRAPH_SOLVE_PATH = Path("resources/pia/graph_solve.csv")
 MAPPING_COLUMNS = ["pia_icao", "registration", "real_icao"]
 MAPPING_SOURCE_PRIORITIES = {
-    "ground_control": 0,
-    "pia_broadcast_adsb": 1,
-    "pia_callsign_switch": 2,
+    "graph_solve": 0,
+    "ground_control": 1,
+    "pia_broadcast_adsb": 2,
+    "pia_callsign_switch": 3,
 }
+
+
+def load_graph_solve_mappings() -> pl.DataFrame:
+    """Load graph-solved mappings and add registrations from FAA data."""
+    graph_mappings = (
+        pl.scan_csv(
+            GRAPH_SOLVE_PATH,
+            schema_overrides={"pia_icao": pl.String, "real_icao": pl.String},
+        )
+        .with_columns(
+            pl.col("pia_icao").str.strip_chars().str.to_lowercase(),
+            pl.col("real_icao").str.strip_chars().str.to_lowercase(),
+        )
+        .filter(
+            pl.col("pia_icao").is_not_null()
+            & (pl.col("pia_icao") != "")
+            & pl.col("real_icao").is_not_null()
+            & (pl.col("real_icao") != "")
+        )
+        .unique()
+    )
+    registrations = (
+        scan_latest_faa_registration_icao_for_join()
+        .select("real_icao", "registration")
+        .unique(subset=["real_icao"], keep="last")
+    )
+    mappings = graph_mappings.join(
+        registrations,
+        on="real_icao",
+        how="left",
+    ).collect()
+    unmatched = mappings.filter(pl.col("registration").is_null())
+    if not unmatched.is_empty():
+        print(
+            f"{unmatched.height} graph-solve mappings did not match an FAA "
+            f"registration: {unmatched.get_column('real_icao').to_list()}"
+        )
+    return mappings.select(MAPPING_COLUMNS)
 
 
 def _mapping_source_df(df: pl.DataFrame, source: str) -> pl.DataFrame:
@@ -79,8 +122,17 @@ def get_ground_truth_mappings(
     )
     df_1 = get_pia_to_reg_broadcast_icaos(use_cache=use_cache)
     df_2 = get_pia_callsign_switch_icaos(use_cache=use_cache)
+    df_graph_solve = load_graph_solve_mappings()
+    other_source_icaos = (
+        set(df_graph_solve.get_column("pia_icao"))
+        | set(df_1.get_column("pia_icao"))
+        | set(df_2.get_column("pia_icao"))
+    )
+    ground_control_only = set(df_0.get_column("pia_icao")) - other_source_icaos
+    print(f"Mappings found only in ground control: {len(ground_control_only)}")
     mappings = pl.concat(
         [
+            _mapping_source_df(df_graph_solve, "graph_solve"),
             _mapping_source_df(df_0, "ground_control"),
             _mapping_source_df(df_1, "pia_broadcast_adsb"),
             _mapping_source_df(df_2, "pia_callsign_switch"),
