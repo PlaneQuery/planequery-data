@@ -1,5 +1,6 @@
 from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.filters import pia_or_american_ladd_icao
+from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
 from pia.identify_ladd_planes.pia_broadcast_adsb import get_pia_to_reg_broadcast_icaos
 import polars as pl
@@ -55,9 +56,26 @@ def get_unique_pia_icaos_from_adsblol() -> pl.Series:
         .get_column("icao")
     )
 
+
+def assert_pia_icaos_not_in_faa(pia_icaos: pl.Series) -> None:
+    faa_icaos = set(
+        get_openairframes_faa_df()
+        .get_column("transponder_code_hex")
+        .drop_nulls()
+        .str.strip_chars()
+        .str.to_lowercase()
+    )
+    overlapping_icaos = sorted(set(pia_icaos.str.to_lowercase()) & faa_icaos)
+    assert not overlapping_icaos, (
+        "PIA ICAOs found in FAA transponder_code_hex: "
+        f"{overlapping_icaos[:20]}"
+    )
+
+
 def create_pia_csv() -> pl.DataFrame:
     output_path = OUTPUT_DIR / "data" /"pia" / "all_pia_icaos.csv"
     pia_icaos = get_unique_pia_icaos_from_adsblol()
+    assert_pia_icaos_not_in_faa(pia_icaos)
     df = pl.DataFrame({"pia_icao": pia_icaos})
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     print(output_path)
