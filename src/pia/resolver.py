@@ -1,374 +1,310 @@
-
-from collections import deque
+from collections import defaultdict, deque
 from datetime import timedelta
+import time
 from itertools import combinations
 import networkx as nx
+import polars as pl
+import numpy as np
 from ortools.sat.python import cp_model
 from itertools import groupby
+from datetime import date
+from airports.airport_lookup import AirportLookup
+from data_engineering.filters import pia_or_american_ladd_icao
+from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, get_flights
+from pia.check_mappings import check_mappings
+from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
+from datetime import datetime
+import heapq
+from pia.solver import pia_icao_mapping_from_selected_candidates, resolve_links_with_margin
 
-from data_engineering.flights.flight_type import Flight
+AIRPORT_CONTINUITY_TOLERANCE = 10
+airport_lookup = AirportLookup()
+def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
+    # sorted by icao, time
+    # add scores to each edge. 
+    overlapping_pairs = find_overlapping_icao_pairs(flight_index)
+    candidates = []
+    for icao, flights in flight_index.flights_by_icao.items():
+        for i in range(len(flights)):
+            flight = flights[i]
+            if i < len(flights) - 1:
+                next_flight = flights[i + 1]
+                score = edge_score(flight, next_flight)
+                candidate = FlightLinkCandidate(
+                    flight.flight_id,
+                    next_flight.flight_id,
+                    score = score
+                )
+                # if flight.landing_airport_ident == next_flight.takeoff_airport_ident:
+                candidates.append(candidate)
+            else:
+                next_flight = None
+            assert flight.last_lon is not None # TODO: Fix this in type
+            assert flight.last_lat is not None
 
-def _get_pia_nodes(g: nx.DiGraph):
-    pia_nodes = [
-        node
-        for node, attrs in g.nodes(data=True)
-        if attrs["flight"].pia
-    ]
-    return pia_nodes
+            if i != len(flights) - 1 and next_flight is not None:
+                before_time = next_flight.takeoff_time
+            else:
+                before_time = None
+            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
+            for pia_flight in pia_flights:
+                icao_pair = tuple(sorted((icao, pia_flight.icao)))
+                if pia_flight.category != flight.category:
+                    continue
+                if icao_pair in overlapping_pairs:
+                    continue
+                score = edge_score(flight, pia_flight)
+                candidate = FlightLinkCandidate(
+                    flight.flight_id,
+                    pia_flight.flight_id,
+                    score = score
+                )
+                candidates.append(candidate)
+            if flight.pia:
+                ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
+                for ladd_flight in ladd_flights:
+                    icao_pair = tuple(sorted((icao, ladd_flight.icao)))
+                    if icao_pair in overlapping_pairs:
+                        continue
+                    if ladd_flight.category != flight.category:
+                        continue
+                    score = edge_score(flight, ladd_flight)
+                    candidate = FlightLinkCandidate(
+                        flight.flight_id,
+                        ladd_flight.flight_id,
+                        score = score
+                    )
+                    candidates.append(candidate)
 
-def _get_real_nodes(g:nx.DiGraph):
-    real_nodes = [
-        node for node,attrs in g.nodes(data=True)
-        if attrs["flight"].pia == False
-    ]
-    return real_nodes
 
-def remove_pia_source_nodes(g: nx.DiGraph) -> nx.DiGraph:
-    g = g.copy()
-    while True:
-        pia_source_nodes = [
-            node
-            for node, attrs in g.nodes(data=True)
-            if attrs["flight"].pia and g.in_degree(node) == 0
-        ]
-        if not pia_source_nodes:
-            return g
-        print(f"{len(pia_source_nodes)} pia source nodes remove")
-        # for node in pia_source_nodes:
-        #     flight = g.nodes[node]["flight"]
-        #     print(flight.icao, flight.takeoff_time, flight.takeoff_airport_ident)
-        # raise Exception("pia source nodes present")
-        g.remove_nodes_from(pia_source_nodes)
+    return candidates
 
-def path_between_icao_flights(flights: list[Flight], g: nx.DiGraph):
-    flights_by_icao = dict()
-    flights_by_icao = {}
-    for flight in flights:
-        flights_by_icao.setdefault(flight.icao, []).append(flight)
+def find_overlapping_icao_pairs(flight_index: FlightIndex) -> set[tuple[str, str]]:
+    """Return ICAO pairs whose flight histories overlap in time.
 
-    for icao in flights_by_icao:
-        flights_by_icao[icao].sort(key=lambda flight: flight.takeoff_time)
-    
-    missing_paths = []
-    for icao, icao_flights in flights_by_icao.items():
-
-        for prev_flight, next_flight in zip(icao_flights, icao_flights[1:]): # TODO: I can make this consider takeoff/landing airports smoosh together. I could compare airport size.
-            if (
-                prev_flight.flight_id not in g
-                or next_flight.flight_id not in g
-                or not nx.has_path(g, prev_flight.flight_id, next_flight.flight_id)
-            ):
-                missing_paths.append((icao, prev_flight, next_flight))
-    return missing_paths
-
-# There should also be path between same icao flights
-
-MAX_CONNECTION_GAP = timedelta(days=30)
-def build_graph(flights: list[Flight]) -> nx.DiGraph:
-    flights = sorted(flights, key=lambda f: (f.takeoff_time, f.icao))
-    G = nx.DiGraph()
-    for flight in flights:
-        G.add_node(flight.flight_id, flight=flight)
-
-    for flight_i, flight_j in combinations(flights, 2):
-        is_connected = (
-            flight_i.landing_airport_ident == flight_j.takeoff_airport_ident
-            and flight_i.landing_time < flight_j.takeoff_time
-            and flight_j.takeoff_time - flight_i.landing_time <= MAX_CONNECTION_GAP
-            and ((flight_i.icao ==flight_j.icao) or flight_j.pia == True or flight_i.pia == True)
-        )
-        if is_connected:
-            G.add_edge(flight_i.flight_id, flight_j.flight_id)
-
-    return G
-
-def print_graph(g: nx.DiGraph) -> None:
-    print(f"Graph: {g.number_of_nodes()} nodes, {g.number_of_edges()} edges")
-    print("Nodes:")
-    for node in sorted(g.nodes, key=lambda node: g.nodes[node]["flight"].takeoff_time):
-        flight = g.nodes[node]["flight"]
-        tags = []
-        if flight.pia:
-            tags.append("PIA")
-        if flight.ladd:
-            tags.append("LADD")
-        tag_text = ",".join(tags) if tags else "REAL"
-        print(
-            f"  {node} [{tag_text}] "
-            f"{flight.takeoff_time:%Y-%m-%d %H:%M} "
-            f"{flight.takeoff_airport_ident}->{flight.landing_airport_ident} "
-            f"icao={flight.icao} "
-            f"category={flight.category or 'unknown'}"
-        )
-
-    print("Edges:")
-    for source, target in sorted(
-        g.edges,
-        key=lambda edge: (
-            g.nodes[edge[0]]["flight"].takeoff_time,
-            g.nodes[edge[1]]["flight"].takeoff_time,
+    Flights are processed with a sweep line, so the work is proportional to
+    the number of flights that are simultaneously active rather than to every
+    possible pair of flights. Real-to-real pairs do not need constraints
+    because distinct real ICAOs already have distinct fixed solver labels.
+    """
+    pia_icaos = {flight.icao for flight in flight_index.get_pia_flights()}
+    flights = sorted(
+        (
+            flight
+            for icao_flights in flight_index.flights_by_icao.values()
+            for flight in icao_flights
         ),
-    ):
-        source_flight = g.nodes[source]["flight"]
-        target_flight = g.nodes[target]["flight"]
-        gap = target_flight.takeoff_time - source_flight.landing_time
-        print(
-            f"  {source} -> {target} "
-            f"via {source_flight.landing_airport_ident} "
-            f"gap={gap}"
-        )
+        key=lambda flight: flight.takeoff_time,
+    )
 
-def compute_edge_scores_for_node(g: nx.DiGraph): # probably biggest thing is if the real icao later took off from the airport. Then it's like 90% + it was this. This combines with teh time score so real icao + 30 days unlikely. real icao + 6 hours super likely it took this edge.
-    # for now treat score like probablitiy adds up to 1 all edges. 
-    # score 0.0 (impossible) -> #1.0
-    # things to factor in 
-    # if there's more possible edges than it's more ambigious which one it used so therefore that edge score should matter less
-    # TODO: incorporate if callsign is the same.
-    for u in g.nodes:
-        flight = g.nodes[u]["flight"] # maybe for now just do score of the divided by number. I cany simplify by when I pick best path I only need to recalculate for the nodes that were involved
-        successors = list(g.successors(u))
-        for v in successors:
-            flight_s: Flight = g.nodes[v]["flight"]
-            time_gap = flight_s.takeoff_time - flight.landing_time
-            # time_gap_score(time_gap)
-            g.edges[u,v]["score"] = 1
+    active_heap: list[tuple[datetime, str]] = []
+    active_flights: dict[str, Flight] = {}
+    overlapping_pairs: set[tuple[str,str]] = set()
+
+    for flight in flights:
+        while active_heap and active_heap[0][0] <= flight.takeoff_time:
+            _, finished_flight_id = heapq.heappop(active_heap)
+            active_flights.pop(finished_flight_id, None)
+
+        for active_flight in active_flights.values():
+            if active_flight.icao == flight.icao:
+                continue
+            if (
+                active_flight.icao not in pia_icaos
+                and flight.icao not in pia_icaos
+            ):
+                continue
+            overlapping_pairs.add(
+                tuple(sorted((active_flight.icao, flight.icao)))
+            )
+
+        active_flights[flight.flight_id] = flight
+        heapq.heappush(
+            active_heap,
+            (flight.landing_time, flight.flight_id),
+        )
+    print(f"Found {len(overlapping_pairs)} overlapping ICAO pairs.")
+    return overlapping_pairs
 
 def edge_score(a: Flight, b: Flight) -> int:
     score = 0
-    gap = b.takeoff_time - a.landing_time
-    gap_minutes = gap.total_seconds() / 60
-
-    if gap_minutes < 30:
-        score -= 300
-    elif gap_minutes < 6 * 60:
-        score += 1000
-    elif gap_minutes < 24 * 60:
-        score += 700
-    elif gap_minutes < 3 * 24 * 60:
-        score += 250
-    elif gap_minutes < 7 * 24 * 60:
-        score -= 100
-    else:
-        score -= 500
 
     if a.icao == b.icao:
         score += 2000
 
-    if a.category and b.category:
-        if a.category == b.category:
-            score += 300
-        else:
-            score -= 300
-
+    if a.landing_airport_ident == b.takeoff_airport_ident:
+        score += 1500
+    if airport_lookup.airport_ident_is_in_us_faa_airspace(a.takeoff_airport_ident) and not airport_lookup.airport_ident_is_in_us_faa_airspace(a.landing_airport_ident):
+        if a.icao == b.icao:
+            score += 2000
     if a.callsign and b.callsign and a.callsign == b.callsign:
         score += 250
 
-    score = max(-2000, min(score, 1000))
+    score = max(-2000, min(score, 6000))
     return score
-def time_gap_score(time_delta: timedelta) -> float: # This should be based on average time gap between ladd planes.
-    gap_hours = time_delta.total_seconds() / 3600
 
-    if gap_hours < 0:
-        return 0.0          # impossible: takeoff before landing
-
-    if gap_hours < 0.5:
-        return 0.05         # under 30 min: very unlikely
-
-    if gap_hours < 1:
-        return 0.25         # 30-60 min: possible but weak
-
-    if gap_hours < 6:
-        return 1.0          # 1-6 hours: strong
-
-    if gap_hours < 24:
-        return 0.7          # same day: reasonable
-
-    if gap_hours < 72:
-        return 0.35         # 1-3 days: weaker
-
-    if gap_hours < 168:
-        return 0.1          # 3-7 days: very weak
-
-    return 0.02             # over 7 days: extremely weak
-
-UNRESOLVED_PREFIX = "unresolved_pia:"
-def get_canidate_icaos(g: nx.DiGraph):
-    candidates = {}
-    for node in list(g.nodes):
-        flight: Flight = g.nodes[node]["flight"]
-        if flight.pia:
-            descendants = nx.descendants(g,node) # maybe I'll need to make this bounded.
-            ancestors = nx.ancestors(g,node)
-            nodes =  descendants | ancestors
-            real_icaos = set()
-            for node in nodes:
-                f = g.nodes[node]["flight"]
-                if f.pia == False:
-                    real_icaos.add(f.icao)
-            candidates[flight.flight_id] = sorted(list(real_icaos)) +  [f"{UNRESOLVED_PREFIX}{flight.icao}"]
-        else:
-            candidates[flight.flight_id] = [flight.icao]
-    return candidates
-
-def process_graph(g: nx.DiGraph, flights: list[Flight]):
-    model = cp_model.CpModel()
-    y: dict[tuple[str,str], cp_model.IntVar] = {}
-    canidates_icaos_dict = get_canidate_icaos(g)
-    print(f"Number of nodes: {len(g.nodes)}")
-    for flight in flights:
-        assignment_vars = []
-        for real_icao in canidates_icaos_dict[flight.flight_id]:
-            assignment_var = model.new_bool_var(f"y_{flight.flight_id}_{real_icao}")
-            y[(flight.flight_id, real_icao)] = assignment_var
-            assignment_vars.append(assignment_var)
-        model.add(sum(assignment_vars) == 1)
-
-
-    x: dict[tuple[str, str, str], cp_model.IntVar] = {}
-    incoming_by_node = {node: [] for node in g.nodes}
-    outgoing_by_node = {node: [] for node in g.nodes}
-
-    for i, j in g.edges: # basically a flight_id
-        fi = g.nodes[i]["flight"]
-        fj = g.nodes[j]["flight"]
-        shared_candidate_icaos = set(canidates_icaos_dict[fi.flight_id]) & set(canidates_icaos_dict[fj.flight_id])
-        for real_icao in sorted(shared_candidate_icaos):
-            var = model.new_bool_var(f"x_{i}_{j}_{real_icao}")
-            x[(i,j,real_icao)] = var
-
-            model.add(var <= y[i,real_icao])
-            model.add(var <= y[j,real_icao])
-            outgoing_by_node[i].append(var)
-            incoming_by_node[j].append(var)
-
-
-    for j in g.nodes:
-        incoming_vars = incoming_by_node[j]
-        outgoing_vars = outgoing_by_node[j]
-        if incoming_vars:
-            model.add(sum(incoming_vars) <= 1)
-        if outgoing_vars:
-            model.add(sum(outgoing_vars) <= 1)
-    
-    # Optional
-    start_vars: dict[str,cp_model.IntVar] = {}
-    end_vars: dict[str,cp_model.IntVar] = {}
-
-    for flight in flights:
-        fid = flight.flight_id
-        start_var = model.new_bool_var(f"start_{fid}")
-        end_var = model.new_bool_var(f"end_{fid}")
-        start_vars[fid] = start_var
-        end_vars[fid] = end_var
-
-        incoming_vars = incoming_by_node[fid]
-        outgoing_vars = outgoing_by_node[fid]
-
-        model.add(start_var + sum(incoming_vars) == 1)
-        model.add(end_var + sum(outgoing_vars) == 1)
-
-    real_icaos = sorted(
-        {
-            mapped_icao
-            for _, mapped_icao in y
-            if not mapped_icao.startswith(UNRESOLVED_PREFIX)
-        }
+def candidate_mapping_path_exists(
+    graph: nx.DiGraph,
+    flight_index: FlightIndex,
+    pia_icao: str,
+    real_icao: str,
+) -> bool:
+    """Return whether any candidate path supports a PIA-to-real ICAO mapping."""
+    pia_flight_ids = (
+        flight.flight_id
+        for flight in flight_index.flights_by_icao.get(pia_icao, ())
     )
-    for real_icao in real_icaos:
-        assigned_start_vars = []
-        assigned_end_vars = []
-        for flight in flights:
-            fid = flight.flight_id
-            assignment_var = y.get((fid, real_icao))
-            if assignment_var is None:
-                continue
+    real_flight_ids = {
+        flight.flight_id
+        for flight in flight_index.flights_by_icao.get(real_icao, ())
+    }
+    if not real_flight_ids:
+        return False
 
-            assigned_start_var = model.new_bool_var(f"assigned_start_{fid}_{real_icao}")
-            model.add(assigned_start_var <= start_vars[fid])
-            model.add(assigned_start_var <= assignment_var)
-            model.add(assigned_start_var >= start_vars[fid] + assignment_var - 1)
-            assigned_start_vars.append(assigned_start_var)
-
-            assigned_end_var = model.new_bool_var(f"assigned_end_{fid}_{real_icao}")
-            model.add(assigned_end_var <= end_vars[fid])
-            model.add(assigned_end_var <= assignment_var)
-            model.add(assigned_end_var >= end_vars[fid] + assignment_var - 1)
-            assigned_end_vars.append(assigned_end_var)
-
-        if assigned_start_vars:
-            model.add(sum(assigned_start_vars) <= 1)
-        if assigned_end_vars:
-            model.add(sum(assigned_end_vars) <= 1)
-
-    objective_terms = []
-
-    for (i,j,real_icao), var in x.items():
-        fi = g.nodes[i]["flight"]
-        fj = g.nodes[j]["flight"]
-        score = edge_score(fi, fj)
-        objective_terms.append(score * var)
-    START_PENALTY: int = 300
-    END_PENALTY: int = 300
-    for node in g.nodes:
-        objective_terms.append(-START_PENALTY * start_vars[node])
-        objective_terms.append(-END_PENALTY * end_vars[node])
-
-
-    model.maximize(sum(objective_terms))
-    solver = cp_model.CpSolver()
-    # solver.parameters.max_time_in_seconds = 60
-    print("start Solver")
-    status = solver.Solve(model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print_graph(g)
-        raise RuntimeError(f"Solution not found. Status: {status}")
-    
-
-    pia_mapping_dict: dict[Flight, str] = {}
-    def construct_results():
-        result_g = nx.DiGraph()
-        for node in g.nodes:
-            result_g.add_node(node, **g.nodes[node])
-
-        for flight in flights:
-            if flight.pia:
-                for mapped_icao in canidates_icaos_dict[flight.flight_id]:
-                    if solver.Value(y[(flight.flight_id, mapped_icao)]) == 1:
-                        pia_mapping_dict[flight] = mapped_icao
-                        result_g.nodes[flight.flight_id]["mapped_icao"] = mapped_icao
-                        break
-            else:
-                result_g.nodes[flight.flight_id]["mapped_icao"] = flight.icao
-
-        for (i, j, real_icao), var in x.items():
-            if solver.Value(var) == 1:
-                result_g.add_edge(i, j, mapped_icao=real_icao)
-        return result_g
-
-    result_g = construct_results()
-    return pia_mapping_dict, result_g
-def resolve_pia_mappings(flights: list[Flight]):
-    print(f"Number of flights: {len(flights)}")
-    g = build_graph(flights)
-    missing_flights = path_between_icao_flights(flights,g)
-    if missing_flights:
-        print("missing_flights: ", len(missing_flights))
-    components = list(nx.weakly_connected_components(g))
-    subgraphs = [
-        g.subgraph(component_nodes)
-        for component_nodes in components
-    ]
-    print(f"Number of subgraphs: {len(subgraphs)}")
-
-    # 1. subdivide into  unconnected subgraphs to make computation easier/quicker. 
-    # compute_edge_scores_for_node(g)
-    mappings_dict: dict[Flight, str] = {}
-    result_g = nx.DiGraph()
-    for g in subgraphs:
-        if not _get_pia_nodes(g):
+    undirected_graph = graph.to_undirected(as_view=True)
+    for pia_flight_id in pia_flight_ids:
+        if pia_flight_id not in graph:
             continue
-        subgraph_flights = [g.nodes[node]["flight"] for node in g.nodes]
-        mappings, graph = process_graph(g, subgraph_flights)
-        mappings_dict.update(mappings)
-        result_g = nx.compose(result_g, graph)
-    return mappings_dict, result_g
+        component = nx.node_connected_component(
+            undirected_graph,
+            pia_flight_id,
+        )
+        if not component.isdisjoint(real_flight_ids):
+            return True
+    return False
+
+
+def check_candidate_mapping_paths(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+    pia_to_real_icao: dict[str, str],
+) -> dict[str, bool]:
+    """Check each known PIA mapping against the complete candidate graph."""
+    graph = create_graph_from_candidates(candidates, flight_index)
+    return {
+        pia_icao: candidate_mapping_path_exists(
+            graph,
+            flight_index,
+            pia_icao,
+            real_icao,
+        )
+        for pia_icao, real_icao in pia_to_real_icao.items()
+    }
+
+
+def get_flights_connected_to_icao(
+    candidates: list[FlightLinkCandidate],
+    flight_index: FlightIndex,
+    icao: str,
+) -> list[Flight]:
+    """Return all flights in candidate components containing ``icao``."""
+    normalized_icao = icao.casefold()
+    target_flight_ids = {
+        flight.flight_id
+        for indexed_icao, flights in flight_index.flights_by_icao.items()
+        if indexed_icao.casefold() == normalized_icao
+        for flight in flights
+    }
+    if not target_flight_ids:
+        return []
+
+    graph = create_graph_from_candidates(candidates, flight_index)
+    undirected_graph = graph.to_undirected(as_view=True)
+    connected_flight_ids: set[str] = set()
+    for flight_id in target_flight_ids:
+        connected_flight_ids.update(
+            nx.node_connected_component(undirected_graph, flight_id)
+        )
+
+    return sorted(
+        (
+            flight_index.get_flight_by_id(flight_id)
+            for flight_id in connected_flight_ids
+        ),
+        key=lambda flight: flight.takeoff_time,
+    )
+
+def resolve_pia_mappings(
+    flights: list[Flight],
+    # TODO: known_pia_users: list[str],
+    airport_continuity_tolerance: float = 10,
+) -> tuple[dict[Flight, str], pl.DataFrame, pl.DataFrame]:
+    print(f"Number of flights: {len(flights)}")
+    flight_index = FlightIndex(flights, None)
+    pia_flights = flight_index.get_pia_flights()
+    print(f"Number of PIA flights: {len(pia_flights)}")
+    candidates = build_candidates(flight_index)
+    print(f"Number of candidates: {len(candidates)}")
+    selected_candidates, mapping, df_margins = resolve_links_with_margin(
+        flight_index,
+        candidates,
+    )
+    check_mappings(flight_index, mapping)
+    graph = create_graph_from_selected_candidates(selected_candidates, flight_index)
+    # selected_graph_stats(graph, flight_index)
+    pia_icao_mapping = pia_icao_mapping_from_selected_candidates(
+    selected_candidates,
+    flight_index,
+    )
+    pia_mapping_stats_dict = create_mapping_stats(graph, flight_index, pia_icao_mapping)
+    df_mapping_stats = pl.DataFrame(
+        [
+            {"pia_icao": pia_icao, **stats}
+            for pia_icao, stats in pia_mapping_stats_dict.items()
+        ]
+    )
+    print(f"Number of selected candidates: {len(selected_candidates)}")
+    print(f"Number of mappings: {len(mapping.keys())}")
+    return mapping, df_margins, df_mapping_stats
+
+def selected_graph_stats(graph: nx.DiGraph, flight_index: FlightIndex):
+    # I should only get 1 path that contains real_flights[0] and real_flights[-1] maybe 0? 
+    for icao, flights in flight_index.flights_by_icao.items():
+        if len(flights) < 2:
+            continue
+        first_flight = flights[0]
+        last_flight = flights[-1]
+        if first_flight.pia:
+            continue
+        paths = list(nx.all_simple_paths(graph, source=first_flight.flight_id, target=last_flight.flight_id))
+        assert len(paths) == 1, f"Expected 1 path for {icao}, but found {len(paths)}"
+
+def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: dict):
+    pia_icao_mapping_stats = dict()
+    component_count = 0
+    for nodes in nx.weakly_connected_components(graph):
+        component_count += 1
+        component = graph.subgraph(nodes)
+        longest_path = nx.dag_longest_path(component)
+        path_edges = [
+        (u, v, component.edges[u, v])
+        for u, v in nx.utils.pairwise(longest_path)
+        ]
+        score = 0
+        for u, v, edge_data in path_edges:
+            score += edge_data["score"]
+        number_of_flights = len(longest_path)
+        # calculate score on this.
+        pia_icaos = set()
+        for node in longest_path:
+            flight = flight_index.get_flight_by_id(node)
+            if flight.icao in mapping:
+                pia_icaos.add(flight.icao)
+        for pia_icao in pia_icaos:
+            pia_icao_mapping_stats[pia_icao] = {
+                "score": score,
+                "number_of_flights": number_of_flights,
+            }
+    print(f"Number of connected components in selected graph: {component_count}")
+    return pia_icao_mapping_stats
+
+
+
+if __name__ == "__main__":
+    start_date = date(2026, 6, 1)
+    end_date = date(2026, 7, 1)
+    df_flights = get_flights(start_date, end_date)
+    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
+    df_flights = df_flights.filter(pia_or_american_ladd_icao())
+    flights = flights_df_to_flights(df_flights)
+    resolve_pia_mappings(flights)

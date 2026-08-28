@@ -10,6 +10,10 @@ services:
       - .env
     environment:
       OUTPUT_DIR: /app
+      # Compose fails at startup instead of exposing the proxy without auth.
+      ADSB_PROXY_TOKEN: ${ADSB_PROXY_TOKEN:?Set ADSB_PROXY_TOKEN in .env}
+    ports:
+      - "${ADSB_PROXY_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
     networks:

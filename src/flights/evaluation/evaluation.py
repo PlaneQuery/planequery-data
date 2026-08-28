@@ -4,15 +4,25 @@ from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+from data_engineering.filters import pia_or_american_ladd
 
 from data_engineering.flights.flight_type import ALGORITHM_ADSB_SOURCES, get_flights
 from data_engineering.eurocontrol.read import read_eurocontrol_flights
 from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.openairframes.read import add_latest_icao_info
+from flights.evaluation.consecutive_airports import (
+    DEFAULT_DISPLACEMENT_THRESHOLD_KM,
+    consecutive_airport_details,
+    consecutive_airport_stats,
+)
 from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
+from flights.ground_truth.bts_and_sfdps_to_gold import (
+    get_ground_truth_flights_for_day,
+)
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
 from utils import current_commit_hash
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+from data_engineering.flights.mike import get_mike_flights_for_day
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
@@ -56,19 +66,6 @@ def is_helicopter_expr(
             .str.contains(HELICOPTER_PATTERN)
         )
     )
-
-
-def is_american_icao_expr(icao_col: str = "icao") -> pl.Expr:
-    icao = pl.col(icao_col).str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def pia_or_american_ladd_expr() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (is_american_icao_expr() & pl.col("ladd").fill_null(False))
-    )
-
 
 
 def read_fr24_flights(target_date: date) -> pl.DataFrame:
@@ -131,6 +128,8 @@ def source_flights_reader(
         return get_sfdps_flights_day
     if src == "bts":
         return get_bts_flights_for_day
+    if src == "ground_truth":
+        return get_ground_truth_flights_for_day
     if src =="opensky":
         return lambda target_date: get_flights(target_date, algorithm="opensky")
     if src == "fr24":
@@ -139,6 +138,8 @@ def source_flights_reader(
         return read_eurocontrol_flights
     if src == "opdi":
         return get_opdi_flights
+    if src == "mike":
+        return get_mike_flights_for_day
 
     raise ValueError(f"Unknown flight source: {src}")
 
@@ -203,6 +204,10 @@ def main(
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
+    include_consecutive_airport_metrics = False,
+    consecutive_airport_displacement_threshold_km = (
+        DEFAULT_DISPLACEMENT_THRESHOLD_KM
+    ),
 ):
     if isinstance(test_src, str):
         test_src = [test_src]
@@ -234,8 +239,8 @@ def main(
                     df_test = df_test.filter(expr)
                     df_gold = df_gold.filter(expr)
                     if pia_or_american_ladd_only:
-                        df_test = df_test.filter(pia_or_american_ladd_expr())
-                        df_gold = df_gold.filter(pia_or_american_ladd_expr())
+                        df_test = df_test.filter(pia_or_american_ladd())
+                        df_gold = df_gold.filter(pia_or_american_ladd())
                     if not use_all_icaos:
                         matching_cache_key = (
                             test_date,
@@ -260,6 +265,7 @@ def main(
                             matched_gold_by_date[matching_cache_key] = get_matching_icaos_in_flights(
                                 df_gold,
                                 adsb_by_date[adsb_cache_key],
+                                datetime(test_date.year, test_date.month, test_date.day),
                             )
                         df_gold = matched_gold_by_date[matching_cache_key]
                         df_test = df_test.filter(pl.col("icao").is_in(df_gold.get_column("icao").implode()))
@@ -268,9 +274,29 @@ def main(
                     if filter_rotorcraft:
                         df_test = df_test.filter(~is_helicopter_expr())
                         df_gold = df_gold.filter(~is_helicopter_expr())
+                    if include_consecutive_airport_metrics:
+                        consecutive_details = consecutive_airport_details(
+                            df_test
+                        )
+                        df_test = df_test.join(
+                            consecutive_details.drop(
+                                "takeoff_airport_ident"
+                            ),
+                            on=["icao", "takeoff_time"],
+                            how="left",
+                        )
                     df = df_flights_comparision(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
                     results.append(df)
                     stats = df_flights_comparison_stats(df)
+                    if include_consecutive_airport_metrics:
+                        stats.update(
+                            consecutive_airport_stats(
+                                df_test,
+                                displacement_threshold_km=(
+                                    consecutive_airport_displacement_threshold_km
+                                ),
+                            )
+                        )
                     stats_adsb_src = (
                         source_adsb_src
                         if src in ("algorithm", "algorithm-no-airports")
@@ -317,6 +343,16 @@ if __name__ == "__main__":
     parser.add_argument("--use_all_icaos", action="store_true", default=False)
     parser.add_argument("--filter_rotorcraft", action="store_true", default=False)
     parser.add_argument("--pia-or-american-ladd-only", action="store_true", default=False)
+    parser.add_argument(
+        "--include-consecutive-airport-metrics",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--consecutive-airport-displacement-threshold-km",
+        type=float,
+        default=DEFAULT_DISPLACEMENT_THRESHOLD_KM,
+    )
     args = parser.parse_args()
 
     test_dates = args.test_dates
@@ -334,6 +370,12 @@ if __name__ == "__main__":
         use_all_icaos=args.use_all_icaos,
         filter_rotorcraft=args.filter_rotorcraft,
         pia_or_american_ladd_only=args.pia_or_american_ladd_only,
+        include_consecutive_airport_metrics=(
+            args.include_consecutive_airport_metrics
+        ),
+        consecutive_airport_displacement_threshold_km=(
+            args.consecutive_airport_displacement_threshold_km
+        ),
     )
 
-# COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"]
+# COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"] + ["consecutive_airport_displacement_km"]
