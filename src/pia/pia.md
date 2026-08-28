@@ -3,6 +3,11 @@ Privacy in Information Act
 
 # Overall Algorithm
 - Remove start sink paths (source node with no incoming edges). Sink node (node with no outgoing edges. )
+
+# Constraints:
+DAG by time. sucessor takeoff_time must be greator than landing_time.
+A pia icao can only be assigned to one real icao. 
+
 # Features
 if an ladd plane has used PIA Icao before. This could be am multipart graph reduction of remomving guarteed.
 Time should be a central feature. 
@@ -28,3 +33,4 @@ Use little to no AI. This is novel and hard problem. Stay compeltly focused on t
 
 Keep main pia paper open.
 I need test harnesss. 
+

@@ -5,10 +5,11 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import polars as pl
 
+from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
 from pia.flight_continuity import make_flights_continuous
 from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
-from pia.resolver import get_canidate_icaos, resolve_pia_mappings
+from pia.resolver import resolve_pia_mappings
 
 def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: date) -> pl.DataFrame:
     start_datetime = datetime.combine(start_date, time.min)
@@ -37,19 +38,10 @@ def run_pia_algorithm(df_flights):
     start_date inclusive
     end_date exclusive
     '''
-    start_date = date(2026,6,1)
-    # df_flights = keep_start_window_with_prior_anchor(df_flights, start_date)
-    # df_flights = fix_route_mismatches(df_flights)
     flights = flights_df_to_flights(df_flights)
-    make_flights_continuous(flights)
     print("start resolver")
-    mappings,g = resolve_pia_mappings(flights)
-    return mappings,g
-
-if __name__ == "__main__":
-    start_date = date(2025,5,20)
-    end_date = date(2025,5,21)
-    run_pia_algorithm(start_date, end_date)
+    mappings, df_margins = resolve_pia_mappings(flights)
+    return mappings, df_margins
 
 def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
     return (
@@ -74,3 +66,12 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
         .sort("_route_fix_row_nr")
         .drop(["_route_fix_row_nr", "_next_takeoff_airport_ident"])
     )
+
+def main(start_date, end_date):
+    df_flights = get_flights(start_date, end_date)
+    df_flights = df_flights.filter(pia_or_american_ladd_icao())
+    df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
+    mappings, _ = resolve_pia_mappings(flights_df_to_flights(df_flights))
+    return mappings
+if __name__ == "__main__":
+    main(date(2025,5,15), date(2025,5,21))

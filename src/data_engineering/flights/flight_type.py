@@ -1,9 +1,11 @@
+from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
 import polars as pl
 
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
+from utils import haversine
 
 
 FLIGHT_POLARS_SCHEMA = {
@@ -105,6 +107,154 @@ class Flight:
             return NotImplemented
         return self.flight_id == other.flight_id
 
+
+class FlightIndex:
+
+    def __init__(
+        self,
+        flights: list[Flight],
+        airport_continuity_tolerance: float | None = None,
+
+    ) -> None:
+        """Index flights by ICAO, with PIA and LADD time indexes."""
+        self.airport_continuity_tolerance_km = airport_continuity_tolerance
+        self._flights_by_id = {flight.flight_id: flight for flight in flights}
+        self.flights_by_icao: dict[str, list[Flight]] = {}
+
+        pia_flights = []
+        ladd_flights = []
+        for flight in flights:
+            self.flights_by_icao.setdefault(flight.icao, []).append(flight)
+            if flight.ladd:
+                ladd_flights.append(flight)
+            if flight.pia:
+                pia_flights.append(flight)
+
+        for icao_flights in self.flights_by_icao.values():
+            icao_flights.sort(key=lambda flight: flight.takeoff_time)
+
+        self._pia_flights = sorted(pia_flights, key=lambda flight: flight.takeoff_time)
+        self._pia_takeoff_times = [flight.takeoff_time for flight in self._pia_flights]
+        self._ladd_flights = sorted(ladd_flights, key=lambda flight: flight.takeoff_time)
+        self._ladd_takeoff_times = [flight.takeoff_time for flight in self._ladd_flights]
+
+    def get_flight_by_id(self, flight_id: str) -> Flight:
+        """Return the flight for ``flight_id``, or ``None`` when it is absent."""
+        return self._flights_by_id[flight_id]
+
+    def get_flights_ids(self) -> list[str]:
+        """Return the IDs of all indexed flights."""
+        return list(self._flights_by_id)
+
+    def get_pia_flights(self) -> list[Flight]:
+        """Return all PIA flights in takeoff-time order."""
+        return self._pia_flights.copy()
+
+    def get_ladd_flights(self) -> list[Flight]:
+        """Return all LADD flights in takeoff-time order."""
+        return self._ladd_flights.copy()
+
+    def remove_flights(self, flight_ids: set[str]) -> None:
+        """Remove flights from every lookup maintained by the index."""
+        if not flight_ids:
+            return
+
+        for flight_id in flight_ids:
+            self._flights_by_id.pop(flight_id, None)
+
+        for icao, flights in list(self.flights_by_icao.items()):
+            remaining_flights = [
+                flight for flight in flights if flight.flight_id not in flight_ids
+            ]
+            if remaining_flights:
+                self.flights_by_icao[icao] = remaining_flights
+            else:
+                del self.flights_by_icao[icao]
+
+        self._pia_flights = [
+            flight for flight in self._pia_flights if flight.flight_id not in flight_ids
+        ]
+        self._pia_takeoff_times = [
+            flight.takeoff_time for flight in self._pia_flights
+        ]
+        self._ladd_flights = [
+            flight for flight in self._ladd_flights if flight.flight_id not in flight_ids
+        ]
+        self._ladd_takeoff_times = [
+            flight.takeoff_time for flight in self._ladd_flights
+        ]
+
+    def pia_flights_after(
+        self,
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+        before_time: datetime | None = None,
+    ) -> list[Flight]:
+        """Return nearby PIA flights taking off at or after ``time``.
+
+        When ``before_time`` is provided, only flights that land strictly
+        before it are returned.
+
+        A flight is nearby when it takes off from ``airport_ident`` or its first
+        reported position is within :attr:`PIA_LOCATION_RADIUS_KM` of ``lat``,
+        ``lon``.
+        """
+        return self._nearby_flights_after(
+            self._pia_flights,
+            self._pia_takeoff_times,
+            time,
+            lat,
+            lon,
+            airport_ident,
+            before_time,
+        )
+
+    def ladd_flights_after(
+        self,
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+        before_time: datetime | None = None,
+    ) -> list[Flight]:
+        """Return nearby LADD flights taking off at or after ``time``.
+
+        When ``before_time`` is provided, only flights that land strictly
+        before it are returned.
+        """
+        return self._nearby_flights_after(
+            self._ladd_flights,
+            self._ladd_takeoff_times,
+            time,
+            lat,
+            lon,
+            airport_ident,
+            before_time,
+        )
+
+    def _nearby_flights_after(
+        self,
+        flights: list[Flight],
+        takeoff_times: list[datetime],
+        time: datetime,
+        lat: float,
+        lon: float,
+        airport_ident: str,
+        before_time: datetime | None,
+    ) -> list[Flight]:
+        index = bisect_left(takeoff_times, time)
+        return [
+            flight
+            for flight in flights[index:]
+            if (before_time is None or flight.landing_time < before_time)
+            and (
+                flight.takeoff_airport_ident == airport_ident
+            )
+        ]
+
+
 def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
     df = df.select([col for col in FLIGHT_POLARS_SCHEMA if col in df.columns])
     return [
@@ -173,7 +323,7 @@ def flights_algorithm_output_path(
         / "data"
         / "flights"
         / ("algorithm-no-airports" if no_airports_model else "algorithm")
-        / "v1"
+        / "v3"
         / _flights_algorithm_source_dir(adsb_src)
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
@@ -199,6 +349,14 @@ def _get_algorithm_flights_for_day(
         adsb_src=adsb_src,
         no_airports_model=no_airports_model,
     )
+    if not no_airports_model and not path.exists():
+        no_airports_path = flights_algorithm_output_path(
+            target_date,
+            adsb_src=adsb_src,
+            no_airports_model=True,
+        )
+        if no_airports_path.exists():
+            path = no_airports_path
     df = pl.read_parquet(path)
     return with_flight_schema_columns(df)
 
@@ -255,6 +413,27 @@ def get_flights(
         for target_date in _date_range(start_date, end_date)
     ])
 
+def make_pia_consistent(df: pl.DataFrame) -> pl.DataFrame:
+    '''
+    due to notebooks/pia/a0fe1f_switched_between_pia_true_false.ipynb
+    '''
+    icao_pia_switch = (
+    df.group_by("icao")
+    .agg(pl.col("pia").n_unique().alias("pia_variants"))
+    .filter(pl.col("pia_variants") > 1)
+)
+    df = df.with_columns(
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
+        .then(True)
+        .otherwise(pl.col("pia"))
+        .alias("pia"),
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
+        .then(False)
+        .otherwise(pl.col("ladd"))
+        .alias("ladd")
+    )
+    return df
+
 def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     from airports.airport_lookup import AirportLookup
 
@@ -291,17 +470,29 @@ def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     df = add_airport_coords(df, "takeoff")
     return add_airport_coords(df, "landing")
 
-def _is_american_icao_expr() -> pl.Expr:
-    icao = pl.col("icao").str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def _pia_or_american_ladd_filter() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (_is_american_icao_expr() & pl.col("ladd").fill_null(False))
+def create_pia_evaluation_df(flights: list[Flight], mappings: dict[Flight, str], gold_mappings: dict[Flight, str]) -> pl.DataFrame:
+    labels = []
+    predicted_icaos = []
+    real_icaos = []
+    for flight in flights:
+        if flight in mappings:
+            real_icao = mappings[flight]
+            assert flight in gold_mappings, f"Flight {flight.flight_id} is in mappings but not in gold_mappings"
+            gold_real_icao = gold_mappings[flight]
+            if real_icao == gold_real_icao:
+                labels.append(True)
+            else:
+                labels.append(False)
+            predicted_icaos.append(real_icao)
+            real_icaos.append(gold_real_icao)
+        else:
+            predicted_icaos.append(flight.icao)
+            real_icaos.append(flight.icao)
+            labels.append(None)
+    df = flights_to_flights_df(flights).with_columns(
+        pl.Series("predicted_icao", predicted_icaos),
+        pl.Series("real_icao", real_icaos),
+        pl.Series("correct", labels, dtype=pl.Boolean),
     )
-
-
-def pia_or_american_ladd_icao_filter() -> pl.Expr:
-    return _pia_or_american_ladd_filter().any().over("icao")
+    df = df.sort(["predicted_icao", "takeoff_time"])
+    return df

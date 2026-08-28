@@ -12,6 +12,7 @@ from datetime import date
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from flights.flights_comparison import df_flights_comparision
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
+from flights_ai_model_airport.flights_ai_model_utils import AIRPORT_MODEL_ENDPOINTS
 from utils import angle_diff_deg, haversine, initial_bearing_deg, normalize_deg
 
 AIRPORT_RADIUS_KM = 150.0
@@ -58,7 +59,9 @@ def get_training_flights(dt: date):
         icaos=df_sfdps_flights.get_column("icao").drop_nulls().unique().to_list(),
         columns=ADSB_MATCHING_COLUMNS,
     )
-    df_sfdps_flights = get_matching_icaos_in_flights(df_sfdps_flights, df_adsb)
+    df_sfdps_flights = get_matching_icaos_in_flights(
+        df_sfdps_flights, df_adsb, datetime(dt.year, dt.month, dt.day)
+    )
     df_flights = get_flights(dt, no_airports_model=True)
     df = df_flights_comparision(df_flights, df_sfdps_flights, datetime(dt.year, dt.month, dt.day), datetime(dt.year, dt.month, dt.day) + timedelta(days=1), compare_airports=False)
     df = df.filter(pl.col("match_status") == "both")
@@ -81,12 +84,23 @@ def create_flight_airport_features(
     target_airport_ident = _flight_airport_ident(flight, endpoint)
     rows = []
     potential_airports: list[Airport] = airport_lookup.getAirportsWithinRadius(lat, lon, AIRPORT_RADIUS_KM)
-    if len(potential_airports) == 0:
-        assert target_airport_ident is not None
-        airport = airport_lookup.get_Airport_from_airport_ident(target_airport_ident)
-        assert airport is not None
-        potential_airports = [airport]
-        assert len(potential_airports) > 0, f"Could not find airport for {endpoint}_airport_ident: {target_airport_ident}"
+    # During inference, target_airport_ident is the endpoint selected by the
+    # distance-based algorithm. Keep that strong baseline available even when
+    # the endpoint point is sparse and more than AIRPORT_RADIUS_KM away. During
+    # training this also guarantees that every candidate group has a positive
+    # example.
+    if target_airport_ident is not None:
+        target_airport = airport_lookup.get_Airport_from_airport_ident(target_airport_ident)
+        if (
+            target_airport is not None
+            and all(airport.ident != target_airport_ident for airport in potential_airports)
+        ):
+            potential_airports.append(target_airport)
+    assert len(potential_airports) > 0, (
+        f"No airports found within radius for lat: {lat}, lon: {lon}, "
+        f"baro_altitude_ft: {baro_altitude_ft}, "
+        f"{endpoint}_airport_ident: {target_airport_ident}"
+    )
     for airport in potential_airports:
         distance_km = haversine(lat, lon, airport.lat, airport.lon)
         elevation_above_airport = max(baro_altitude_ft - airport.elevation_ft, 0)
@@ -133,24 +147,36 @@ def _flight_airport_ident(flight: Flight, endpoint: str) -> str:
     raise ValueError(f"Unsupported airport model endpoint: {endpoint}")
 
 def extract_from_messages(messages: list[AdsbMessage], endpoint: str = "takeoff"):
-    # need to get first non null track, baro_altitude_ft, veritcal_rate
-    endpoint_message = messages[0] if endpoint == "takeoff" else messages[-1]
-    endpoint_baro_altitude_ft = None
-    endpoint_track = None
-    messages_to_scan = messages if endpoint == "takeoff" else reversed(messages)
+    if endpoint not in AIRPORT_MODEL_ENDPOINTS:
+        raise ValueError(f"Unsupported airport model endpoint: {endpoint}")
 
-    for m in messages_to_scan:
-        if m.baro_altitude_ft is not None:
-            endpoint_baro_altitude_ft = m.baro_altitude_ft
-        if m.track_deg is not None:
-            assert m.track_deg >= 0 and m.track_deg <= 360, f"Invalid track_deg: {m.track_deg}"
-            endpoint_track = m.track_deg
-        if endpoint_baro_altitude_ft is not None and endpoint_track is not None:
-            break
+    # Parquet row order is not part of its contract. In particular, OpenSky
+    # cache generation deduplicates and writes with maintain_order=False.
+    ordered_messages = sorted(messages, key=lambda message: message.time)
+    messages_to_scan = (
+        ordered_messages
+        if endpoint == "takeoff"
+        else reversed(ordered_messages)
+    )
 
-    assert endpoint_baro_altitude_ft is not None, f"No baro_altitude_ft found in {len(messages)} messages"
-    assert endpoint_track is not None, f"No track_deg found in {len(messages)} messages"
-    return endpoint_message.time, endpoint_message.lat, endpoint_message.lon, endpoint_baro_altitude_ft, endpoint_track
+    # Keep position, altitude, and track aligned to one observation instead of
+    # combining an endpoint position with motion data from a different time.
+    for message in messages_to_scan:
+        if message.baro_altitude_ft is None or message.track_deg is None:
+            continue
+        assert 0 <= message.track_deg <= 360, f"Invalid track_deg: {message.track_deg}"
+        return (
+            message.time,
+            message.lat,
+            message.lon,
+            message.baro_altitude_ft,
+            message.track_deg,
+        )
+
+    raise ValueError(
+        f"No message with both baro_altitude_ft and track_deg found in "
+        f"{len(messages)} messages"
+    )
 
 def create_features_for_flight(flight: Flight):
     pass
@@ -201,7 +227,7 @@ def process_flights(
             (pl.col("icao") == flight.icao)
             & (pl.col("time") >= flight.first_message_time)
             & (pl.col("time") <= flight.last_message_time)
-        )
+        ).sort("time")
         if len(df_adsb) < 2:
             continue
         if df_adsb.get_column("baro_altitude_ft").is_not_null().sum() < 2:
@@ -211,7 +237,15 @@ def process_flights(
         adsb_messages = adsb_messages_from_parquet_df(df_adsb)
         if adsb_messages[-1].time - adsb_messages[0].time < timedelta(minutes=15):
             continue
-        _endpoint_time, lat, lon, baro_altitude_ft, track = extract_from_messages(adsb_messages, endpoint) # TODO: Use some sort of features type.
+        try:
+            _endpoint_time, lat, lon, baro_altitude_ft, track = extract_from_messages(
+                adsb_messages,
+                endpoint,
+            )
+        except ValueError:
+            # Leave the distance-based airport unchanged when no single
+            # observation has the data needed to score candidates reliably.
+            continue
         rows = create_flight_airport_features(lat, lon, baro_altitude_ft, track, flight, endpoint)
         for row in rows:
             X_rows.append(row[0])

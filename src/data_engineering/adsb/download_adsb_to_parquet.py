@@ -284,7 +284,7 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
 
 OS_CPU_COUNT = os.cpu_count() or 1
 MAX_WORKERS = min(OS_CPU_COUNT, 8)
-SKIP_DAYS = {date(2026, 5, 5)}
+SKIP_DAYS = {date(2026, 5, 5), date(2026, 5, 6)}
 
 
 def _day_date(day: date | datetime) -> date:
@@ -355,7 +355,8 @@ def process_version_date(
     
     Args:
         version_date: Format like 'v2026.02.01'
-        keep_folders: Whether to keep extracted folders after processing
+        keep_folders: Whether to keep downloaded release archives and extracted
+            folders after processing
     
     Returns:
         Number of rows processed
@@ -383,10 +384,13 @@ def process_version_date(
     
     print(f"\nTotal rows written: {total_rows}")
     print(f"Partition dir: {partition_dir}")
-    # Cleanup extracted directory
-    if not keep_folders and os.path.exists(extract_dir):
-        print(f"Removing {extract_dir}")
-        shutil.rmtree(extract_dir)
+    # The automatic ADS-B reader sets keep_folders=False so temporary source
+    # artifacts do not remain after their parquet partition has been written.
+    if not keep_folders:
+        for artifact_dir in (Path(extract_dir), _release_dir(version_date)):
+            if artifact_dir.exists():
+                print(f"Removing {artifact_dir}")
+                shutil.rmtree(artifact_dir)
     
     return total_rows
 
@@ -426,7 +430,8 @@ def create_parquet_for_day(
     
     Args:
         day: datetime object or string in 'YYYY-MM-DD' format
-        keep_folders: Whether to keep extracted folders after processing
+        keep_folders: Whether to keep downloaded release archives and extracted
+            folders after processing
     
     Returns:
         Path to the created parquet partition directory, or None if failed
