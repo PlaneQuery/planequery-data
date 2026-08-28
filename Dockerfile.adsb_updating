@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir \
 COPY src/ src/
 
 # Set environment variables from .env file
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 ENV ENVIRONMENT=production
 
 # ADS-B HTTP proxy. Publish this through an HTTPS reverse proxy or tunnel.
