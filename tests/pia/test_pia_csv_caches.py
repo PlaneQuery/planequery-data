@@ -210,11 +210,62 @@ def test_ground_truth_reports_cross_source_disagreements(monkeypatch, capsys):
     result = ground_truth.get_ground_truth_mappings(use_cache=True)
 
     assert result.to_dicts() == [
-        {"pia_icao": "pia001", "registration": "N100", "real_icao": "a0b001"}
+        {
+            "pia_icao": "pia001",
+            "registration": "N200",
+            "real_icao": "a0b002",
+            "source": "callsign",
+        }
     ]
     output = capsys.readouterr().out
     assert "ground_control" in output
     assert "pia_broadcast_adsb" in output
+
+
+def test_callsign_switch_has_priority_over_ground_control(monkeypatch):
+    ground_control = pl.DataFrame(
+        {
+            "pia_icao": ["pia001"],
+            "registration": ["N100"],
+            "real_icao": ["a0b001"],
+            "date": [date(2025, 1, 1)],
+        }
+    )
+    callsign_switch = pl.DataFrame(
+        {
+            "pia_icao": ["pia001"],
+            "registration": ["N200"],
+            "real_icao": ["a0b002"],
+        }
+    )
+    empty = callsign_switch.clear()
+    monkeypatch.setattr(
+        ground_truth, "load_ground_control_mappings", lambda: ground_control
+    )
+    monkeypatch.setattr(
+        ground_truth, "load_graph_solve_mappings", lambda: empty
+    )
+    monkeypatch.setattr(
+        ground_truth,
+        "get_pia_to_reg_broadcast_icaos",
+        lambda use_cache: empty,
+    )
+    monkeypatch.setattr(
+        ground_truth,
+        "get_pia_callsign_switch_icaos",
+        lambda use_cache: callsign_switch,
+    )
+
+    result = ground_truth.get_ground_truth_mappings(use_cache=True)
+
+    assert result.to_dicts() == [
+        {
+            "pia_icao": "pia001",
+            "registration": "N200",
+            "real_icao": "a0b002",
+            "source": "callsign",
+        }
+    ]
 
 
 def test_graph_solve_has_highest_priority_and_reports_disagreements(
@@ -262,7 +313,12 @@ def test_graph_solve_has_highest_priority_and_reports_disagreements(
     result = ground_truth.get_ground_truth_mappings(use_cache=True)
 
     assert result.to_dicts() == [
-        {"pia_icao": "pia001", "registration": "N300", "real_icao": "a0b003"}
+        {
+            "pia_icao": "pia001",
+            "registration": "N300",
+            "real_icao": "a0b003",
+            "source": "graph-solve",
+        }
     ]
     output = capsys.readouterr().out
     assert "graph_solve" in output
@@ -277,6 +333,7 @@ def test_website_csv_retains_icaos_without_a_joined_mapping():
             "pia_icao": ["pia001"],
             "registration": ["N100"],
             "real_icao": ["a0b001"],
+            "source": ["callsign"],
         }
     )
 
@@ -286,6 +343,16 @@ def test_website_csv_retains_icaos_without_a_joined_mapping():
     )
 
     assert result.to_dicts() == [
-        {"icao": "pia001", "real_icao": "a0b001", "registration": "N100"},
-        {"icao": "pia002", "real_icao": None, "registration": None},
+        {
+            "icao": "pia001",
+            "real_icao": "a0b001",
+            "registration": "N100",
+            "source": "callsign",
+        },
+        {
+            "icao": "pia002",
+            "real_icao": None,
+            "registration": None,
+            "source": None,
+        },
     ]
