@@ -5,8 +5,11 @@ import json
 import sys
 import os
 from pathlib import Path
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import requests
 import argparse
+import threading
 
 import time
 import logging
@@ -24,6 +27,16 @@ ADSB_REAPI_DATA_ROOT = Path(
 )
 ADSB_REAPI_CHECKPOINT_PATH = ADSB_REAPI_DATA_ROOT / "_state" / "last_message_time_by_icao.json"
 ADSB_REAPI_PENDING_UPLOADS_PATH = ADSB_REAPI_DATA_ROOT / "_state" / "pending_uploads.json"
+ADSB_PROXY_CACHE_PATH = Path(
+    os.getenv(
+        "ADSB_PROXY_CACHE_PATH",
+        str(ADSB_REAPI_DATA_ROOT / "_state" / "proxy_messages.json"),
+    )
+)
+ADSB_PROXY_CACHE_WINDOW_SECONDS = int(
+    os.getenv("ADSB_PROXY_CACHE_WINDOW_SECONDS", str(5 * 60))
+)
+ADSB_PROXY_TOKEN = os.getenv("ADSB_PROXY_TOKEN")
 ADSB_REAPI_UPLOAD_THRESHOLD_BYTES = int(
     os.getenv("ADSB_REAPI_UPLOAD_THRESHOLD_BYTES", str(5 * 1024 * 1024))
 )
@@ -82,27 +95,208 @@ ADSB_MESSAGE_POLARS_SCHEMA = {
 }
 
 
-def process_adsb_message_stream(primary_source: str = "adsb.lol", write_to_s3: bool = False) -> str:
+class AdsbMessageCache:
+    """Thread-safe, durable cache of messages from the last successful fetches.
+
+    The cache is only pruned after a successful upstream response.  Consequently,
+    an upstream outage returns the last complete cache, even after it becomes older
+    than the nominal five-minute window.
+    """
+
+    def __init__(self, path: Path, window_seconds: int = 5 * 60):
+        self.path = path
+        self.window_ms = window_seconds * 1000
+        self._lock = threading.Lock()
+        self._messages: list[dict] = []
+        self._last_success_at: str | None = None
+        self._last_error: str | None = None
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            with self.path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            messages = data.get("messages", [])
+            if not isinstance(messages, list):
+                raise ValueError("messages must be a list")
+            self._messages = [message for message in messages if isinstance(message, dict)]
+            last_success_at = data.get("last_success_at")
+            if isinstance(last_success_at, str):
+                self._last_success_at = last_success_at
+            logging.info("Loaded %d cached ADS-B messages from %s", len(self._messages), self.path)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            logging.exception("Could not load ADS-B proxy cache from %s", self.path)
+
+    def record_success(
+        self,
+        rows: list[dict],
+        api_call_time: datetime,
+    ) -> None:
+        api_call_time = api_call_time.astimezone(timezone.utc)
+        cutoff_ms = int(api_call_time.timestamp() * 1000) - self.window_ms
+        new_messages = []
+        for row in rows:
+            message_time = row["time"]
+            if message_time.tzinfo is None:
+                message_time = message_time.replace(tzinfo=timezone.utc)
+            else:
+                message_time = message_time.astimezone(timezone.utc)
+            new_messages.append(
+                {
+                    "time": message_time.isoformat(),
+                    "time_ms": int(message_time.timestamp() * 1000),
+                    "api_call_time": api_call_time.isoformat(),
+                    "data_source": row["data_source"],
+                    "message": json.loads(row["raw_message_json"]),
+                }
+            )
+
+        with self._lock:
+            self._messages.extend(new_messages)
+            deduplicated = {}
+            for message in self._messages:
+                if _cached_message_time_ms(message) >= cutoff_ms:
+                    deduplicated[_cached_message_key(message)] = message
+            self._messages = list(deduplicated.values())
+            self._last_success_at = api_call_time.isoformat()
+            self._last_error = None
+            self._save_locked()
+
+    def record_failure(self, error: Exception) -> None:
+        with self._lock:
+            self._last_error = str(error)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            messages = list(self._messages)
+            return {
+                "messages": messages,
+                "count": len(messages),
+                "window_seconds": self.window_ms // 1000,
+                "stale": self._last_error is not None,
+                "last_success_at": self._last_success_at,
+                "upstream_error": self._last_error,
+            }
+
+    def _save_locked(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "last_success_at": self._last_success_at,
+                        "messages": self._messages,
+                    },
+                    f,
+                    separators=(",", ":"),
+                )
+            tmp_path.replace(self.path)
+        except OSError:
+            # Keep serving the in-memory cache if the SD card is temporarily
+            # unavailable or full.
+            logging.exception("Could not persist ADS-B proxy cache to %s", self.path)
+
+
+def _cached_message_time_ms(message: dict) -> int:
+    try:
+        return int(message["time_ms"])
+    except (KeyError, TypeError, ValueError):
+        return 0
+
+
+def _cached_message_key(message: dict) -> tuple:
+    raw_message = message.get("message")
+    icao = raw_message.get("hex") if isinstance(raw_message, dict) else None
+    return (message.get("data_source"), icao, _cached_message_time_ms(message))
+
+
+def make_proxy_handler(message_cache: AdsbMessageCache, token: str | None = None):
+    class AdsbProxyHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            path = self.path.partition("?")[0]
+            if path == "/health":
+                snapshot = message_cache.snapshot()
+                snapshot.pop("messages")
+                status = (
+                    HTTPStatus.OK
+                    if snapshot["last_success_at"] is not None
+                    else HTTPStatus.SERVICE_UNAVAILABLE
+                )
+                self._send_json(status, snapshot)
+                return
+            if path not in ("/", "/adsb", "/api/adsb"):
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+                return
+            if token and self.headers.get("Authorization") != f"Bearer {token}":
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            self._send_json(HTTPStatus.OK, message_cache.snapshot())
+
+        def _send_json(self, status: HTTPStatus, payload: dict) -> None:
+            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args) -> None:
+            logging.info("ADS-B proxy: " + format, *args)
+
+    return AdsbProxyHandler
+
+
+def start_proxy_server(
+    message_cache: AdsbMessageCache,
+    host: str,
+    port: int,
+    token: str | None = None,
+) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), make_proxy_handler(message_cache, token))
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, name="adsb-proxy", daemon=True)
+    thread.start()
+    logging.info("ADS-B proxy listening on http://%s:%d", host, port)
+    return server
+
+
+def process_adsb_message_stream(
+    primary_source: str = "adsb.lol",
+    write_to_s3: bool = False,
+    message_cache: AdsbMessageCache | None = None,
+) -> str:
     start = time.perf_counter()
     now = time.time()
     fallback_until = getattr(process_adsb_message_stream, "_fallback_until", 0.0)
     fallback_source = "adsb.fi" if primary_source == "adsb.lol" else "adsb.lol"
     
-    if now >= fallback_until:
-        try:
-            print(f"Using primary source: {primary_source}")
-            fetch_result = process_reapi_states(primary_source)
-            process_adsb_message_stream._fallback_until = 0.0
-            data_source = primary_source
-        except Exception as exc:
-            logging.warning(f"{primary_source} failed, using {fallback_source} for 10 minutes: %s", exc)
-            process_adsb_message_stream._fallback_until = now + 10 * 60
+    try:
+        if now >= fallback_until:
+            try:
+                print(f"Using primary source: {primary_source}")
+                fetch_result = process_reapi_states(primary_source)
+                process_adsb_message_stream._fallback_until = 0.0
+                data_source = primary_source
+            except Exception as exc:
+                logging.warning(f"{primary_source} failed, using {fallback_source} for 10 minutes: %s", exc)
+                process_adsb_message_stream._fallback_until = now + 10 * 60
+                fetch_result = process_reapi_states(fallback_source)
+                data_source = fallback_source
+        else:
+            print(f"Primary source fallback active, using {fallback_source}")
             fetch_result = process_reapi_states(fallback_source)
             data_source = fallback_source
-    else:
-        print(f"Primary source fallback active, using {fallback_source}")
-        fetch_result = process_reapi_states(fallback_source)
-        data_source = fallback_source
+    except Exception as exc:
+        if message_cache is not None:
+            message_cache.record_failure(exc)
+        raise
+
+    if message_cache is not None:
+        message_cache.record_success(fetch_result.rows, fetch_result.api_call_time)
 
     # process_takeoff_landing_events(adsb_messages)
     print(len(fetch_result.rows), "new messages to write")
@@ -486,6 +680,13 @@ if __name__ == '__main__':
         action="store_true",
         help="Upload created ReAPI parquet files to S3 after writing them locally",
     )
+    parser.add_argument("--host", default="0.0.0.0", help="Proxy bind address")
+    parser.add_argument("--port", type=int, default=8000, help="Proxy HTTP port")
+    parser.add_argument(
+        "--no-http",
+        action="store_true",
+        help="Disable the HTTP proxy and only run ADS-B ingestion",
+    )
     args = parser.parse_args()
     
     # python -m src.adsb_updating.main
@@ -500,18 +701,41 @@ if __name__ == '__main__':
         print("S3 upload disabled; pass --write-to-s3 to upload parquet files")
     logging.info("Logging at Info level")
     get_last_message_time_for_icaos()
+    message_cache = AdsbMessageCache(
+        ADSB_PROXY_CACHE_PATH,
+        window_seconds=ADSB_PROXY_CACHE_WINDOW_SECONDS,
+    )
+    proxy_server = None
+    if not args.no_http:
+        proxy_server = start_proxy_server(
+            message_cache,
+            args.host,
+            args.port,
+            token=ADSB_PROXY_TOKEN,
+        )
     interval = 60*2  # 2 minute
     data_source = args.primary_source
-    while True:
-        loop_start = time.perf_counter()
-        try:
-            data_source = process_adsb_message_stream(args.primary_source, write_to_s3=args.write_to_s3)
-        except Exception as e:
-            logging.exception("Error in process_adsb_message_stream: %s", e)
-        elapsed = time.perf_counter() - loop_start
-        interval = 30 if data_source == "adsb.lol" else 60 * 2
-        sleep_time = interval - elapsed
-        print(f"Sleeping for {sleep_time:.2f} seconds before next fetch...")
-        if sleep_time > 0:
-            time.sleep(sleep_time)
-        # if sleep_time <= 0, loop continues immediately
+    try:
+        while True:
+            loop_start = time.perf_counter()
+            try:
+                data_source = process_adsb_message_stream(
+                    args.primary_source,
+                    write_to_s3=args.write_to_s3,
+                    message_cache=message_cache,
+                )
+            except Exception as e:
+                logging.exception("Error in process_adsb_message_stream: %s", e)
+            elapsed = time.perf_counter() - loop_start
+            interval = 30 if data_source == "adsb.lol" else 60 * 2
+            sleep_time = interval - elapsed
+            print(f"Sleeping for {sleep_time:.2f} seconds before next fetch...")
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            # if sleep_time <= 0, loop continues immediately
+    except KeyboardInterrupt:
+        logging.info("Stopping ADS-B service")
+    finally:
+        if proxy_server is not None:
+            proxy_server.shutdown()
+            proxy_server.server_close()
