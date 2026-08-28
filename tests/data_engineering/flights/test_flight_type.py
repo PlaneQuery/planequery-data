@@ -4,6 +4,8 @@ import polars as pl
 
 from data_engineering.flights.flight_type import (
     FLIGHT_POLARS_SCHEMA,
+    Flight,
+    FlightIndex,
     add_lat_lon_to_airport_ident_columns,
     flights_df_to_flights,
 )
@@ -91,4 +93,71 @@ def test_add_lat_lon_to_airport_ident_columns(monkeypatch):
             "landing_airport_lat": None,
             "landing_airport_lon": None,
         },
+    ]
+
+
+def test_flight_index_filters_pia_flights_by_time_and_location():
+    start = datetime(2026, 1, 1, 12)
+    flights = [
+        Flight("ladd", start, start, "KJFK", "KBOS", ladd=True),
+        Flight("matching-airport", start, start, "KJFK", "KBOS", pia=True),
+        Flight(
+            "nearby-position",
+            start,
+            start,
+            "KTEB",
+            "KBOS",
+            first_lat=40.7,
+            first_lon=-74.0,
+            pia=True,
+        ),
+        Flight("lands-too-late", start, start.replace(hour=14), "KJFK", "KBOS", pia=True),
+        Flight(
+            "too-far",
+            start,
+            start,
+            "KTEB",
+            "KBOS",
+            first_lat=42.0,
+            first_lon=-71.0,
+            pia=True,
+        ),
+        Flight("too-early", start.replace(hour=11), start, "KJFK", "KBOS", pia=True),
+    ]
+
+    index = FlightIndex(flights)
+
+    assert list(index.flights_by_icao) == [
+        "ladd",
+        "matching-airport",
+        "nearby-position",
+        "lands-too-late",
+        "too-far",
+        "too-early",
+    ]
+    assert index.get_flight_by_id("matching-airport_2026-01-01_12-00") is flights[1]
+    assert index.get_flight_by_id("missing_2026-01-01_12-00") is None
+    assert index.get_flights_ids() == [flight.flight_id for flight in flights]
+    assert [flight.icao for flight in index.get_pia_flights()] == [
+        "too-early",
+        "matching-airport",
+        "nearby-position",
+        "lands-too-late",
+        "too-far",
+    ]
+    assert [flight.icao for flight in index.get_ladd_flights()] == ["ladd"]
+    result = index.pia_flights_after(
+        start,
+        40.7,
+        -74.0,
+        "KJFK",
+        before_time=start.replace(hour=13),
+    )
+
+    assert [flight.icao for flight in result] == [
+        "matching-airport",
+        "nearby-position",
+    ]
+    assert [flight.icao for flight in index.ladd_flights_after(start, 40.7, -74.0, "KJFK")] == [
+        "ladd"
     ]

@@ -13,11 +13,14 @@ RUN pip install --no-cache-dir \
 COPY src/ src/
 
 # Set environment variables from .env file
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 ENV ENVIRONMENT=production
 
-# Expose any ports if needed (optional, remove if not applicable)
-# EXPOSE 8000
+# ADS-B HTTP proxy. Publish this through an HTTPS reverse proxy or tunnel.
+EXPOSE 8000
 
-# Run the ADS-B main script
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)" || exit 1
+
+# Run both the HTTP proxy and the existing S3 uploader.
 CMD ["python", "src/adsb/main.py", "--write-to-s3"]

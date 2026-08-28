@@ -1,10 +1,13 @@
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 import os
+import shutil
 from pathlib import Path
+from typing import Literal, overload
 
 import polars as pl
 
+from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
@@ -160,17 +163,29 @@ def create_adsb_parquet_for_day(
     current_day: date,
     *,
     pia_or_american_ladd_only: bool = False,
-):
+) -> bool:
+    """Ensure a parquet partition exists and report whether it was created locally."""
     if not _parquet_day_has_data(current_day):
         _restore_partition_from_s3(_parquet_day_dir(current_day))
     if _parquet_day_has_data(current_day):
-        return
+        return False
 
     from data_engineering.adsb.download_adsb_to_parquet import create_parquet_for_day
     create_parquet_for_day(
         current_day,
+        keep_folders=False,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
+    return _parquet_day_has_data(current_day)
+
+
+def remove_adsb_parquet_days(days: Sequence[date]) -> None:
+    """Remove locally-created adsb.lol parquet partitions after their final use."""
+    for day in days:
+        partition_dir = _parquet_day_dir(day)
+        if partition_dir.exists():
+            print(f"Removing temporary parquet partition: {partition_dir}")
+            shutil.rmtree(partition_dir)
 
 
 def scan_adsb(
@@ -262,11 +277,26 @@ def _scan_opensky_days(
         join_lf_with_openairframes,
         scan_cached_opensky_state_vectors_for_day,
     )
+    from data_engineering.opensky.preprocess import (
+        OPENSKY_PREPROCESSING_COLUMNS,
+        preprocess_opensky_adsb,
+    )
 
     metadata_columns = set(OPENAIRFRAMES_COLUMNS)
     filter_columns = ["pia", "ladd"] if pia_or_american_ladd_only else []
     scan_columns = list(dict.fromkeys(list(columns) + ["time", "icao", *filter_columns]))
-    cached_columns = [column for column in scan_columns if column not in metadata_columns]
+    cached_columns = list(
+        dict.fromkeys(
+            [
+                *[
+                    column
+                    for column in scan_columns
+                    if column not in metadata_columns
+                ],
+                *OPENSKY_PREPROCESSING_COLUMNS,
+            ]
+        )
+    )
 
     lf = pl.concat(
         [
@@ -276,6 +306,7 @@ def _scan_opensky_days(
     )
     if icaos is not None:
         lf = lf.filter(pl.col("icao").is_in([icao.lower() for icao in icaos]))
+    lf = preprocess_opensky_adsb(lf)
 
     needs_metadata = bool(metadata_columns.intersection(scan_columns))
     if needs_metadata or pia_or_american_ladd_only:
@@ -300,7 +331,7 @@ def ensure_adsb_source_data(
     *,
     source: str = "adsblol",
     pia_or_american_ladd_only: bool = False,
-) -> None:
+) -> list[date]:
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -310,11 +341,14 @@ def ensure_adsb_source_data(
 
     days = _date_range_for_interval(start_dt, end_dt)
     if source == "adsblol":
-        for day in days:
-            create_adsb_parquet_for_day(
+        return [
+            day
+            for day in days
+            if create_adsb_parquet_for_day(
                 day,
                 pia_or_american_ladd_only=pia_or_american_ladd_only,
             )
+        ]
     elif source == "adsbx":
         for day in days:
             create_adsbx_parquet_for_day(day)
@@ -327,6 +361,35 @@ def ensure_adsb_source_data(
             write_opensky_state_vectors_cache_for_day(day)
     else:
         raise ValueError(f"Unknown ADS-B source: {source!r}")
+    return []
+
+
+@overload
+def read_adsb(
+    start: date | datetime,
+    end: datetime | None = None,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: list[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    source: str = "adsblol",
+    lazy: Literal[False] = False,
+) -> pl.DataFrame: ...
+
+
+@overload
+def read_adsb(
+    start: date | datetime,
+    end: datetime | None = None,
+    columns=DEFAULT_COLUMNS_SET,
+    additional_columns=None,
+    *,
+    icaos: list[str] | None = None,
+    pia_or_american_ladd_only: bool = False,
+    source: str = "adsblol",
+    lazy: Literal[True],
+) -> pl.LazyFrame: ...
 
 
 def read_adsb(
@@ -338,16 +401,17 @@ def read_adsb(
     icaos: list[str] | None = None,
     pia_or_american_ladd_only: bool = False,
     source: str = "adsblol",
-) -> pl.DataFrame:
-    """Read ADS-B messages, eagerly (lazy scanning is only used internally
-    where it helps, e.g. column/predicate pushdown while reading parquet).
+    lazy: bool = False,
+) -> pl.DataFrame | pl.LazyFrame:
+    """Read ADS-B messages.
 
     Pass a `date` for `start` to read a single full day, or `datetime`s for
     `start`/`end` to read a `[start, end)` range spanning one or more days
     (e.g. a context window around a target day).
 
     `source` selects the data provider: "adsblol" (default), "adsbx", or
-    "opensky".
+    "opensky". Set `lazy=True` to return a `polars.LazyFrame`; by default the
+    result is collected and returned as a `polars.DataFrame`.
     """
     if isinstance(start, datetime):
         start_dt = start
@@ -390,7 +454,7 @@ def read_adsb(
         raise ValueError(f"Unknown ADS-B source: {source!r}")
 
     lf = lf.filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(requested_columns)
-    return lf.collect()
+    return lf if lazy else lf.collect()
 
 
 def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_COLUMNS_SET):
@@ -413,22 +477,6 @@ def get_icaos_in_adsb(current_day: date, source: str = "adsblol") -> list[str]:
         df = scan_adsb(current_day, columns=["icao"]).filter(exclude_invalid_icaos()).unique().collect()
         return df["icao"].to_list()
     raise ValueError(f"Unknown ADS-B source: {source!r}")
-
-def is_american_icao(col: str = "icao") -> pl.Expr:
-    icao = pl.col(col).str.to_lowercase()
-    return (icao >= "a00000") & (icao <= "afffff")
-
-
-def pia_or_american_ladd() -> pl.Expr:
-    return (
-        pl.col("pia").fill_null(False)
-        | (is_american_icao() & pl.col("ladd").fill_null(False))
-    )
-
-
-def pia_or_american_ladd_icao() -> pl.Expr:
-    return pia_or_american_ladd().any().over("icao")
-
 
 def exclude_invalid_icaos(col: str = "icao") -> pl.Expr:
     return (pl.col(col) >= "010000") & (pl.col(col) != "ffffff") & ~pl.col(col).str.starts_with("~")
