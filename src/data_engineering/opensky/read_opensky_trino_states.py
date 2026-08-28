@@ -10,7 +10,13 @@ from data_engineering.utils import OUTPUT_DIR
 
 
 DEFAULT_OPENSKY_TRINO_ROOT = OUTPUT_DIR / "data/raw/opensky/trino-tables"
-DEFAULT_OPENSKY_PROCESSED_ROOT = OUTPUT_DIR / "data/processed/opensky/v1"
+DEFAULT_OPENSKY_PROCESSED_ROOT = OUTPUT_DIR / "data/processed/opensky/v2"
+
+# A state-vector row is a snapshot, not necessarily a newly received position.
+# OpenSky may repeat the last known state for minutes. Only retain snapshots
+# whose aircraft contact and position update are both recent.
+MAX_STATE_VECTOR_AGE_SECONDS = 5.0
+MAX_FUTURE_TIMESTAMP_SKEW_SECONDS = 1.0
 
 
 def _coerce_date(current_day: date | datetime | str) -> date:
@@ -80,7 +86,10 @@ MAP_DICT = {
     "baroAltitude": "baro_altitude_ft", # meters -> ft
 }
 ADDITIONAL_COLUMNS = ["time", "lat", "lon", "callsign"]
-DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS = list(MAP_DICT.keys()) + ADDITIONAL_COLUMNS
+FRESHNESS_COLUMNS = ["lastContact", "lastPosUpdate"]
+DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS = (
+    list(MAP_DICT.keys()) + ADDITIONAL_COLUMNS + FRESHNESS_COLUMNS
+)
 OPENAIRFRAMES_COLUMNS = [
     "registration",
     "aircraft_type",
@@ -140,8 +149,58 @@ def align_to_adsb_parquet_schema(df: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
+    """Convert fresh OpenSky state vectors to canonical ADS-B-like rows.
+
+    OpenSky's ``time`` is the state-vector snapshot time. Position values may
+    have been carried forward from an older update, whose actual timestamp is
+    ``lastPosUpdate``. Stale snapshots are removed, repeated snapshots of the
+    same position update are collapsed, and the output is timestamped with the
+    actual position-update time.
+    """
+    required_columns = {
+        "time",
+        "icao24",
+        "lastContact",
+        "lastPosUpdate",
+    }
+    missing_columns = required_columns.difference(df.collect_schema().names())
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(
+            f"OpenSky normalization requires freshness columns: {missing}"
+        )
+
+    contact_age = (
+        pl.col("time").cast(pl.Float64) - pl.col("lastContact")
+    )
+    position_age = (
+        pl.col("time").cast(pl.Float64) - pl.col("lastPosUpdate")
+    )
+    df = (
+        df
+        .filter(
+            pl.col("lastContact").is_finite()
+            & pl.col("lastPosUpdate").is_finite()
+            & contact_age.is_between(
+                -MAX_FUTURE_TIMESTAMP_SKEW_SECONDS,
+                MAX_STATE_VECTOR_AGE_SECONDS,
+                closed="both",
+            )
+            & position_age.is_between(
+                -MAX_FUTURE_TIMESTAMP_SKEW_SECONDS,
+                MAX_STATE_VECTOR_AGE_SECONDS,
+                closed="both",
+            )
+        )
+        .unique(
+            subset=["icao24", "lastPosUpdate"],
+            keep="any",
+            maintain_order=False,
+        )
+    )
+
     return df.select(
-        pl.from_epoch(pl.col("time"), time_unit="s")
+        pl.from_epoch(pl.col("lastPosUpdate"), time_unit="s")
         .dt.replace_time_zone(None)
         .cast(pl.Datetime("ms"))
         .alias("time"),
@@ -154,6 +213,18 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
+def scan_normalized_opensky_state_vectors_for_day(
+    current_day: date | datetime | str,
+) -> pl.LazyFrame:
+    """Scan and normalize one day of raw OpenSky state-vector parquet."""
+    return normalize_opensky_state_vectors(
+        scan_opensky_state_vectors_for_day(
+            current_day,
+            DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS,
+        )
+    )
+
+
 def write_opensky_state_vectors_cache_for_day(
     current_day: date | datetime | str,
     overwrite: bool = False,
@@ -162,16 +233,14 @@ def write_opensky_state_vectors_cache_for_day(
     if output_path.exists() and not overwrite:
         return output_path
 
-    df = normalize_opensky_state_vectors(
-        scan_opensky_state_vectors_for_day(
-            current_day,
-            DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS,
-        )
-    )
+    df = scan_normalized_opensky_state_vectors_for_day(current_day)
     df = align_to_adsb_parquet_schema(df)
-    df = df.sort(["icao", "time"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.sink_parquet(output_path)
+    df.sink_parquet(
+        output_path,
+        compression="zstd",
+        maintain_order=False,
+    )
     return output_path
 
 

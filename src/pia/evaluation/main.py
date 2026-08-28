@@ -2,7 +2,6 @@ from datetime import timedelta
 import os
 from pathlib import Path
 from data_engineering.flights.flight_type import Flight
-from pia.resolver import build_graph
 from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
 from data_engineering.utils import OUTPUT_DIR
@@ -366,6 +365,11 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
 
 from pia.evaluation.pia_graph_0 import flights_2, flights_3
 def main(flights = flights_3):
+    # This legacy graph visualizer depends on the graph-building API, while the
+    # evaluation metrics below do not. Keep the dependency local so metrics can
+    # be imported and tested independently.
+    from pia.resolver import build_graph
+
     print(f"{len(flights)} nodes")
     pia_flights = [flight for flight in flights if flight.pia]
     G = build_graph(flights)
@@ -379,7 +383,87 @@ def _mapping_key_flight_id(key) -> str:
         return key.flight_id
     return key
 
+
+def traceability_stats(mapping_dict, gold_dict):
+    """Measure whether each aircraft was followed through the full test window.
+
+    The aircraft cohort is the set of real ICAOs in ``gold_dict``. An aircraft
+    is traceable only when every expected PIA-flight mapping for that ICAO is
+    present and correct. Consequently, one broken mapping loses that aircraft
+    for the remainder of the evaluated history.
+
+    The returned index is the ratio of traceable aircraft to cohort aircraft.
+    A larger value therefore means greater traceability and less privacy.
+    """
+    expected_aircraft = set(gold_dict.values())
+    lost_aircraft = {
+        expected_icao
+        for flight, expected_icao in gold_dict.items()
+        if mapping_dict.get(flight) != expected_icao
+    }
+    traceable_aircraft = expected_aircraft - lost_aircraft
+    expected_count = len(expected_aircraft)
+
+    return {
+        "expected_aircraft": expected_count,
+        "traceable_aircraft": len(traceable_aircraft),
+        "lost_aircraft": len(lost_aircraft),
+        "traceability_index": (
+            len(traceable_aircraft) / expected_count if expected_count else 0
+        ),
+    }
+
+
+def pia_icao_stats(mapping_dict, gold_dict):
+    """Measure complete resolution and correctness for each expected PIA ICAO.
+
+    A PIA ICAO is covered only when every expected flight using that ICAO has
+    a prediction. It is correct only when every one of those predictions is
+    correct. This preserves flight-level changes in identity rather than
+    reducing a PIA ICAO to one expected real ICAO.
+    """
+    expected_flights_by_pia_icao = {}
+    for flight in gold_dict:
+        pia_icao = flight.icao if isinstance(flight, Flight) else flight
+        expected_flights_by_pia_icao.setdefault(pia_icao, []).append(flight)
+
+    resolved_pia_icaos = {
+        pia_icao
+        for pia_icao, flights in expected_flights_by_pia_icao.items()
+        if all(mapping_dict.get(flight) is not None for flight in flights)
+    }
+    correct_pia_icaos = {
+        pia_icao
+        for pia_icao, flights in expected_flights_by_pia_icao.items()
+        if all(mapping_dict.get(flight) == gold_dict[flight] for flight in flights)
+    }
+    expected_count = len(expected_flights_by_pia_icao)
+    resolved_count = len(resolved_pia_icaos)
+    correct_count = len(correct_pia_icaos)
+
+    return {
+        "expected_pia_icaos": expected_count,
+        "resolved_pia_icaos": resolved_count,
+        "correct_pia_icaos": correct_count,
+        "pia_icao_coverage": (
+            resolved_count / expected_count if expected_count else 0
+        ),
+        "pia_icao_resolved_accuracy": (
+            correct_count / resolved_count if resolved_count else 0
+        ),
+        "pia_icao_overall_accuracy": (
+            correct_count / expected_count if expected_count else 0
+        ),
+    }
+
+
 def evaluation(mapping_dict, gold_dict):
+    """Compare resolved flight mappings with the expected mappings.
+
+    Coverage measures how often the resolver assigns an identity instead of
+    abstaining. Resolved accuracy measures correctness only among those
+    assignments, while overall accuracy includes unresolved expected flights.
+    """
     comparison_schema = {
         "flight_id": pl.String,
         "expected_icao": pl.String,
@@ -410,15 +494,29 @@ def evaluation(mapping_dict, gold_dict):
     expected_count = len(gold_dict)
     predicted_count = len(mapping_dict)
     correct_count = df_mapping_comparison.filter(pl.col("correct")).height
+    missing_count = df_mapping_comparison.filter(pl.col("missing_prediction")).height
+    extra_count = df_mapping_comparison.filter(pl.col("extra_prediction")).height
+    resolved_expected_count = expected_count - missing_count
 
     stats = {
-        "expected_mappings": expected_count,
-        "predicted_mappings": predicted_count,
-        "correct_mappings": correct_count,
-        "missing_predictions": df_mapping_comparison.filter(pl.col("missing_prediction")).height,
-        "extra_predictions": df_mapping_comparison.filter(pl.col("extra_prediction")).height,
-        "accuracy": correct_count / expected_count if expected_count else 0,
+        "expected_flight_mappings": expected_count,
+        "predicted_flight_mappings": predicted_count,
+        "resolved_expected_flight_mappings": resolved_expected_count,
+        "correct_flight_mappings": correct_count,
+        "missing_flight_predictions": missing_count,
+        "extra_flight_predictions": extra_count,
+        "flight_coverage": (
+            resolved_expected_count / expected_count if expected_count else 0
+        ),
+        "flight_resolved_accuracy": (
+            correct_count / resolved_expected_count if resolved_expected_count else 0
+        ),
+        "flight_overall_accuracy": (
+            correct_count / expected_count if expected_count else 0
+        ),
     }
+    stats.update(pia_icao_stats(mapping_dict, gold_dict))
+    stats.update(traceability_stats(mapping_dict, gold_dict))
     return stats
 
 if __name__ == "__main__":

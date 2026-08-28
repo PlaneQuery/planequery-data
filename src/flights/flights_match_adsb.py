@@ -2,6 +2,7 @@ from data_engineering.flights.flight_type import flights_df_to_flights
 import polars as pl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 from airports.airport_lookup import AirportLookup
 from utils import haversine
 
@@ -116,7 +117,9 @@ def adsb_rows_dwell_at_airport(
         if row.time >= dwell_start and (dwell_end is None or row.time <= dwell_end)
     )
 
-def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool: # TODO: have an option to check accuracy of airprots as well. 
+def flights_match_adsb(
+    df_flights: pl.DataFrame, df_adsb: pl.DataFrame, start_dt: datetime
+) -> bool | Literal["unknown"]:
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
@@ -136,7 +139,7 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         )
         for row in df_adsb.select(adsb_cols).iter_rows(named=True)
     ]
-    assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False
+    assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False # TODO: may need to change.
 
     # check that takeoff_airport idents match landing airport idents
     # 2. check that from when flights say plane is landed plane did not move
@@ -171,6 +174,8 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
             else [previous_flight.landing_time, flight.takeoff_time],
             use_time_grace=previous_flight is not None,
         ):
+            if previous_flight is None and flight.takeoff_time < start_dt + timedelta(hours=8):
+                return "unknown"
             return False
 
         current_landing_row_idx = closest_time_row_idx(adsb_rows, flight.landing_time, True)
@@ -201,20 +206,48 @@ def flights_match_adsb(df_flights: pl.DataFrame, df_adsb: pl.DataFrame) -> bool:
         last_flight.landing_airport_ident,
         last_flight.landing_time,
     )
-    # 1. check that all takeoff_landing airport idents equal each other
+
+def add_adsb_match_column(
+    df_flights_full: pl.DataFrame,
+    df_adsb_full: pl.DataFrame,
+    start_dt: datetime,
+) -> pl.DataFrame:
+    """Add a nullable ADS-B match result for every flight's ICAO.
+
+    ``None`` represents an indeterminate (``"unknown"``) match, while ``True``
+    and ``False`` represent definite results.
+    """
+    if df_flights_full.is_empty():
+        return df_flights_full.with_columns(
+            pl.Series("adsb_matched", [], dtype=pl.Boolean)
+        )
+
+    match_by_icao = {}
+    for key, df_flights in df_flights_full.group_by("icao"):
+        icao = key[0]
+        df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
+        match_by_icao[icao] = flights_match_adsb(df_flights, df_adsb, start_dt)
+
+    return df_flights_full.with_columns(
+        pl.Series(
+            "adsb_matched",
+            [
+                None if match_by_icao[icao] == "unknown" else match_by_icao[icao]
+                for icao in df_flights_full.get_column("icao")
+            ],
+            dtype=pl.Boolean,
+        )
+    )
+
 
 def get_matching_icaos_in_flights(
     df_flights_full: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
+    start_dt: datetime,
 ) -> pl.DataFrame:
-    icaos = set()
-    for key, df_flights in df_flights_full.group_by("icao"):
-        icao = key[0]
-        df_adsb = df_adsb_full.filter(pl.col("icao") == icao).sort("time")
-        if flights_match_adsb(df_flights, df_adsb):
-            icaos.add(icao)
-    df = df_flights_full.filter(pl.col("icao").is_in(icaos))
-    return df
+    return add_adsb_match_column(df_flights_full, df_adsb_full, start_dt).filter(
+        pl.col("adsb_matched") == True
+    ).drop("adsb_matched")
 
 
     

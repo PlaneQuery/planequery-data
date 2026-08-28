@@ -1,10 +1,14 @@
 from datetime import date, datetime
+from typing import Literal
 import polars as pl
 import pytest
+from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df
+from flights.evaluation.flights_test_package import flights_match_real_adsb_with_dropout
 from flights.flights_match_adsb import flights_match_adsb
-
+from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
+from tests.flights.example_false_flights import False_Flights_Test_Packages
 TARGET_DATE = date(2026, 3, 1)
 
 FLIGHT_MATCH_CASES = [
@@ -47,6 +51,17 @@ FLIGHT_MATCH_CASES = [
         ],
         id="a67084-matches",
         marks=pytest.mark.skip(reason="flights_match_algoirhtm gives False negatie on this.") # False negatives are ok. False Positives are terrible
+    ),
+    pytest.param(
+        "a00929",
+        "unknown",
+        [
+            (datetime(2026, 3, 1, 3, 5), "KORD", datetime(2026, 3, 1, 4, 46), "KOKC"),
+            (datetime(2026, 3, 1, 16, 35), "KOKC", datetime(2026, 3, 1, 19, 17), "KLGA"),
+            (datetime(2026, 3, 1, 20, 55), "KLGA", datetime(2026, 3, 1, 22, 19), "KCLE"),
+            (datetime(2026, 3, 1, 23, 32), "KCLE", datetime(2026, 3, 2, 0, 31), "KLGA"),
+        ],
+        id="a00929-early-coverage-unknown",
     ),
     pytest.param(
         "a4ed4f",
@@ -97,11 +112,13 @@ def flights_df(icao: str, flight_rows) -> pl.DataFrame:
 
 
 @pytest.mark.parametrize(("icao", "expected_match", "flight_rows"), FLIGHT_MATCH_CASES)
-def test_flights_match_adsb(icao: str, expected_match: bool, flight_rows):
+def test_flights_match_adsb(
+    icao: str, expected_match: bool | Literal["unknown"], flight_rows
+):
     df_flights = flights_df(icao, flight_rows)
     df_adsb = read_adsb(TARGET_DATE, icaos=[icao]).filter(pl.col("icao") == icao)
-
-    assert flights_match_adsb(df_flights, df_adsb) is expected_match
+    dt = datetime(TARGET_DATE.year, TARGET_DATE.month, TARGET_DATE.day)
+    assert flights_match_adsb(df_flights, df_adsb, dt) == expected_match
 
 
 def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
@@ -119,9 +136,16 @@ def test_flights_match_adsb_rejects_a233f0_on_2026_06_01():
         ],
     )
     df_adsb = read_adsb(target_date, icaos=[icao]).filter(pl.col("icao") == icao)
+    dt = datetime(target_date.year, target_date.month, target_date.day)
+    assert flights_match_adsb(df_flights, df_adsb, dt) is False
 
-    assert flights_match_adsb(df_flights, df_adsb) is False
+def test_flights_test_packages():
+    for test_package in Flights_Test_Packages:
+        flights_match_real_adsb_with_dropout(test_package)
 
+def test_false_flights_test_packages():
+    for test_package in False_Flights_Test_Packages:
+        flights_match_real_adsb_with_dropout(test_package)
 
 '''
 # adsb.lol readsb historical is missing data for a54cd9 on 2026-03-01
