@@ -226,9 +226,16 @@ def get_flights_connected_to_icao(
 
 def resolve_pia_mappings(
     flights: list[Flight],
+    known_pia_mappings: dict[str, str] = {},
     # TODO: known_pia_users: list[str],
     airport_continuity_tolerance: float = 10,
 ) -> tuple[dict[Flight, str], pl.DataFrame, pl.DataFrame]:
+    if len(known_pia_mappings) > 0:
+        icaos_to_remove = set(known_pia_mappings.keys()) | set(known_pia_mappings.values())
+        flights[:] = [
+            flight for flight in flights
+            if flight.icao not in icaos_to_remove
+        ]
     print(f"Number of flights: {len(flights)}")
     flight_index = FlightIndex(flights, None)
     pia_flights = flight_index.get_pia_flights()
