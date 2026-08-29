@@ -246,6 +246,7 @@ def pia_tester(
     end_date: date,
     correct_number: int,
     filter=False,
+    filter_known_mappings: bool = False,
     test_name=None,
     label=None,
     pia_location_radius_km: float = 10,
@@ -254,7 +255,8 @@ def pia_tester(
 
     ``test_name`` controls the artifact directory; pytest callers can pass
     ``request.node.name``. When provided, ``label`` is appended to the
-    timestamped run directory.
+    timestamped run directory. Set ``filter_known_mappings`` to exclude known
+    PIA and real ICAOs while resolving mappings.
     """
     safe_test_name = test_name or "pia_tester"
     safe_label = None
@@ -304,7 +306,11 @@ def pia_tester(
     # candidates = build_candidates(flight_index)
     # check_candidate_path_is_possible(pia_to_real_icao, flight_index, candidates)
 
-    mappings, df_margins, df_mapping_stats = resolve_pia_mappings(flights, pia_location_radius_km)
+    known_pia_mappings = pia_to_real_icao if filter_known_mappings else {}
+    mappings, df_margins, df_mapping_stats = resolve_pia_mappings(
+        flights,
+        known_pia_mappings=known_pia_mappings,
+    )
     gold_mapping = {
         flight: pia_to_real_icao[flight.icao]
         for flight in flights
