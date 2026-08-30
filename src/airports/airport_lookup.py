@@ -47,15 +47,36 @@ class Airport_Types(StrEnum):
         return NotImplemented
 @dataclass
 class Airport:
+    id: int | None
     ident: str
-    iata: str
-    lat: float
-    lon: float
-    elevation_ft: int
     type: Airport_Types
-    iso_country: str = ""
-    iso_region: str = ""
+    name: str | None
+    latitude_deg: float
+    longitude_deg: float
+    elevation_ft: int | None = None
+    continent: str | None = None
+    iso_country: str | None = None
+    iso_region: str | None = None
+    municipality: str | None = None
+    scheduled_service: str | None = None
+    icao_code: str | None = None
+    iata_code: str | None = None
+    gps_code: str | None = None
+    local_code: str | None = None
+    home_link: str | None = None
+    wikipedia_link: str | None = None
+    keywords: str | None = None
     distance_from_plane_point_in_km: float = 0.0
+
+    @property
+    def lat(self) -> float:
+        """Backward-compatible alias for callers that use short coordinate names."""
+        return self.latitude_deg
+
+    @property
+    def lon(self) -> float:
+        """Backward-compatible alias for callers that use short coordinate names."""
+        return self.longitude_deg
 
 
 class AirportLookup:
@@ -89,31 +110,41 @@ class AirportLookup:
                     longitude_deg = float(airport['longitude_deg'])
                     airport_coord_deg = (latitude_deg, longitude_deg)
                     airport_coord_rad = np.radians(airport_coord_deg)
-                    ident: str = airport['ident'] # TODO: rename this to ident which is correct name. 
-                    elevation_ft = airport["elevation_ft"]
-                    elevation_ft = int(elevation_ft) if elevation_ft else 0
-                    iata: str = airport['iata_code'] # can be '' empty
-                    gps_code: str = airport["gps_code"]
-                    local_code: str = airport["local_code"]
+                    ident: str = airport['ident']
+                    elevation_ft = self._optional_int(airport.get("elevation_ft"))
+                    iata_code = self._optional_string(airport.get('iata_code'))
+                    gps_code = self._optional_string(airport.get("gps_code"))
+                    local_code = self._optional_string(airport.get("local_code"))
                     add_airport = Airport(
+                        id=self._optional_int(airport.get("id")),
                         ident=ident,
-                        iata=iata,
-                        lat=latitude_deg,
-                        lon=longitude_deg,
-                        elevation_ft=elevation_ft,
                         type=Airport_Types(airport['type']),
-                        iso_country=airport["iso_country"],
-                        iso_region=airport["iso_region"],
+                        name=self._optional_string(airport.get("name")),
+                        latitude_deg=latitude_deg,
+                        longitude_deg=longitude_deg,
+                        elevation_ft=elevation_ft,
+                        continent=self._optional_string(airport.get("continent")),
+                        iso_country=self._optional_string(airport.get("iso_country")),
+                        iso_region=self._optional_string(airport.get("iso_region")),
+                        municipality=self._optional_string(airport.get("municipality")),
+                        scheduled_service=self._optional_string(airport.get("scheduled_service")),
+                        icao_code=self._optional_string(airport.get("icao_code")),
+                        iata_code=iata_code,
+                        gps_code=gps_code,
+                        local_code=local_code,
+                        home_link=self._optional_string(airport.get("home_link")),
+                        wikipedia_link=self._optional_string(airport.get("wikipedia_link")),
+                        keywords=self._optional_string(airport.get("keywords")),
                     )
                     self._airports.append(add_airport)
                     self._coordinates.append(airport_coord_deg)
                     self._coordinates_rad.append(airport_coord_rad)
-                    if iata:
-                        self.iata_index[iata] = add_airport
-                        self.iata_to_ident_index[iata] = ident
+                    if iata_code:
+                        self.iata_index[iata_code] = add_airport
+                        self.iata_to_ident_index[iata_code] = ident
                     if ident:
                         self.ident_index[ident] = add_airport
-                    self._set_code_to_ident(self.gps_code_to_ident_index, gps_code, add_airport)
+                    self._set_code_to_ident(self.gps_code_to_ident_index, gps_code, add_airport) # TODO: Probably get rid of these seperate indexes.
                     self._set_code_to_ident(self.local_code_to_ident_index, local_code, add_airport)
             self._ball_tree = BallTree(np.array(self._coordinates_rad), metric='haversine')
             coords_rad = np.array(self._coordinates_rad)  # (N, 2) lat/lon in radians
@@ -124,13 +155,26 @@ class AirportLookup:
             ])
             self._kd_tree = KDTree(xyz)
 
+    @staticmethod
+    def _optional_string(value: str | None) -> str | None:
+        return value if value else None
+
+    @staticmethod
+    def _optional_int(value: str | None) -> int | None:
+        return int(value) if value else None
+
     def _code_mapping_score(self, airport: Airport) -> tuple[bool, int]:
         return (
             airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES,
             Airport_Size_Ranking[airport.type.name],
         )
 
-    def _set_code_to_ident(self, index: dict[str, str], code: str, airport: Airport) -> None:
+    def _set_code_to_ident(
+        self,
+        index: dict[str, str],
+        code: str | None,
+        airport: Airport,
+    ) -> None:
         if not code:
             return
 
