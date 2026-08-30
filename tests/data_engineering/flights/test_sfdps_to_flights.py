@@ -1,8 +1,57 @@
-from datetime import datetime
+from datetime import date, datetime
+from types import SimpleNamespace
 
 import polars as pl
 
 from data_engineering.flights import sfdps_to_flights as sfdps
+
+
+class FakeAirportLookup:
+    def get_airport_from_code(self, code):
+        if code == "AMBIGUOUS":
+            raise ValueError("ambiguous airport code")
+        ident = {
+            "ALM": "KALM",
+            "IA8": "IA8",
+        }.get(code)
+        return SimpleNamespace(ident=ident) if ident is not None else None
+
+
+def test_resolve_sfdps_airport_idents_replaces_raw_codes():
+    source = pl.DataFrame(
+        {
+            "takeoff_airport_ident": ["ALM", "UNKNOWN", "AMBIGUOUS"],
+            "landing_airport_ident": ["IA8", None, "ALM"],
+        }
+    )
+
+    result = sfdps.resolve_sfdps_airport_idents(source, FakeAirportLookup())
+
+    assert result.to_dicts() == [
+        {"takeoff_airport_ident": "KALM", "landing_airport_ident": "IA8"},
+        {"takeoff_airport_ident": None, "landing_airport_ident": None},
+        {"takeoff_airport_ident": None, "landing_airport_ident": "KALM"},
+    ]
+
+
+def test_get_sfdps_flights_day_resolves_cached_airport_codes(tmp_path, monkeypatch):
+    target_date = date(2026, 3, 1)
+    parquet_path = tmp_path / "part-0.parquet"
+    pl.DataFrame(
+        {
+            "takeoff_airport_ident": ["ALM"],
+            "landing_airport_ident": ["IA8"],
+        }
+    ).write_parquet(parquet_path)
+    monkeypatch.setattr(sfdps, "_missing_sfdps_days", lambda: set())
+    monkeypatch.setattr(sfdps, "sfdps_flights_parquet_path", lambda _date: parquet_path)
+    monkeypatch.setattr(sfdps, "AirportLookup", FakeAirportLookup)
+
+    result = sfdps.get_sfdps_flights_day(target_date)
+
+    assert result.to_dicts() == [
+        {"takeoff_airport_ident": "KALM", "landing_airport_ident": "IA8"}
+    ]
 
 
 def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
