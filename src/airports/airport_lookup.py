@@ -1,19 +1,22 @@
 import csv
 import logging
-import numpy as np
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from sklearn.neighbors import BallTree
-from scipy.spatial import KDTree
 from enum import StrEnum
-from pathlib import Path
-import os
+
+import numpy as np
+from sklearn.neighbors import BallTree
+
 from data_engineering.utils import OUTPUT_DIR
+
 Airport_Size_Ranking = { # TODO: move this inside class but python is being annoying with thinking this should be another enum value when I try to make it a member variable
     "SMALL_AIRPORT": 1,
     "MEDIUM_AIRPORT": 2,
     "LARGE_AIRPORT": 3
 }
+AIRPORT_CODE_COLUMNS = ("ident", "local_code", "icao_code", "gps_code", "iata_code")
+DEFAULT_AIRPORT_CODE_PRIORITY = ("local_code", "ident", "icao_code", "gps_code")
 US_FAA_AIRSPACE_ISO_COUNTRIES = {"US", "PR", "GU", "VI", "AS", "MP", "UM"}
 US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES = {"PR", "GU", "VI", "AS", "MP", "UM"}
 US_FAA_ISLAND_AIRSPACE_ISO_REGIONS = {"US-HI", "US-AK"}
@@ -45,6 +48,8 @@ class Airport_Types(StrEnum):
         if isinstance(other, Airport_Types):
             return Airport_Size_Ranking[self.name] >= Airport_Size_Ranking[other.name]
         return NotImplemented
+
+
 @dataclass(eq=False)
 class Airport:
     id: int | None
@@ -103,6 +108,8 @@ class Airport:
                 or self.iso_region in US_FAA_ISLAND_AIRSPACE_ISO_REGIONS
             )
         )
+
+
 class AirportLookup:
     _instance = None
 
@@ -124,6 +131,7 @@ class AirportLookup:
         self.gps_code_to_ident_index: dict[str, str] = {}
         self.local_code_to_ident_index: dict[str, str] = {}
         self.ident_index: dict[str, Airport] = {}
+        self.code_to_airports: dict[str, set[Airport]] = {}
         path = OUTPUT_DIR / 'data' / 'raw/ourairports' / 'airports.csv'
         print(f"Loading airports from {path}")
         with open(path, 'r', encoding='utf-8') as airport_csv:
@@ -168,16 +176,13 @@ class AirportLookup:
                         self.iata_to_ident_index[iata_code] = ident
                     if ident:
                         self.ident_index[ident] = add_airport
+                    for code_column in AIRPORT_CODE_COLUMNS:
+                        code = getattr(add_airport, code_column)
+                        if code:
+                            self.code_to_airports.setdefault(code, set()).add(add_airport)
                     self._set_code_to_ident(self.gps_code_to_ident_index, gps_code, add_airport) # TODO: Probably get rid of these seperate indexes.
                     self._set_code_to_ident(self.local_code_to_ident_index, local_code, add_airport)
             self._ball_tree = BallTree(np.array(self._coordinates_rad), metric='haversine')
-            coords_rad = np.array(self._coordinates_rad)  # (N, 2) lat/lon in radians
-            xyz = np.column_stack([
-                np.cos(coords_rad[:, 0]) * np.cos(coords_rad[:, 1]),
-                np.cos(coords_rad[:, 0]) * np.sin(coords_rad[:, 1]),
-                np.sin(coords_rad[:, 0]),
-            ])
-            self._kd_tree = KDTree(xyz)
 
     @staticmethod
     def _optional_string(value: str | None) -> str | None:
@@ -210,6 +215,64 @@ class AirportLookup:
         existing_airport = self.ident_index.get(existing_ident)
         if existing_airport is None or self._code_mapping_score(airport) > self._code_mapping_score(existing_airport):
             index[code] = airport.ident
+
+    def get_airport_from_code(
+        self,
+        code: str,
+        lat: float | None = None,
+        lon: float | None = None,
+        code_priority: Sequence[str] = DEFAULT_AIRPORT_CODE_PRIORITY,
+        prioritize_faa_airspace: bool = True,
+    ) -> Airport | None:
+        """Resolve an airport code, using location only when metadata is ambiguous."""
+        unsupported_columns = set(code_priority) - set(AIRPORT_CODE_COLUMNS)
+        if unsupported_columns:
+            raise ValueError(
+                f"Unsupported airport code columns: {sorted(unsupported_columns)}"
+            )
+        if (lat is None) != (lon is None):
+            raise ValueError("lat and lon must either both be provided or both be None")
+
+        airports = self.code_to_airports.get(code)
+        if not airports:
+            return None
+
+        candidates = set(airports)
+        if len(candidates) == 1:
+            return next(iter(candidates))
+
+        if prioritize_faa_airspace:
+            faa_candidates = {
+                airport for airport in candidates if airport.is_in_us_faa_airspace
+            }
+            if faa_candidates:
+                candidates = faa_candidates
+
+        if len(candidates) == 1:
+            return next(iter(candidates))
+
+        for column in code_priority:
+            matches = {
+                airport
+                for airport in candidates
+                if getattr(airport, column) == code
+            }
+            if len(matches) == 1:
+                return next(iter(matches))
+            if matches:
+                candidates = matches
+
+        if lat is not None and lon is not None:
+            return min(
+                candidates,
+                key=lambda airport: (airport.distance_to(lat, lon), airport.ident),
+            )
+
+        candidate_idents = sorted(airport.ident for airport in candidates)
+        raise ValueError(
+            f"Multiple airports found for code {code!r} with no clear priority: "
+            f"{candidate_idents}"
+        )
 
     def getClosestAirport(self, latitude, longitude) -> Airport:
         query_point_rad = np.radians((latitude, longitude))
@@ -248,18 +311,11 @@ class AirportLookup:
 
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_ident(airport_ident)
-        return airport is not None and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+        return airport is not None and airport.is_in_us_faa_airspace
 
     def airport_ident_is_in_us_faa_island_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_ident(airport_ident)
-        return (
-            airport is not None
-            and airport.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
-            and (
-                airport.iso_country in US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES
-                or airport.iso_region in US_FAA_ISLAND_AIRSPACE_ISO_REGIONS
-            )
-        )
+        return airport is not None and airport.is_in_us_faa_island_airspace
 
 def haversine(lat1, lon1, lat2, lon2):
     """
