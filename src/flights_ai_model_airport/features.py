@@ -103,7 +103,7 @@ def create_flight_airport_features(
     )
     for airport in potential_airports:
         distance_km = haversine(lat, lon, airport.lat, airport.lon)
-        elevation_above_airport = max(baro_altitude_ft - airport.elevation_ft, 0)
+        elevation_above_airport = max(baro_altitude_ft - (airport.elevation_ft or 0), 0)
         airport_track_features = create_airport_track_features(lat, lon, track, airport.lat, airport.lon, distance_km, endpoint)
         # elevation_diff = first_baro_altitude_ft - airport.elevation_ft
         airport_type = Airport_Size_Ranking[airport.type.name]

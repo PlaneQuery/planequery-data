@@ -117,20 +117,24 @@ def test_candidate_features_keep_existing_nearest_airport(monkeypatch):
     import flights_ai_model_airport.features as features_module
 
     nearby = Airport(
+        id=None,
         ident="KAAA",
-        iata="AAA",
-        lat=0.0,
-        lon=0.0,
-        elevation_ft=0,
         type=Airport_Types.SMALL_AIRPORT,
+        name="Nearby Airport",
+        latitude_deg=0.0,
+        longitude_deg=0.0,
+        elevation_ft=0,
+        iata_code="AAA",
     )
     baseline = Airport(
+        id=None,
         ident="KBBB",
-        iata="BBB",
-        lat=2.0,
-        lon=2.0,
-        elevation_ft=0,
         type=Airport_Types.SMALL_AIRPORT,
+        name="Baseline Airport",
+        latitude_deg=2.0,
+        longitude_deg=2.0,
+        elevation_ft=0,
+        iata_code="BBB",
     )
 
     class FakeAirportLookup:
