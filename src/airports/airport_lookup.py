@@ -86,7 +86,19 @@ class Airport:
         """Backward-compatible alias for callers that use short coordinate names."""
         return self.longitude_deg
 
+    @property
+    def is_in_us_faa_airspace(self) -> bool:
+        return self.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
 
+    @property
+    def is_in_us_faa_island_airspace(self) -> bool:
+        return (
+            self.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
+            and (
+                self.iso_country in US_FAA_ISLAND_AIRSPACE_ISO_COUNTRIES
+                or self.iso_region in US_FAA_ISLAND_AIRSPACE_ISO_REGIONS
+            )
+        )
 class AirportLookup:
     _instance = None
 
