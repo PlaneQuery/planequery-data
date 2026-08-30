@@ -76,6 +76,10 @@ class Airport:
     def __hash__(self) -> int:
         return hash(self.ident)
 
+    def distance_to(self, latitude: float, longitude: float) -> float:
+        """Return the great-circle distance to a point in kilometers."""
+        return haversine(self.latitude_deg, self.longitude_deg, latitude, longitude)
+
     @property
     def lat(self) -> float:
         """Backward-compatible alias for callers that use short coordinate names."""
