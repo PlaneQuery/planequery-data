@@ -389,6 +389,7 @@ def create_sfdps_flights_day(target_date: date) -> pl.DataFrame:
     df_flights = sfdps_to_flights(day_dt)
     df_flights = filter_sfdps_flights(df_flights, day_dt)
     df_flights = sfdps_flights_derive_icao(df_flights, day_dt)
+    df_flights = resolve_sfdps_airport_idents(df_flights)
     df_flights = df_flights.sort(["icao", "takeoff_time"])
     return df_flights
 
@@ -400,10 +401,9 @@ def get_sfdps_flights_day(target_date: date, use_cache: bool = True) -> pl.DataF
 
     parquet_path = sfdps_flights_parquet_path(target_date)
     if use_cache and parquet_path.exists():
-        return resolve_sfdps_airport_idents(pl.read_parquet(parquet_path))
+        return pl.read_parquet(parquet_path)
 
     df_flights = create_sfdps_flights_day(target_date)
-    df_flights = resolve_sfdps_airport_idents(df_flights)
     os.makedirs(parquet_path.parent, exist_ok=True)
     df_flights.write_parquet(parquet_path)
     return df_flights
