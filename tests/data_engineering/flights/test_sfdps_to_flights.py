@@ -34,23 +34,30 @@ def test_resolve_sfdps_airport_idents_replaces_raw_codes():
     ]
 
 
-def test_get_sfdps_flights_day_resolves_cached_airport_codes(tmp_path, monkeypatch):
+def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
     target_date = date(2026, 3, 1)
-    parquet_path = tmp_path / "part-0.parquet"
-    pl.DataFrame(
+    source = pl.DataFrame(
         {
+            "icao": ["abc123"],
+            "takeoff_time": [datetime(2026, 3, 1, 1, 0)],
             "takeoff_airport_ident": ["ALM"],
             "landing_airport_ident": ["IA8"],
         }
-    ).write_parquet(parquet_path)
-    monkeypatch.setattr(sfdps, "_missing_sfdps_days", lambda: set())
-    monkeypatch.setattr(sfdps, "sfdps_flights_parquet_path", lambda _date: parquet_path)
+    )
+    monkeypatch.setattr(sfdps, "sfdps_to_flights", lambda _day: source)
+    monkeypatch.setattr(sfdps, "filter_sfdps_flights", lambda flights, _day: flights)
+    monkeypatch.setattr(sfdps, "sfdps_flights_derive_icao", lambda flights, _day: flights)
     monkeypatch.setattr(sfdps, "AirportLookup", FakeAirportLookup)
 
-    result = sfdps.get_sfdps_flights_day(target_date)
+    result = sfdps.create_sfdps_flights_day(target_date)
 
     assert result.to_dicts() == [
-        {"takeoff_airport_ident": "KALM", "landing_airport_ident": "IA8"}
+        {
+            "icao": "abc123",
+            "takeoff_time": datetime(2026, 3, 1, 1, 0),
+            "takeoff_airport_ident": "KALM",
+            "landing_airport_ident": "IA8",
+        }
     ]
 
 
