@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
+from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import scan_adsb
 from data_engineering.flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
@@ -31,6 +32,11 @@ REGISTRATION_CALLSIGN_PATTERN = (
     r"[1-9][0-9]{0,2}[A-HJ-NP-Z]{2}))$"
 )
 
+SFDPS_AIRPORT_IDENT_COLUMNS = (
+    "takeoff_airport_ident",
+    "landing_airport_ident",
+)
+
 
 def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
     return read_sfdps(current_day)
@@ -38,6 +44,41 @@ def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
 
 def _missing_sfdps_days() -> set[date]:
     return set(MISSING_SFDPS_DAYS)
+
+
+def resolve_sfdps_airport_idents(
+    df_flights: pl.DataFrame,
+    airport_lookup: AirportLookup | None = None,
+) -> pl.DataFrame:
+    """Replace SFDPS point codes with canonical OurAirports identifiers."""
+    airport_lookup = airport_lookup or AirportLookup()
+    codes = (
+        pl.concat(
+            df_flights.select(pl.col(column).alias("code"))
+            for column in SFDPS_AIRPORT_IDENT_COLUMNS
+        )
+        .get_column("code")
+        .drop_nulls()
+        .unique()
+        .to_list()
+    )
+
+    code_to_ident: dict[str, str | None] = {}
+    for code in codes:
+        try:
+            airport = airport_lookup.get_airport_from_code(code)
+        except ValueError:
+            airport = None
+        code_to_ident[code] = airport.ident if airport is not None else None
+
+    return df_flights.with_columns(
+        pl.col(column).replace_strict(
+            code_to_ident,
+            default=None,
+            return_dtype=pl.String,
+        )
+        for column in SFDPS_AIRPORT_IDENT_COLUMNS
+    )
 
 
 def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
@@ -359,9 +400,10 @@ def get_sfdps_flights_day(target_date: date, use_cache: bool = True) -> pl.DataF
 
     parquet_path = sfdps_flights_parquet_path(target_date)
     if use_cache and parquet_path.exists():
-        return pl.read_parquet(parquet_path)
+        return resolve_sfdps_airport_idents(pl.read_parquet(parquet_path))
 
     df_flights = create_sfdps_flights_day(target_date)
+    df_flights = resolve_sfdps_airport_idents(df_flights)
     os.makedirs(parquet_path.parent, exist_ok=True)
     df_flights.write_parquet(parquet_path)
     return df_flights
