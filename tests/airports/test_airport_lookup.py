@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -63,3 +64,21 @@ def test_blank_airport_csv_fields_are_none(airport_lookup):
     assert airport.home_link is None
     assert airport.wikipedia_link is None
     assert airport.keywords is None
+
+
+def test_airport_equality_and_hash_use_ident(airport_lookup):
+    airport = airport_lookup.get_Airport_from_airport_ident("KJFK")
+
+    assert airport is not None
+    same_ident_with_different_data = replace(
+        airport,
+        name="Different name",
+        latitude_deg=0.0,
+        distance_from_plane_point_in_km=100.0,
+    )
+    other_airport = airport_lookup.get_Airport_from_airport_ident("KLAX")
+
+    assert airport == same_ident_with_different_data
+    assert hash(airport) == hash(same_ident_with_different_data)
+    assert len({airport, same_ident_with_different_data}) == 1
+    assert airport != other_airport

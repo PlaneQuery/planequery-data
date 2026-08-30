@@ -45,7 +45,7 @@ class Airport_Types(StrEnum):
         if isinstance(other, Airport_Types):
             return Airport_Size_Ranking[self.name] >= Airport_Size_Ranking[other.name]
         return NotImplemented
-@dataclass
+@dataclass(eq=False)
 class Airport:
     id: int | None
     ident: str
@@ -67,6 +67,14 @@ class Airport:
     wikipedia_link: str | None = None
     keywords: str | None = None
     distance_from_plane_point_in_km: float = 0.0
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Airport):
+            return NotImplemented
+        return self.ident == other.ident
+
+    def __hash__(self) -> int:
+        return hash(self.ident)
 
     @property
     def lat(self) -> float:
