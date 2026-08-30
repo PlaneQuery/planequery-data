@@ -82,3 +82,64 @@ def test_airport_equality_and_hash_use_ident(airport_lookup):
     assert hash(airport) == hash(same_ident_with_different_data)
     assert len({airport, same_ident_with_different_data}) == 1
     assert airport != other_airport
+
+
+def test_airport_distance_to_returns_kilometers(airport_lookup):
+    airport = airport_lookup.get_Airport_from_airport_ident("KJFK")
+
+    assert airport is not None
+    assert airport.distance_to(airport.latitude_deg, airport.longitude_deg) == pytest.approx(0.0)
+    assert airport.distance_to(33.9425, -118.408056) == pytest.approx(3974, abs=10)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_ident"),
+    [
+        ("7GA7", "K4A0"),
+        ("ALM", "KALM"),
+        ("IA32", "IA32"),
+        ("IA8", "IA8"),
+        ("LS84", "US-6197"),
+        ("PA39", "PA39"),
+    ],
+)
+def test_get_airport_from_code_resolves_sfdps_collisions(
+    airport_lookup,
+    code,
+    expected_ident,
+):
+    airport = airport_lookup.get_airport_from_code(code)
+
+    assert airport is not None
+    assert airport.ident == expected_ident
+
+
+def test_get_airport_from_code_uses_coordinates_as_final_tiebreaker(airport_lookup):
+    expected = airport_lookup.get_Airport_from_airport_ident("US-4767")
+
+    assert expected is not None
+    airport = airport_lookup.get_airport_from_code(
+        "IA32",
+        lat=expected.latitude_deg,
+        lon=expected.longitude_deg,
+        code_priority=(),
+    )
+    assert airport == expected
+
+
+def test_get_airport_from_code_returns_none_for_unknown_code(airport_lookup):
+    assert airport_lookup.get_airport_from_code("DOES_NOT_EXIST") is None
+
+
+def test_get_airport_from_code_requires_both_coordinates(airport_lookup):
+    with pytest.raises(ValueError, match="lat and lon must either both be provided"):
+        airport_lookup.get_airport_from_code("KJFK", lat=40.0)
+
+
+def test_get_airport_from_code_raises_when_collision_remains(airport_lookup):
+    with pytest.raises(ValueError, match="Multiple airports found for code 'O48'"):
+        airport_lookup.get_airport_from_code("O48")
+
+def test_get_airport_from_code_basic(airport_lookup):
+    assert airport_lookup.get_airport_from_code("LAX").ident == "KLAX"
+    assert airport_lookup.get_airport_from_code("BOS").ident == "KBOS"
