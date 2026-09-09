@@ -4,6 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
+from airports.airport_lookup import AirportLookup
 from data_engineering.openairframes.read import get_openairframes_snapshot
 from data_engineering.utils import OUTPUT_DIR
 
@@ -42,6 +43,7 @@ def eurocontrol_flights_parquet_path(target_date: date) -> Path:
         / "eurocontrol"
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
+        / f"day={target_date.day:02d}"
         / "data.parquet"
     )
 
@@ -49,7 +51,9 @@ def datetime_expr(column_name: str, alias: str) -> pl.Expr:
     return pl.col(column_name).str.strptime(pl.Datetime("ms"), strict=False).alias(alias)
 
 
-def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
+def get_eurocontrol_flights(target_date: date, use_cache = False) -> pl.DataFrame:
+    if use_cache and eurocontrol_flights_parquet_path(target_date).exists():
+        return pl.read_parquet(eurocontrol_flights_parquet_path(target_date))
     df = pl.read_csv(eurocontrol_raw_flights_parquet_path(target_date))
     df = (
         df.select(EUROCONTROL_COLUMNS)
@@ -88,16 +92,31 @@ def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
             how="inner",
             validate="m:1",
         )
-        .select(
-            "icao",
-            "registration",
-            "takeoff_time",
-            "landing_time",
-            "ADEP",
-            "ADES",
-            "aircraft_type",
-            "owner",
-        )
     )
 
+    # TODO: deal with "ADEP" and "ADES"... airport identifeis
+    airport_lookup = AirportLookup()
+    def get_airport_code(airport_id: str):
+        airport = airport_lookup.get_airport_from_code(airport_id, prioritize_faa_airspace=False)
+        if airport is not None:
+            return airport.ident
+        return None
+    df = df.with_columns(
+        pl.col("ADEP").map_elements(get_airport_code, return_dtype=pl.String).alias("takeoff_airport_ident"),
+        pl.col("ADES").map_elements(get_airport_code, return_dtype=pl.String).alias("landing_airport_ident"),
+    )
+    df = df.filter(pl.col("takeoff_airport_ident").is_not_null() & pl.col("landing_airport_ident").is_not_null())
+    df = df.select(
+        "icao",
+        "registration",
+        "takeoff_time",
+        "landing_time",
+        "takeoff_airport_ident",
+        "landing_airport_ident",
+        "aircraft_type",
+        "owner",
+    )
+    path = eurocontrol_flights_parquet_path(target_date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(path)
     return df

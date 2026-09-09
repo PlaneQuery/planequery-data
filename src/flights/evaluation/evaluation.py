@@ -7,7 +7,7 @@ from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_
 from data_engineering.filters import pia_or_american_ladd
 
 from data_engineering.flights.flight_type import ALGORITHM_ADSB_SOURCES, get_flights
-from data_engineering.eurocontrol.read import read_eurocontrol_flights
+from data_engineering.eurocontrol.read import get_eurocontrol_flights
 from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.evaluation.consecutive_airports import (
@@ -135,7 +135,7 @@ def source_flights_reader(
     if src == "fr24":
         return read_fr24_flights
     if src == "eurocontrol":
-        return read_eurocontrol_flights
+        return get_eurocontrol_flights
     if src == "opdi":
         return get_opdi_flights
     if src == "mike":
