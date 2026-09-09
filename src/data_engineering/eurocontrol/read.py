@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import calendar
 from datetime import date
 from pathlib import Path
@@ -47,7 +45,7 @@ def eurocontrol_flights_parquet_path(target_date: date) -> Path:
         / "data.parquet"
     )
 
-def _datetime_expr(column_name: str, alias: str) -> pl.Expr:
+def datetime_expr(column_name: str, alias: str) -> pl.Expr:
     return pl.col(column_name).str.strptime(pl.Datetime("ms"), strict=False).alias(alias)
 
 
@@ -58,8 +56,8 @@ def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
         .with_columns(
             pl.col("AC Type").alias("aircraft_type"),
             pl.col("AC Operator").alias("owner"),
-            _datetime_expr("ACTUAL OFF BLOCK TIME", "takeoff_time"),
-            _datetime_expr("ACTUAL ARRIVAL TIME", "landing_time"),
+            datetime_expr("ACTUAL OFF BLOCK TIME", "takeoff_time"),
+            datetime_expr("ACTUAL ARRIVAL TIME", "landing_time"),
         )
     )
     df = df.filter(pl.col("takeoff_time").dt.date() == target_date)
@@ -67,18 +65,19 @@ def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
         "registration",
         "icao",
     )
+    df_openairframes = df_openairframes.with_columns(pl.col("registration").str.replace("-", "").alias("registration_norm"))
     df = (
         df.with_columns(pl.col("AC Registration").alias("registration"))
         .join(
             df_openairframes,
-            on="registration",
-            how="left",
-            validate="m:1",
+            left_on="registration",
+            right_on="registration_norm",
+            how="inner",
+            # validate="m:1",
         )
         .select(
             "icao",
             "registration",
-            "AC Registration",
             "takeoff_time",
             "landing_time",
             "ADEP",
