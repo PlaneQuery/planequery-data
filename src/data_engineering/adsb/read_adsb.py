@@ -498,17 +498,6 @@ def most_common_category(col: str = "emitter_category") -> pl.Expr:
         .first()
         .over("icao")
     )
-
-
-def extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
-    return [
-        (pl.col(col).cast(pl.Int64) & 1).cast(pl.Boolean).alias("military"),
-        (pl.col(col).cast(pl.Int64) & 2).cast(pl.Boolean).alias("interesting"),
-        (pl.col(col).cast(pl.Int64) & 4).cast(pl.Boolean).alias("pia"),
-        (pl.col(col).cast(pl.Int64) & 8).cast(pl.Boolean).alias("ladd"),
-    ]
-
-# we could fill in the dbflags column with most common to get whether it is ladd. 
 if __name__ == "__main__":
     current_day = datetime(2025, 8, 1)
     df_adsb = read_adsb(current_day)

@@ -97,7 +97,7 @@ def _ensure_default_openairframes_faa_path(path: str | Path) -> Path:
     return resolved_path
 
 
-def extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
+def _extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
     return [
         (pl.col(col).cast(pl.Int64) & 1).cast(pl.Boolean).alias("military"),
         (pl.col(col).cast(pl.Int64) & 2).cast(pl.Boolean).alias("interesting"),
@@ -123,7 +123,7 @@ def scan_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.Laz
         .dt.replace_time_zone(None)
         .alias("time")
     )
-    df = df.with_columns(extract_db_flags(col="db_flags"))
+    df = df.with_columns(_extract_db_flags(col="db_flags"))
     df = df.drop("db_flags")
     return df
 
@@ -151,7 +151,7 @@ def scan_latest_icao_info_for_join(
         .select(source_columns)
         .rename(COLUMN_MAP)
         .unique(subset=["icao"], keep="last", maintain_order=False)
-        .with_columns(extract_db_flags(col="db_flags"))
+        .with_columns(_extract_db_flags(col="db_flags"))
         .drop("db_flags")
         .select(["icao", *ICAO_INFO_COLUMNS])
     )
@@ -250,10 +250,3 @@ def get_openairframes_faa_df(
         },
         ignore_errors=True
     )
-
-
-def get_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.DataFrame:
-    path = _ensure_default_openairframes_adsb_path(path)
-    df = scan_icao_info(path)
-    df = df.sort("time").group_by("icao").tail(1)
-    return df.collect()
