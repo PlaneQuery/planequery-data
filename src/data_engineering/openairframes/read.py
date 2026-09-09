@@ -284,6 +284,6 @@ def get_openairframes_snapshot(
     duplicates = df.group_by("registration").agg(pl.col("icao").n_unique().alias("icao_count")).filter(pl.col("icao_count") > 1)
     if not duplicates.is_empty():
         # TODO: Use frequency of appearnces to determine which one to keep. 
-        df = df.filter(~pl.col("registration").is_in(duplicates.select("registration").to_series()))
+        df = df.filter(~pl.col("registration").is_in(duplicates.select("registration").to_series().implode()))
     return df
 
