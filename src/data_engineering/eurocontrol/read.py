@@ -65,7 +65,20 @@ def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
         "registration",
         "icao",
     )
-    df_openairframes = df_openairframes.with_columns(pl.col("registration").str.replace("-", "").alias("registration_norm"))
+    df_openairframes = (
+    get_openairframes_snapshot(at_date=target_date)
+    .select("registration", "icao")
+    .with_columns(
+        pl.col("registration")
+        .str.replace("-", "")
+        .alias("registration_norm")
+    )
+    .with_columns(
+        pl.len().over("registration_norm").alias("_match_count")
+    )
+    .filter(pl.col("_match_count") == 1)
+    .drop("_match_count")
+    )
     df = (
         df.with_columns(pl.col("AC Registration").alias("registration"))
         .join(
@@ -73,7 +86,7 @@ def get_eurocontrol_flights(target_date: date) -> pl.DataFrame:
             left_on="registration",
             right_on="registration_norm",
             how="inner",
-            # validate="m:1",
+            validate="m:1",
         )
         .select(
             "icao",
