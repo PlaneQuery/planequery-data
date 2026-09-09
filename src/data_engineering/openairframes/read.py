@@ -1,7 +1,7 @@
 # functions to read csv and convert columns and types to mine
 
 # funciton to get all icao information up to certain date.
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import re
 import urllib.request
@@ -250,3 +250,41 @@ def get_openairframes_faa_df(
         },
         ignore_errors=True
     )
+
+# TODO: Maybe have this whole thing be directly using readsb database instead of this derived ADS-B thing. 
+def get_openairframes_snapshot(
+    at_date: date | None = None,
+) -> pl.DataFrame:
+    """Return one preferred OpenAirframes row per ICAO near ``at_date``.
+
+    Rows with a registration are preferred over rows without one. Within that
+    preference, the row whose timestamp is closest to ``at_date`` is selected.
+    """
+    if at_date is None:
+        at_date = datetime.now(timezone.utc).date()
+    at_datetime = datetime.combine(at_date, datetime.min.time())
+
+    df =  (
+        scan_icao_info()
+        .with_columns(
+            (pl.col("registration").is_null() | pl.col("registration").eq("")).alias("_registration_is_null"),
+            (pl.col("time") - at_datetime).abs().alias("_distance_from_at_date"),
+        )
+        .sort(
+            ["icao", "_registration_is_null", "_distance_from_at_date", "time"],
+            descending=[False, False, False, False],
+            nulls_last=True,
+        )
+        .group_by("icao", maintain_order=True)
+        .first()
+        .filter(~pl.col("_registration_is_null"))
+        .drop("_registration_is_null", "_distance_from_at_date")
+        .collect()
+    )
+    duplicates = df.group_by("registration").agg(pl.col("icao").n_unique().alias("icao_count")).filter(pl.col("icao_count") > 1)
+    if not duplicates.is_empty():
+        # TODO: Use frequency of appearnces to determine which one to keep. 
+        print(f"Found {duplicates.height} registrations with multiple ICAOs in OpenAirframes snapshot at {at_date}: {duplicates}")
+        df = df.filter(~pl.col("registration").is_in(duplicates.select("registration").to_series()))
+    return df
+
