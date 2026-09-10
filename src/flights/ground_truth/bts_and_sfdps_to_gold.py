@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-
+from pathlib import Path
 import polars as pl
 
 from data_engineering.adsb.read_adsb import read_adsb
@@ -11,12 +11,13 @@ from flights.flights_comparison import df_flights_comparision
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 
 
-def ground_truth_flights_output_path(target_date: date):
+def ground_truth_flights_output_path(target_date: date, adsb_src) -> Path:
     return (
         OUTPUT_DIR
         / "data"
         / "flights"
-        / "ground_truth"
+        / "ground-truth"
+        / adsb_src 
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
         / f"day={target_date.day:02d}"
@@ -26,9 +27,10 @@ def ground_truth_flights_output_path(target_date: date):
 
 def get_ground_truth_flights_for_day(
     target_date: date,
+    adsb_src: str = "adsblol",
     use_cache: bool = True,
 ) -> pl.DataFrame:
-    output_path = ground_truth_flights_output_path(target_date)
+    output_path = ground_truth_flights_output_path(target_date, adsb_src=adsb_src)
     if use_cache and output_path.exists():
         return pl.read_parquet(output_path)
 
@@ -49,7 +51,7 @@ def get_ground_truth_flights_for_day(
     (pl.col("match_status") == "both").all().over("icao")
     )
     df = df.select(original_columns)
-    df_adsb = read_adsb(target_date, icaos = df["icao"].unique().to_list(), source = "adsbx")
+    df_adsb = read_adsb(target_date, icaos = df["icao"].unique().to_list(), source = adsb_src)
     df_gold = get_matching_icaos_in_flights(df, df_adsb, start_dt)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,5 +61,5 @@ def get_ground_truth_flights_for_day(
 
 if __name__ == "__main__":
     target_date = date(2026, 3, 1)
-    df_gold = get_ground_truth_flights_for_day(target_date)
+    df_gold = get_ground_truth_flights_for_day(target_date, adsb_src="adsblol", use_cache=False)
     print(df_gold)
