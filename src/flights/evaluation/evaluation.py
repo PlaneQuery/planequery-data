@@ -195,7 +195,7 @@ def read_adsb_for_matching(
     )
 
 
-def main(
+def main( # TODO: Maybe rename to run_evaluation
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
