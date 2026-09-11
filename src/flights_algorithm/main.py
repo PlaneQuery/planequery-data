@@ -792,22 +792,23 @@ MODEL_PATH = Path(
     )
 )
 
-@cache
-def _get_airport_model():
-    from flights_ai_model_airport.inference import load_model
-    return load_model(MODEL_PATH)
+# @cache
+# def _get_airport_model():
+#     from flights_ai_model_airport.inference import load_model
+#     return load_model(MODEL_PATH)
 
 def _run_airport_model_inference(
     flights_df: pl.DataFrame,
     df_adsb_full: pl.DataFrame,
 ) -> pl.DataFrame:
-    from flights_ai_model_airport.inference import inference
+    return flights_df
+    # from flights_ai_model_airport.inference import inference
 
-    return inference(
-        flights_df,
-        _get_airport_model(),
-        df_adsb_full,
-    )
+    # return inference(
+    #     flights_df,
+    #     _get_airport_model(),
+    #     df_adsb_full,
+    # )
 
 
 def process_icaos(
