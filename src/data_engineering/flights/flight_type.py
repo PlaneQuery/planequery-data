@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 
 import polars as pl
 
+from airports.airport_lookup import Airport
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
 from utils import haversine
 
@@ -71,7 +72,7 @@ class Flight:
     icao: str
     takeoff_time: datetime
     landing_time: datetime
-    takeoff_airport_ident: str
+    takeoff_airport_ident: str # TODO: maybe have whole airport object as well. takeoff_airport_ident can be a property.
     landing_airport_ident: str
     first_message_time: datetime | None = None
     first_lat: float | None = None
@@ -99,6 +100,13 @@ class Flight:
     def flight_id(self) -> str:
         return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
 
+    @property
+    def takeoff_airport(self) -> Airport:
+        from airports.airport_lookup import AirportLookup
+        airport_lookup = AirportLookup()
+        airport =  airport_lookup.get_Airport_from_airport_ident(self.takeoff_airport_ident)
+        assert airport is not None
+        return airport
     def __hash__(self) -> int:
         return hash(self.flight_id)
 
