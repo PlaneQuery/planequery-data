@@ -208,6 +208,7 @@ def main( # TODO: Maybe rename to run_evaluation
     consecutive_airport_displacement_threshold_km = (
         DEFAULT_DISPLACEMENT_THRESHOLD_KM
     ),
+    write_outputs = True
 ):
     if isinstance(test_src, str):
         test_src = [test_src]
@@ -320,7 +321,8 @@ def main( # TODO: Maybe rename to run_evaluation
     df_stats = pl.DataFrame(rows)
     if len(test_dates) > 1:
         df_stats = add_average_rows(df_stats)
-    df_stats.write_csv(stats_output)
+    if write_outputs:
+        df_stats.write_csv(stats_output)
     print(f"Stats CSV saved to {stats_output}")
     return results, df_stats
 
