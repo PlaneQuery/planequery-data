@@ -29,6 +29,4 @@ def flights_features_df(test_dt: date):
     comparison_df = with_flight_schema_columns(
         comparison_df
     )
-    print(comparison_df.columns)
-    print(comparison_df.get_column("takeoff_airport_ident"))
     return comparison_df
