@@ -1,5 +1,6 @@
 from attr import dataclass
 import polars as pl
+import numpy as np
 from airports.airport_lookup import Airport, AirportLookup
 from data_engineering.adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df, closest_time_row_idx
 from data_engineering.adsb.read_adsb import read_adsb
@@ -12,6 +13,7 @@ from utils import haversine
 
 FEATURE_PERIOD = timedelta(minutes=15)
 airport_lookup = AirportLookup()
+NUMBER_OF_FEATURES = 2 # distance and time delta
 # TODO: Must use segmentation takeoff/landing time now the ground_truth takeoff/landing time. 
 
 def features_df_to_numpy():
@@ -30,6 +32,12 @@ class FlightFeatures():
     flight_id: str
     true_airport: Airport
     candidates: list[AirportCandidateFeatures]
+@dataclass
+class Features():
+    flight_features: list[FlightFeatures]
+    def max_features_length(self):
+        return max(len(c.features) for f in self.flight_features for c in f.candidates)
+
 
 
 def create_features_for_plane(flights: list[Flight], messages: list[AdsbMessage]):
@@ -78,13 +86,37 @@ def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
     # load ground truth flights
     # load matching adsb
     icaos = df_flights["icao"].unique().to_list()
+    flight_features: list[FlightFeatures] = []
     for icao in icaos:
         flights = flights_df_to_flights(df_flights.filter(pl.col("icao") == icao))
         messages = adsb_messages_from_parquet_df(df_adsb.filter(pl.col("icao") == icao))
-        flight_features = create_features_for_plane(flights, messages)
+        flight_features.extend(create_features_for_plane(flights, messages))
+    features = Features(flight_features=flight_features)
+    return features
 
+def create_training_features_np(flight_features: list[FlightFeatures], max_message_length: int):
+    samples: list[np.ndarray] = []
+    targets = []
+    flight_mapping = dict()
+    for f in flight_features:
+        true_airport = f.true_airport
+        for candidate in f.candidates:
+            airport = candidate.predicted_airport
+            features = candidate.features
+            samples.append(np.asarray(features))
+            targets.append(1 if airport == true_airport else 0)
+        flight_mapping[f.flight_id] = (len(samples) - len(f.candidates), len(samples))
+    X = np.zeros((len(samples), max_message_length, NUMBER_OF_FEATURES), dtype=np.float32)
+    mask = np.zeros((len(samples), max_message_length), dtype=bool)
 
+    for index, sample in enumerate(samples):
+        length = len(sample)
+        X[index, :length, :] = sample
+        mask[index, :length] = True
 
+    y = np.asarray(targets, dtype=np.float32)
+
+    return X, mask, y, flight_mapping
 
 def get_features(): # for now dataframe in future will be numpy array
     pass
@@ -92,8 +124,11 @@ def get_features(): # for now dataframe in future will be numpy array
 def create_features_for_day(target_dt: date):
     df_flights = flights_features_df(target_dt)
     df_adsb = read_adsb(target_dt, icaos=df_flights["icao"].unique().to_list(), source="adsblol")
-    # print(df_flights)
-    # print(df_adsb)
+    features = create_features(df_flights, df_adsb)
+    max_message_length = features.max_features_length()
+    flight_features = features.flight_features
+    # icao_range mapping to do train/test split
+    X, mask, y,flight_mapping = create_training_features_np(flight_features, max_message_length)
 
 if __name__ == "__main__":
     create_features_for_day(date(2026, 3, 1))
