@@ -1,4 +1,5 @@
 from __future__ import annotations
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import List, Literal, Optional
@@ -331,3 +332,19 @@ def adsb_messages_from_parquet_df(df: "pl.DataFrame") -> list[AdsbMessage]:
         )
         for row in df.iter_rows(named=True)
     ]
+
+
+def closest_time_row_idx(adsb_rows: list[AdsbMessage], target_time, lte=True):
+    times = [row.time for row in adsb_rows]
+
+    idx = (
+        bisect_right(times, target_time) - 1
+        if lte
+        else bisect_left(times, target_time)
+    )
+
+    if idx < 0 or idx >= len(adsb_rows):
+        return None
+
+    return idx
+
