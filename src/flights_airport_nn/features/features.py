@@ -129,6 +129,7 @@ def create_features_for_day(target_dt: date):
     flight_features = features.flight_features
     # icao_range mapping to do train/test split
     X, mask, y,flight_mapping = create_training_features_np(flight_features, max_message_length)
+    return X, mask, y
 
 if __name__ == "__main__":
     create_features_for_day(date(2026, 3, 1))
