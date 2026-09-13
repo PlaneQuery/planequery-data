@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from flights_airport_nn.device import device
+from flights_airport_nn.utils import device
 from flights_airport_nn.model import AirportGRU
 
 
