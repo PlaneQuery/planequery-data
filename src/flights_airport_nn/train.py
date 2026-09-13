@@ -1,5 +1,6 @@
 from datetime import date
-
+import os
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -9,13 +10,34 @@ from flights_airport_nn.model import AirportGRU
 
 print(device)
 
-X, mask, y = create_features_for_day(date(2026, 3, 1))
+def get_numpy_training_features():
+    features = create_features_for_day(date(2026, 3, 1))
+    max_message_length = features.max_features_length()
+    plane_features = features.plane_features
+    X = []
+    mask = []
+    y = []
+    for pf in plane_features:
+        for ff in pf.flight_features:
+            for acf in ff.candidates:
+                x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(max_message_length)
+                X.append(x_tmp)
+                mask.append(mask_tmp)
+                y.append(y_tmp)
+
+    X = np.asarray(X, dtype=np.float32)
+    mask = np.asarray(mask, dtype=bool)
+    y = np.asarray(y, dtype=np.float32)
+    return X,y
+
+X, y = get_numpy_training_features()
+
 X = torch.from_numpy(X)
 y = torch.from_numpy(y)
 dataset = TensorDataset(X, y)
 loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-model = AirportGRU(input_size=X.shape[2], hidden_size=128).to(device)
+model = AirportGRU().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 loss_fn = torch.nn.BCEWithLogitsLoss()
 epochs = 2
@@ -37,4 +59,5 @@ for epoch in range(epochs):
     print(f"Epoch {epoch + 1:02d} Loss: {total_loss / len(loader):.4f}")
 
 path = model_folder_path() / "model.pt"
+os.makedirs(path.parent, exist_ok=True)
 torch.save(model.state_dict(), path)
