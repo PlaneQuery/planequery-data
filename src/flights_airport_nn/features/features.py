@@ -25,8 +25,17 @@ def normalize_features():
 @dataclass
 class AirportCandidateFeatures:
     predicted_airport: Airport
+    true_airport: Airport
     features: list[tuple]
 
+    def features_to_numpy(self, max_length: int):
+        X = np.zeros((max_length, NUMBER_OF_FEATURES), dtype=np.float32)
+        y = np.float32(self.predicted_airport == self.true_airport)
+        mask = np.zeros((max_length), dtype=bool)
+        features_np = np.asarray(self.features)
+        X[0:len(features_np), :] = features_np
+        mask[0:len(features_np)] = True
+        return X, mask, y
 @dataclass
 class FlightFeatures():
     flight_id: str
@@ -72,7 +81,7 @@ def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
             else:
                 time_delta = (m.time - sub_messages[j-1].time).total_seconds()
             features.append((distance,time_delta))
-        acf = AirportCandidateFeatures(predicted_airport=airport, features=features)
+        acf = AirportCandidateFeatures(predicted_airport=airport, true_airport=true_airport, features=features)
         all_airport_candidate_features.append(acf)
     ff = FlightFeatures(flight_id=f.flight_id, true_airport=true_airport, candidates=all_airport_candidate_features)
     return ff
@@ -126,7 +135,9 @@ def create_training_features_np(flight_features: list[FlightFeatures], max_messa
 
     return X, mask, y, flight_mapping
 
-def get_features(): # for now dataframe in future will be numpy array
+# I can split by date
+def get_features(target_dt: date):
+
     pass
 
 def create_features_for_day(target_dt: date):
@@ -135,11 +146,20 @@ def create_features_for_day(target_dt: date):
     features = create_features(df_flights, df_adsb)
     max_message_length = features.max_features_length()
     plane_features = features.plane_features
-    # icao_range mapping to do train/test split
-    all_flight_features = []
+    X = []
+    mask = []
+    y = []
     for pf in plane_features:
-        all_flight_features.extend(pf.flight_features)
-    X, mask, y,flight_mapping = create_training_features_np(all_flight_features, max_message_length)
+        for ff in pf.flight_features:
+            for acf in ff.candidates:
+                x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(max_message_length)
+                X.append(x_tmp)
+                mask.append(mask_tmp)
+                y.append(y_tmp)
+
+    X = np.asarray(X, dtype=np.float32)
+    mask = np.asarray(mask, dtype=bool)
+    y = np.asarray(y, dtype=np.float32)
     return X, mask, y
 
 if __name__ == "__main__":
