@@ -6,7 +6,7 @@ import polars as pl
 
 from airports.airport_lookup import Airport
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
-from utils import haversine
+from planequery_data.utils import haversine
 
 
 FLIGHT_POLARS_SCHEMA = {
