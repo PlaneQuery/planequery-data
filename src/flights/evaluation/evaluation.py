@@ -20,7 +20,7 @@ from flights.ground_truth.bts_and_sfdps_to_gold import (
     get_ground_truth_flights_for_day,
 )
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
-from utils import current_commit_hash
+from planequery_data.utils import current_commit_hash
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.flights.mike import get_mike_flights_for_day
 from data_engineering.utils import OUTPUT_DIR

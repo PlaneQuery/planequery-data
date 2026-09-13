@@ -3,7 +3,7 @@ from typing import Protocol
 import polars as pl
 
 from airports.airport_lookup import AirportLookup
-from utils import haversine
+from planequery_data.utils import haversine
 
 
 DEFAULT_DISPLACEMENT_THRESHOLD_KM = 50.0

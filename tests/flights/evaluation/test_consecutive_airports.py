@@ -8,7 +8,7 @@ from flights.evaluation.consecutive_airports import (
     consecutive_airport_mismatches,
     consecutive_airport_stats,
 )
-from utils import haversine
+from planequery_data.utils import haversine
 
 
 class CoordinatesLookup:
