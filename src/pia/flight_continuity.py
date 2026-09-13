@@ -1,6 +1,6 @@
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import Flight
-from utils import haversine
+from planequery_data.utils import haversine
 
 
 airport_lookup = AirportLookup()

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 from airports.airport_lookup import AirportLookup
-from utils import haversine
+from planequery_data.utils import haversine
 
 ADSB_MATCHING_COLUMNS = [
     "time",

@@ -9,7 +9,7 @@ from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_
 from datetime import date, timedelta
 
 from flights_airport_nn.features.ground_truth_join_segmentation_algorithm import flights_features_df
-from utils import haversine
+from planequery_data.utils import haversine
 
 FEATURE_PERIOD = timedelta(minutes=15)
 airport_lookup = AirportLookup()
