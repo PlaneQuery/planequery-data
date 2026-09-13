@@ -3,7 +3,7 @@ from datetime import date
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from flights_airport_nn.device import device
+from flights_airport_nn.utils import device
 from flights_airport_nn.features.features import create_features_for_day
 from flights_airport_nn.model import AirportGRU
 
