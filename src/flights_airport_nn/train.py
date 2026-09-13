@@ -5,11 +5,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from flights_airport_nn.features.features import create_features_for_day
 from flights_airport_nn.model import AirportGRU
+from flights_airport_nn.utils import device
 
 
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-)
 print(device)
 
 
