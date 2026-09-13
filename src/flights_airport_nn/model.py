@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
 
+from flights_airport_nn.features.features import NUMBER_OF_FEATURES
+
 
 class AirportGRU(nn.Module):
-    def __init__(self, input_size, hidden_size=128):
+    def __init__(self, hidden_size=128):
         super().__init__()
 
         self.gru = nn.GRU(
-            input_size=input_size,
+            input_size=NUMBER_OF_FEATURES,
             hidden_size=hidden_size,
             batch_first=True,
         )
