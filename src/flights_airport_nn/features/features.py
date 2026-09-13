@@ -144,23 +144,7 @@ def create_features_for_day(target_dt: date):
     df_flights = flights_features_df(target_dt)
     df_adsb = read_adsb(target_dt, icaos=df_flights["icao"].unique().to_list(), source="adsblol")
     features = create_features(df_flights, df_adsb)
-    max_message_length = features.max_features_length()
-    plane_features = features.plane_features
-    X = []
-    mask = []
-    y = []
-    for pf in plane_features:
-        for ff in pf.flight_features:
-            for acf in ff.candidates:
-                x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(max_message_length)
-                X.append(x_tmp)
-                mask.append(mask_tmp)
-                y.append(y_tmp)
-
-    X = np.asarray(X, dtype=np.float32)
-    mask = np.asarray(mask, dtype=bool)
-    y = np.asarray(y, dtype=np.float32)
-    return X, mask, y
+    return features
 
 if __name__ == "__main__":
     create_features_for_day(date(2026, 3, 1))
