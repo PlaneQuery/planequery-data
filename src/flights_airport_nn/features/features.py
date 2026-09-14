@@ -25,6 +25,7 @@ def normalize_features():
 
 @dataclass
 class AirportCandidateFeatures:
+    flight_id: str
     predicted_airport: Airport
     true_airport: Airport
     features: list[tuple]
@@ -51,7 +52,7 @@ class Features():
 
     def __init__(self, df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
         icaos = df_flights["icao"].unique().to_list()
-        flights_by_id = dict()
+        flights_by_id: dict[str, Flight] = dict()
         plane_features: list[PlaneFeatures] = []
         for icao in icaos:
             flights = flights_df_to_flights(df_flights.filter(pl.col("icao") == icao))
@@ -71,19 +72,19 @@ class Features():
         X = []
         mask = []
         y = []
+        candidate_rows: list[AirportCandidateFeatures] = []
         for pf in self.plane_features:
             for ff in pf.flight_features:
-                start = len(X)
                 for acf in ff.candidates:
                     x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(self.max_messages_length)
                     X.append(x_tmp)
                     mask.append(mask_tmp)
                     y.append(y_tmp)
-                self.mapping[ff.flight_id] = slice(start, len(X))
+                    candidate_rows.append(acf)
         X = np.asarray(X, dtype=np.float32)
         mask = np.asarray(mask, dtype=bool)
         y = np.asarray(y, dtype=np.float32)
-        return X, mask, y
+        return X, mask, y, candidate_rows
 
 
 
@@ -116,7 +117,7 @@ def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
             else:
                 time_delta = (m.time - sub_messages[j-1].time).total_seconds()
             features.append((distance,time_delta))
-        acf = AirportCandidateFeatures(predicted_airport=airport, true_airport=true_airport, features=features)
+        acf = AirportCandidateFeatures(flight_id=f.flight_id, predicted_airport=airport, true_airport=true_airport, features=features)
         all_airport_candidate_features.append(acf)
     ff = FlightFeatures(flight_id=f.flight_id, true_airport=true_airport, candidates=all_airport_candidate_features)
     return ff
