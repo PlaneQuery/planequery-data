@@ -7,6 +7,7 @@ from data_engineering.adsb.read_adsb import read_adsb
 from data_engineering.flights.flight_type import Flight, flights_df_to_flights
 from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_for_day
 from datetime import date, timedelta
+from functools import cached_property
 
 from flights_airport_nn.features.ground_truth_join_segmentation_algorithm import flights_features_df
 from planequery_data.utils import haversine
@@ -46,11 +47,35 @@ class FlightFeatures():
 class PlaneFeatures():
     icao: str
     flight_features: list[FlightFeatures]
-@dataclass
 class Features():
-    plane_features: list[PlaneFeatures]
-    def max_features_length(self):
+
+    def __init__(self, plane_features: list[PlaneFeatures]):
+        self.plane_features = plane_features
+        self.mapping = dict()
+    
+    @cached_property
+    def max_messages_length(self):
         return max(len(c.features) for p in self.plane_features for f in p.flight_features for c in f.candidates)
+    
+    def numpy_features(self):
+        X = []
+        mask = []
+        y = []
+        for pf in self.plane_features:
+            for ff in pf.flight_features:
+                start = len(X)
+                for acf in ff.candidates:
+                    x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(self.max_messages_length)
+                    X.append(x_tmp)
+                    mask.append(mask_tmp)
+                    y.append(y_tmp)
+                self.mapping[ff.flight_id] = slice(start, len(X))
+        X = np.asarray(X, dtype=np.float32)
+        mask = np.asarray(mask, dtype=bool)
+        y = np.asarray(y, dtype=np.float32)
+        return X, mask, y
+
+
 
     # probably do some numpy creation here. Be able to split features here. Or maybe split in seperate function...
 
@@ -111,29 +136,6 @@ def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
     features = Features(plane_features=plane_features)
     return features
 
-def create_training_features_np(flight_features: list[FlightFeatures], max_message_length: int):
-    samples: list[np.ndarray] = []
-    targets = []
-    flight_mapping = dict()
-    for f in flight_features:
-        true_airport = f.true_airport
-        for candidate in f.candidates:
-            airport = candidate.predicted_airport
-            features = candidate.features
-            samples.append(np.asarray(features))
-            targets.append(1 if airport == true_airport else 0)
-        flight_mapping[f.flight_id] = (len(samples) - len(f.candidates), len(samples))
-    X = np.zeros((len(samples), max_message_length, NUMBER_OF_FEATURES), dtype=np.float32)
-    mask = np.zeros((len(samples), max_message_length), dtype=bool)
-
-    for index, sample in enumerate(samples):
-        length = len(sample)
-        X[index, :length, :] = sample
-        mask[index, :length] = True
-
-    y = np.asarray(targets, dtype=np.float32)
-
-    return X, mask, y, flight_mapping
 
 # I can split by date
 def get_features(target_dt: date):

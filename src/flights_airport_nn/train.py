@@ -10,27 +10,9 @@ from flights_airport_nn.model import AirportGRU
 
 print(device)
 
-def get_numpy_training_features():
-    features = create_features_for_day(date(2026, 3, 1))
-    max_message_length = features.max_features_length()
-    plane_features = features.plane_features
-    X = []
-    mask = []
-    y = []
-    for pf in plane_features:
-        for ff in pf.flight_features:
-            for acf in ff.candidates:
-                x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(max_message_length)
-                X.append(x_tmp)
-                mask.append(mask_tmp)
-                y.append(y_tmp)
+features = create_features_for_day(date(2026, 3, 1))
 
-    X = np.asarray(X, dtype=np.float32)
-    mask = np.asarray(mask, dtype=bool)
-    y = np.asarray(y, dtype=np.float32)
-    return X,y
-
-X, y = get_numpy_training_features()
+X, mask, y = features.numpy_features()
 
 X = torch.from_numpy(X)
 y = torch.from_numpy(y)
