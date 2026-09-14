@@ -12,7 +12,7 @@ print(device)
 
 features = create_features_for_day(date(2026, 3, 1))
 
-X, mask, y = features.numpy_features()
+X, mask, y, candidate_rows = features.numpy_features()
 
 X = torch.from_numpy(X)
 y = torch.from_numpy(y)
