@@ -49,8 +49,18 @@ class PlaneFeatures():
     flight_features: list[FlightFeatures]
 class Features():
 
-    def __init__(self, plane_features: list[PlaneFeatures]):
+    def __init__(self, df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
+        icaos = df_flights["icao"].unique().to_list()
+        flights_by_id = dict()
+        plane_features: list[PlaneFeatures] = []
+        for icao in icaos:
+            flights = flights_df_to_flights(df_flights.filter(pl.col("icao") == icao))
+            for flight in flights:
+                flights_by_id[flight.flight_id] = flight
+            messages = adsb_messages_from_parquet_df(df_adsb.filter(pl.col("icao") == icao))
+            plane_features.append(create_features_for_plane(flights, messages))
         self.plane_features = plane_features
+        self.flights_by_id = flights_by_id
         self.mapping = dict()
     
     @cached_property
@@ -127,13 +137,7 @@ def create_features_for_plane(flights: list[Flight], messages: list[AdsbMessage]
 def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
     # load ground truth flights
     # load matching adsb
-    icaos = df_flights["icao"].unique().to_list()
-    plane_features: list[PlaneFeatures] = []
-    for icao in icaos:
-        flights = flights_df_to_flights(df_flights.filter(pl.col("icao") == icao))
-        messages = adsb_messages_from_parquet_df(df_adsb.filter(pl.col("icao") == icao))
-        plane_features.append(create_features_for_plane(flights, messages))
-    features = Features(plane_features=plane_features)
+    features = Features(df_flights, df_adsb)
     return features
 
 
