@@ -21,42 +21,38 @@ def load_model(
     return model
 
 
-def predict(model: AirportGRU, features: np.ndarray) -> np.ndarray:
-    """Return the probability that each airport candidate is correct."""
-    inputs = torch.as_tensor(features, dtype=torch.float32, device=device)
+def predict(
+    model: AirportGRU,
+    features: np.ndarray,
+    batch_size: int = 256,
+) -> np.ndarray:
+    outputs = []
 
     with torch.inference_mode():
-        probabilities = torch.sigmoid(model(inputs))
+        for start in range(0, len(features), batch_size):
+            batch = torch.as_tensor(
+                features[start:start + batch_size],
+                dtype=torch.float32,
+                device=device,
+            )
+            probabilities = torch.sigmoid(model(batch))
+            outputs.append(probabilities.cpu().numpy())
 
-    return probabilities.cpu().numpy()
-
-def inferernce():
+    return np.concatenate(outputs)
+def inference():
     # we batch input it. But maybe to start we go one by one?
-    features = create_features_for_day(date(2026, 3, 1))
-    flight_features: list[FlightFeatures] = []
-    max_length = features.max_messages_length()
     model = load_model(
         model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
     )
-    for pf in features.plane_features:
-        for ff in pf.flight_features:
-            flight_features.append(ff)
-    
-    for ff in flight_features:
-        max_score = -np.inf
-        for c in ff.candidates:
-            X, mask, y = c.features_to_numpy(max_length)
-            output = predict(model, X) # yes, this is scaler.
-            if output > max_score:
-                max_score = output
-                ff.predicted_airport = 
-            print(output.shape)
-'''
-'''
+    features = create_features_for_day(date(2026, 3, 1))
+    X, mask, y = features.numpy_features()
+    mapping = features.mapping
+    output = predict(model, X) # yes, this is scaler.
+    print(output.shape)
 
 
-def run_inferernce_day(target_dt: date):
+def run_inference_day(target_dt: date):
     pass
 
 if __name__ == "__main__":
-    inferernce()
+    inference()
