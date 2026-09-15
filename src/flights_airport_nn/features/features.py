@@ -1,4 +1,5 @@
-from attr import dataclass
+from dataclasses import dataclass
+from enum import StrEnum
 import polars as pl
 import numpy as np
 from airports.airport_lookup import Airport, AirportLookup
@@ -15,7 +16,32 @@ from planequery_data.utils import haversine, initial_bearing_deg
 
 FEATURE_PERIOD = timedelta(minutes=15)
 airport_lookup = AirportLookup()
-NUMBER_OF_FEATURES = 4  # north_km, east_km, radial_speed_km_s, time_delta_s
+
+class FeatureName(StrEnum):
+    NORTH_KM = "north_km"
+    EAST_KM = "east_km"
+    RADIAL_SPEED_KM_S = "radial_speed_km_s"
+    TIME_DELTA_S = "time_delta_s"
+@dataclass(frozen=True)
+class FeatureConfig:
+    enabled: tuple[FeatureName, ...]
+
+    @property
+    def input_size(self) -> int:
+        return len(self.enabled)
+
+    @property
+    def column_indices(self) -> list[int]:
+        feature_order = tuple(FeatureName)
+
+        return [
+            feature_order.index(name)
+            for name in self.enabled
+        ]
+
+
+ALL_FEATURE_CONFIG = FeatureConfig(enabled=tuple(FeatureName))
+
 
 @dataclass
 class AirportCandidateFeatures:
@@ -24,11 +50,19 @@ class AirportCandidateFeatures:
     true_airport: Airport
     features: list[tuple]
 
-    def features_to_numpy(self, max_length: int):
-        X = np.zeros((max_length, NUMBER_OF_FEATURES), dtype=np.float32)
+    def features_to_numpy(
+        self,
+        max_length: int,
+        feature_config: FeatureConfig,
+    ):
+        X = np.zeros(
+            (max_length, feature_config.input_size),
+            dtype=np.float32,
+        )
         y = np.float32(self.predicted_airport == self.true_airport)
         mask = np.zeros((max_length), dtype=bool)
-        features_np = np.asarray(self.features)
+        features_np = np.asarray(self.features, dtype=np.float32)
+        features_np = features_np[:, feature_config.column_indices]
         X[0:len(features_np), :] = features_np
         mask[0:len(features_np)] = True
         return X, mask, y
@@ -62,7 +96,7 @@ class Features():
     def max_messages_length(self):
         return max(len(c.features) for p in self.plane_features for f in p.flight_features for c in f.candidates)
     
-    def numpy_features(self):
+    def numpy_features(self, feature_config: FeatureConfig):
         X = []
         mask = []
         y = []
@@ -70,7 +104,10 @@ class Features():
         for pf in self.plane_features:
             for ff in pf.flight_features:
                 for acf in ff.candidates:
-                    x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(self.max_messages_length)
+                    x_tmp, mask_tmp, y_tmp = acf.features_to_numpy(
+                        self.max_messages_length,
+                        feature_config,
+                    )
                     X.append(x_tmp)
                     mask.append(mask_tmp)
                     y.append(y_tmp)

@@ -63,11 +63,11 @@ if __name__ == "__main__":
     from datetime import date
     from flights_airport_nn.inference import run_inference, load_model
 
-    model = load_model(
+    model, feature_config = load_model(
         model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
     )
     eval_dt = date(2026, 3, 1)
-    flights = run_inference(eval_dt, model)
+    flights = run_inference(eval_dt, model, feature_config)
     from data_engineering.flights.flight_type import flights_to_flights_df
     df_flights = flights_to_flights_df(flights.values())
     eval_stats = evaluate_model(eval_dt, df_flights)
