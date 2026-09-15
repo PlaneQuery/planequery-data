@@ -38,7 +38,10 @@ def run_experiment():
     output_dir = experiment_run_dir(experiment_name, datetime.now())
     path = output_dir / "evaluation" / "metrics.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame([eval_stats.to_record()]).write_csv(path)
+    df = pl.DataFrame([eval_stats.to_record()])
+    df.write_csv(path)
+    print(path)
+    print(df)
 
 
 if __name__ == "__main__":
