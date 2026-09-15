@@ -79,10 +79,6 @@ class Features():
         y = np.asarray(y, dtype=np.float32)
         return X, mask, y, candidate_rows
 
-
-
-    # probably do some numpy creation here. Be able to split features here. Or maybe split in seperate function...
-
 def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
     all_airport_candidate_features: list[AirportCandidateFeatures] = []
     takeoff_time = f.takeoff_time
@@ -123,10 +119,6 @@ def create_features_for_plane(flights: list[Flight], messages: list[AdsbMessage]
         all_flight_features.append(ff)
     pf = PlaneFeatures(icao=flights[0].icao, flight_features=all_flight_features)
     return pf
-        # we could find a few minutes. 
-
-# def message_sequences_for_flights 
-# for each message_sequence I do stuff for each airport candidate. 
 
 def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
     # load ground truth flights
