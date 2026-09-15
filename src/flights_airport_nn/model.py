@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+from torch.nn.utils.rnn import pack_padded_sequence
 from flights_airport_nn.features.features import NUMBER_OF_FEATURES
 
 
@@ -16,18 +16,23 @@ class AirportGRU(nn.Module):
 
         self.output = nn.Linear(hidden_size, 1)
 
-    def forward(self, x):
-        # x shape:
-        # (batch_size, sequence_length, input_size)
+    def forward(self, x, mask):
+        # x:    (batch_size, sequence_length, input_size)
+        # mask: (batch_size, sequence_length)
 
-        _, hidden = self.gru(x)
+        lengths = mask.sum(dim=1).cpu()
 
-        # hidden shape:
-        # (num_layers, batch_size, hidden_size)
+        packed_x = pack_padded_sequence(
+            x,
+            lengths,
+            batch_first=True,
+            enforce_sorted=False,
+        )
+
+        _, hidden = self.gru(packed_x)
 
         last_hidden = hidden[-1]
 
-        # (batch_size, hidden_size) -> (batch_size, 1)
         score = self.output(last_hidden)
 
         return score.squeeze(-1)
