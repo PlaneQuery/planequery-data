@@ -8,7 +8,7 @@ from flights_airport_nn.utils import device, model_folder_path
 from flights_airport_nn.features.features import create_features_for_day
 from flights_airport_nn.model import AirportGRU
 
-def train(train_dt) -> None:
+def train(train_dt):
     print(device)
 
     features = create_features_for_day(train_dt)
@@ -44,9 +44,11 @@ def train(train_dt) -> None:
     path = model_folder_path() / "model.pt"
     os.makedirs(path.parent, exist_ok=True)
     torch.save(model.state_dict(), path)
+    return model
 
-def run_train(train_dates: list[date]) -> None:
-    train(train_dates[0])
+def run_train(train_dates: list[date]):
+    model = train(train_dates[0])
+    return model
 
 if __name__ == "__main__":
     run_train([date(2026, 2, 1)])
