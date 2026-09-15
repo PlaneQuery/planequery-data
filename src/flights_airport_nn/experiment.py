@@ -2,8 +2,9 @@
 # maybe have an ExpiermentConfig class, that has name and such. 
 
 from datetime import date, datetime
-import json
 from pathlib import Path
+
+import polars as pl
 
 from data_engineering.flights.flight_type import flights_to_flights_df
 from data_engineering.utils import OUTPUT_DIR
@@ -35,10 +36,9 @@ def run_experiment():
     df_flights = flights_to_flights_df(flights.values())
     eval_stats = evaluate_model(eval_dates[0], df_flights)
     output_dir = experiment_run_dir(experiment_name, datetime.now())
-    path = output_dir / "evaluation" / "metrics.json"
+    path = output_dir / "evaluation" / "metrics.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(eval_stats.to_record(), file, indent=2)
+    pl.DataFrame([eval_stats.to_record()]).write_csv(path)
 
 
 if __name__ == "__main__":
