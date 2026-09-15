@@ -137,19 +137,19 @@ def create_features_for_flight(f: Flight, messages: list[AdsbMessage], airport_l
         airport_lat = airport.lat
         airport_lon = airport.lon
         previous_distance = None
-        for j in range(len(sub_messages)):
-            m = sub_messages[j]
+        for i in range(len(sub_messages)):
+            m = sub_messages[i]
             distance = haversine(m.lat, m.lon, airport_lat, airport_lon)
             bearing_rad = math.radians(
                 initial_bearing_deg(airport_lat, airport_lon, m.lat, m.lon)
             )
             north_km = distance * math.cos(bearing_rad)
             east_km = distance * math.sin(bearing_rad)
-            if j == 0:
+            if i == 0:
                 time_delta = 0
                 radial_speed = 0
             else:
-                time_delta = (m.time - sub_messages[j-1].time).total_seconds()
+                time_delta = (m.time - sub_messages[i-1].time).total_seconds()
                 radial_speed = (
                     (distance - previous_distance) / time_delta
                     if time_delta > 0
