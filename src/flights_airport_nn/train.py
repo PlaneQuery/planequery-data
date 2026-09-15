@@ -12,7 +12,7 @@ from flights_airport_nn.features.features import (
 from flights_airport_nn.model import AirportGRU
 
 
-def run_train(
+def run_train( # TODO: have this take in features not dates 
     train_dates: list[date] | tuple[date, ...],
     feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
 ):
