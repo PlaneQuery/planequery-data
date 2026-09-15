@@ -16,8 +16,9 @@ def train(train_dt):
     X, mask, y, candidate_rows = features.numpy_features()
 
     X = torch.from_numpy(X)
+    mask = torch.from_numpy(mask)
     y = torch.from_numpy(y)
-    dataset = TensorDataset(X, y)
+    dataset = TensorDataset(X, mask, y)
     loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
     model = AirportGRU().to(device)
@@ -29,11 +30,12 @@ def train(train_dt):
         model.train()
         total_loss = 0
 
-        for X_batch, y_batch in loader:
+        for X_batch, mask_batch, y_batch in loader:
             X_batch = X_batch.to(device)
+            mask_batch = mask_batch.to(device)
             y_batch = y_batch.to(device)
             optimizer.zero_grad()
-            scores = model(X_batch)
+            scores = model(X_batch, mask_batch)
             loss = loss_fn(scores, y_batch)
             loss.backward()
             optimizer.step()
