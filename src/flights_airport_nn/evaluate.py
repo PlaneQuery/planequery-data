@@ -72,3 +72,4 @@ if __name__ == "__main__":
     df_flights = flights_to_flights_df(flights.values())
     eval_stats = evaluate_model(eval_dt, df_flights)
     df = pl.DataFrame([eval_stats.to_record()])
+    print(df)
