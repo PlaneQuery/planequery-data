@@ -26,25 +26,36 @@ def load_model(
 def predict(
     model: AirportGRU,
     features: np.ndarray,
+    mask: np.ndarray,
     batch_size: int = 256,
 ) -> np.ndarray:
+    model.eval()
     outputs = []
 
     with torch.inference_mode():
         for start in range(0, len(features), batch_size):
+            end = start + batch_size
+
             batch = torch.as_tensor(
-                features[start:start + batch_size],
+                features[start:end],
                 dtype=torch.float32,
                 device=device,
             )
-            probabilities = torch.sigmoid(model(batch))
+            mask_batch = torch.as_tensor(
+                mask[start:end],
+                dtype=torch.bool,
+            )
+
+            probabilities = torch.sigmoid(
+                model(batch, mask_batch)
+            )
             outputs.append(probabilities.cpu().numpy())
 
     return np.concatenate(outputs)
 def inference(features: Features, model: AirportGRU):
     X, mask, y, candidate_rows = features.numpy_features()
     flights = features.flights_by_id
-    output = predict(model, X)
+    output = predict(model, X, mask)
 
     scores_by_flight_id: defaultdict[str, dict[Airport, float]] = defaultdict(dict)
     for i in range(len(output)):
