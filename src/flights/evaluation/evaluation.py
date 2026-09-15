@@ -15,7 +15,7 @@ from flights.evaluation.consecutive_airports import (
     consecutive_airport_details,
     consecutive_airport_stats,
 )
-from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
+from flights.flights_comparison import df_flights_comparison, df_flights_comparison_stats
 from flights.ground_truth.bts_and_sfdps_to_gold import (
     get_ground_truth_flights_for_day,
 )
@@ -286,7 +286,7 @@ def main( # TODO: Maybe rename to run_evaluation
                             on=["icao", "takeoff_time"],
                             how="left",
                         )
-                    df = df_flights_comparision(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
+                    df = df_flights_comparison(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
                     results.append(df)
                     stats = df_flights_comparison_stats(df)
                     if include_consecutive_airport_metrics:
