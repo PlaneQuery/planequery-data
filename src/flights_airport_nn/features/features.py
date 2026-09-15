@@ -8,13 +8,14 @@ from data_engineering.flights.flight_type import Flight, flights_df_to_flights
 from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_for_day
 from datetime import date, timedelta
 from functools import cached_property
+import math
 
 from flights_airport_nn.features.ground_truth_join_segmentation_algorithm import flights_features_df
-from planequery_data.utils import haversine
+from planequery_data.utils import haversine, initial_bearing_deg
 
 FEATURE_PERIOD = timedelta(minutes=15)
 airport_lookup = AirportLookup()
-NUMBER_OF_FEATURES = 2 # distance and time delta
+NUMBER_OF_FEATURES = 4  # north_km, east_km, radial_speed_km_s, time_delta_s
 
 @dataclass
 class AirportCandidateFeatures:
@@ -98,14 +99,27 @@ def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
         features = []
         airport_lat = airport.lat
         airport_lon = airport.lon
+        previous_distance = None
         for j in range(len(sub_messages)):
             m = sub_messages[j]
             distance = haversine(m.lat, m.lon, airport_lat, airport_lon)
+            bearing_rad = math.radians(
+                initial_bearing_deg(airport_lat, airport_lon, m.lat, m.lon)
+            )
+            north_km = distance * math.cos(bearing_rad)
+            east_km = distance * math.sin(bearing_rad)
             if j == 0:
                 time_delta = 0
+                radial_speed = 0
             else:
                 time_delta = (m.time - sub_messages[j-1].time).total_seconds()
-            features.append((distance,time_delta))
+                radial_speed = (
+                    (distance - previous_distance) / time_delta
+                    if time_delta > 0
+                    else 0
+                )
+            features.append((north_km, east_km, radial_speed, time_delta))
+            previous_distance = distance
         acf = AirportCandidateFeatures(flight_id=f.flight_id, predicted_airport=airport, true_airport=true_airport, features=features)
         all_airport_candidate_features.append(acf)
     ff = FlightFeatures(flight_id=f.flight_id, true_airport=true_airport, candidates=all_airport_candidate_features)
