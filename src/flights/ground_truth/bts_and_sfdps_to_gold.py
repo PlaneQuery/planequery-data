@@ -7,7 +7,7 @@ from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import OUTPUT_DIR
 from flights.evaluation.american_evals import continental_usa_to_continental_usa
-from flights.flights_comparison import df_flights_comparision
+from flights.flights_comparison import df_flights_comparison
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 
 
@@ -46,7 +46,7 @@ def get_ground_truth_flights_for_day(
     start_dt = datetime(target_date.year, target_date.month, target_date.day)
     end_dt = start_dt + timedelta(days=1)
     original_columns = df_bts_flights.columns
-    df = df_flights_comparision(df_bts_flights, df_sfdps_flights, start_dt, end_dt)
+    df = df_flights_comparison(df_bts_flights, df_sfdps_flights, start_dt, end_dt)
     df = df.filter(
     (pl.col("match_status") == "both").all().over("icao")
     )
