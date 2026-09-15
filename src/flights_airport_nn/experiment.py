@@ -1,8 +1,6 @@
-# pick how many days
-# maybe have an ExpiermentConfig class, that has name and such. 
-
+import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -15,12 +13,14 @@ from flights_airport_nn.inference import run_inference
 from flights_airport_nn.train import run_train
 from planequery_data.utils import current_commit_hash
 
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     name: str
     train_dates: tuple[date, ...]
     eval_dates: tuple[date, ...]
     features: FeatureConfig
+
 
 EXPERIMENTS_DIR = (
     OUTPUT_DIR / "data" / "experiments" / "flights_airport_nn" / "runs"
@@ -32,26 +32,54 @@ def experiment_run_dir(experiment_name: str, run_dt: datetime) -> Path:
     return EXPERIMENTS_DIR / f"{timestamp}_{experiment_name}_{current_commit_hash()}"
 
 
+def parse_experiment_config(argv: list[str] | None = None) -> ExperimentConfig:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--name", default="test_experiment")
+    parser.add_argument(
+        "--train-dates",
+        type=int,
+        default=1,
+        help="number of training days starting from 2026-02-01",
+    )
+    parser.add_argument(
+        "--eval-dates",
+        type=date.fromisoformat,
+        nargs="+",
+        default=[date(2026, 3, 1)],
+    )
+    args = parser.parse_args(argv)
+    if args.train_dates < 1:
+        parser.error("--train-dates must be a positive integer")
+
+    train_dates = tuple(
+        date(2026, 2, 1) + timedelta(days=offset)
+        for offset in range(args.train_dates)
+    )
+    return ExperimentConfig(
+        name=args.name,
+        train_dates=train_dates,
+        eval_dates=tuple(args.eval_dates),
+        features=ALL_FEATURE_CONFIG,
+    )
+
+
 def run_experiment(config: ExperimentConfig):
     model = run_train(config.train_dates, config.features)
-    flights = run_inference(config.eval_dates[0], model, config.features)
-    df_flights = flights_to_flights_df(flights.values())
-    eval_stats = evaluate_model(config.eval_dates[0], df_flights)
-    output_dir = experiment_run_dir(config.name, datetime.now())
+    eval_records = []
+    for eval_date in config.eval_dates:
+        flights = run_inference(eval_date, model, config.features)
+        df_flights = flights_to_flights_df(flights.values())
+        eval_stats = evaluate_model(eval_date, df_flights)
+        eval_records.append(eval_stats.to_record())
+
+    output_dir = experiment_run_dir(config.name, datetime.now(UTC))
     path = output_dir / "evaluation" / "metrics.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
-    df = pl.DataFrame([eval_stats.to_record()])
+    df = pl.DataFrame(eval_records)
     df.write_csv(path)
     print(path)
     print(df)
 
 
 if __name__ == "__main__":
-    run_experiment(
-        ExperimentConfig(
-            name="all_features_0",
-            train_dates=(date(2026, 2, 1),),
-            eval_dates=(date(2026, 3, 1),),
-            features=ALL_FEATURE_CONFIG,
-        )
-    )
+    run_experiment(parse_experiment_config())
