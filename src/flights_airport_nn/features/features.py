@@ -15,13 +15,6 @@ from planequery_data.utils import haversine
 FEATURE_PERIOD = timedelta(minutes=15)
 airport_lookup = AirportLookup()
 NUMBER_OF_FEATURES = 2 # distance and time delta
-# TODO: Must use segmentation takeoff/landing time now the ground_truth takeoff/landing time. 
-
-def features_df_to_numpy():
-    pass
-
-def normalize_features():
-    pass
 
 @dataclass
 class AirportCandidateFeatures:
@@ -140,12 +133,6 @@ def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
     # load matching adsb
     features = Features(df_flights, df_adsb)
     return features
-
-
-# I can split by date
-def get_features(target_dt: date):
-
-    pass
 
 def create_features_for_day(target_dt: date):
     df_flights = flights_features_df(target_dt)
