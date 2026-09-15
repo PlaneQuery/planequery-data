@@ -117,7 +117,7 @@ class Features():
         y = np.asarray(y, dtype=np.float32)
         return X, mask, y, candidate_rows
 
-def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
+def create_features_for_flight(f: Flight, messages: list[AdsbMessage], airport_look_radius_km = 100):
     all_airport_candidate_features: list[AirportCandidateFeatures] = []
     takeoff_time = f.takeoff_time
     idx = closest_time_row_idx(messages, takeoff_time, lte=False)
@@ -128,7 +128,7 @@ def create_features_for_flight(f: Flight, messages: list[AdsbMessage]):
     assert idx_final is not None
     sub_messages = messages[idx:idx_final+1]
     true_airport = f.takeoff_airport
-    possible_airports = airport_lookup.getAirportsWithinRadius(first_m.lat, first_m.lon, 100)
+    possible_airports = airport_lookup.getAirportsWithinRadius(first_m.lat, first_m.lon, airport_look_radius_km)
     if true_airport not in possible_airports:
         possible_airports.append(true_airport)
     features = []
