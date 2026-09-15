@@ -70,4 +70,5 @@ if __name__ == "__main__":
     flights = run_inference(eval_dt, model)
     from data_engineering.flights.flight_type import flights_to_flights_df
     df_flights = flights_to_flights_df(flights.values())
-    evaluate_model(eval_dt, df_flights)
+    eval_stats = evaluate_model(eval_dt, df_flights)
+    df = pl.DataFrame([eval_stats.to_record()])
