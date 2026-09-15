@@ -6,21 +6,41 @@ import numpy as np
 import torch
 
 from airports.airport_lookup import Airport
-from flights_airport_nn.features.features import Features, FlightFeatures, create_features_for_day
+from flights_airport_nn.features.features import (
+    ALL_FEATURE_CONFIG,
+    FeatureConfig,
+    FeatureName,
+    Features,
+    create_features_for_day,
+)
 from flights_airport_nn.utils import device
 from flights_airport_nn.model import AirportGRU
 
 
 def load_model(
     model_path: str | Path,
-) -> AirportGRU:
+) -> tuple[AirportGRU, FeatureConfig]:
     """Load a trained airport GRU on the best available device."""
-    model = AirportGRU().to(device)
+    checkpoint = torch.load(
+        model_path,
+        map_location=device,
+        weights_only=True,
+    )
+    feature_config = FeatureConfig(
+        enabled=tuple(
+            FeatureName(name)
+            for name in checkpoint["feature_names"]
+        )
+    )
+    model = AirportGRU(
+        input_size=feature_config.input_size,
+        hidden_size=checkpoint["hidden_size"],
+    ).to(device)
     model.load_state_dict(
-        torch.load(model_path, map_location=device, weights_only=True)
+        checkpoint["model_state_dict"]
     )
     model.eval()
-    return model
+    return model, feature_config
 
 
 def predict(
@@ -52,8 +72,12 @@ def predict(
             outputs.append(probabilities.cpu().numpy())
 
     return np.concatenate(outputs)
-def inference(features: Features, model: AirportGRU):
-    X, mask, y, candidate_rows = features.numpy_features()
+def inference(
+    features: Features,
+    model: AirportGRU,
+    feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
+):
+    X, mask, y, candidate_rows = features.numpy_features(feature_config)
     flights = features.flights_by_id
     output = predict(model, X, mask)
 
@@ -75,14 +99,18 @@ def inference(features: Features, model: AirportGRU):
     return flights
 
 
-def run_inference(target_dt: date, model):
+def run_inference(
+    target_dt: date,
+    model: AirportGRU,
+    feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
+):
     features = create_features_for_day(target_dt)
-    flights = inference(features, model)
+    flights = inference(features, model, feature_config)
     return flights
 
 if __name__ == "__main__":
     from datetime import date
-    model = load_model(
+    model, feature_config = load_model(
         model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
     )
-    run_inference(date(2026, 3, 2), model)
+    run_inference(date(2026, 3, 2), model, feature_config)
