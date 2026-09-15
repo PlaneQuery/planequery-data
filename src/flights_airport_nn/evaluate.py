@@ -1,6 +1,5 @@
 # this would be passing in the filghts is useful so I can reuse ground truth flights here. Although loading them is not that expensive at all and saves ram. 
 from datetime import timedelta, datetime
-from attr import dataclass
 import polars as pl
 from data_engineering.flights.flight_type import get_flights
 from flights.flights_comparison import df_flights_comparison, df_flights_comparison_stats
@@ -19,17 +18,14 @@ class EvalStats:
         return self.takeoff_airport_total_count - self.takeoff_airport_correct_count
     # derive percentages here or maybe do this in an __init__ ?
     
-    def get_nearest_airport_method_value(self):
-        return self.nearest_takeoff_airport_correct_count / self.takeoff_airport_total_count if self.takeoff_airport_total_count > 0 else 0
-    
+
     def to_record(self):
         return {
-            "eval_dt": self.eval_dt,
+            "eval_dt": self.eval_dt.isoformat(),
             "takeoff_airport_total_count": self.takeoff_airport_total_count,
             "takeoff_airport_correct_count": self.takeoff_airport_correct_count,
             "takeoff_airport_incorrect_count": self.takeoff_airport_incorrect_count,
             "nearest_takeoff_airport_correct_count": self.nearest_takeoff_airport_correct_count,
-            "nearest_takeoff_airport_method_value": self.get_nearest_airport_method_value(),
         }
 
 
@@ -49,7 +45,12 @@ def evaluate_model(eval_dt, df_flights):
     stats = df_flights_comparison_stats(df)
     stats['takeoff_airport_ident_total_count']
     nearest_airport_stats = get_nearest_airport_method_stats(df_gt, eval_dt)
-    eval_stats = EvalStats(eval_dt, stats['takeoff_airport_ident_total_count'], stats['takeoff_airport_ident_correct_count'], nearest_airport_stats['takeoff_airport_ident_correct_count'])
+    eval_stats = EvalStats(
+        eval_dt,
+        stats["takeoff_airport_ident_total_count"],
+        stats["takeoff_airport_ident_match_count"],
+        nearest_airport_stats["takeoff_airport_ident_match_count"],
+    )
     # output with the flights and then the true takeoff_airport. Maybe having the groundtruth takeoff/landing time would be useful as well? 
     return eval_stats
 
