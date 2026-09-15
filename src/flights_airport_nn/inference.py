@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from airports.airport_lookup import Airport
-from flights_airport_nn.features.features import FlightFeatures, create_features_for_day
+from flights_airport_nn.features.features import Features, FlightFeatures, create_features_for_day
 from flights_airport_nn.utils import device
 from flights_airport_nn.model import AirportGRU
 
@@ -41,12 +41,11 @@ def predict(
             outputs.append(probabilities.cpu().numpy())
 
     return np.concatenate(outputs)
-def inference():
+def inference(features: Features):
     # we batch input it. But maybe to start we go one by one?
     model = load_model(
         model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
     )
-    features = create_features_for_day(date(2026, 3, 1))
     X, mask, y, candidate_rows = features.numpy_features()
     flights = features.flights_by_id
     output = predict(model, X)
@@ -68,9 +67,14 @@ def inference():
         
     return flights
 
+def run_inference(target_dt: date):
+    features = create_features_for_day(target_dt)
+    flights = inference(features)
+    return flights
 
 def run_inference_day(target_dt: date):
     pass
 
 if __name__ == "__main__":
-    inference()
+    from datetime import date
+    run_inference(date(2026, 3, 2))
