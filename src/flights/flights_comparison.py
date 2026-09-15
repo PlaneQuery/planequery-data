@@ -98,7 +98,7 @@ def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_d
     return (f0_series, f1_series)
 
 # we return the maps of what they map to and then.... we create both, df0, df1. in the dataframe I'll keep the original order those rows will just haven null for i.e the df1 columns
-def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True): # TODO: Add the distnace comaprision between the last_lat, last_lon and last_message_time of df_1 and the true SFDPS data. 
+def df_flights_comparision(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True): # TODO: do something about start_dt, end_dt, what are their types? and Can they have default vlaues and/or not use them? 
     df_0 = _with_comparison_endpoint_columns(df_0)
     df_1 = _with_comparison_endpoint_columns(df_1)
     icaos = sorted(set(df_0.get_column("icao").unique().to_list()) | set(df_1.get_column("icao").unique().to_list()))
