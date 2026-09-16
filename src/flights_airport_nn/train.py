@@ -1,18 +1,21 @@
 from datetime import date
 import os
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
+from flights_airport_nn.dataset import (
+    AirportCandidateDataset,
+    collate_airport_candidates,
+)
 from flights_airport_nn.utils import device, model_folder_path
 from flights_airport_nn.features.features import (
     ALL_FEATURE_CONFIG,
     FeatureConfig,
-    create_features_for_day,
 )
 from flights_airport_nn.model import AirportGRU
 
 
-def run_train( # TODO: have this take in features not dates 
+def run_train(
     train_dates: list[date] | tuple[date, ...],
     feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
 ):
@@ -24,35 +27,33 @@ def run_train( # TODO: have this take in features not dates
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     epochs = 2
+    dataset = AirportCandidateDataset(train_dates, feature_config)
+    loader = DataLoader(
+        dataset,
+        batch_size=64,
+        collate_fn=collate_airport_candidates,
+    )
 
-    for train_dt in train_dates:
-        features = create_features_for_day(train_dt)
-        X, mask, y, _ = features.numpy_features(feature_config)
-        dataset = TensorDataset(
-            torch.from_numpy(X),
-            torch.from_numpy(mask),
-            torch.from_numpy(y),
-        )
-        loader = DataLoader(dataset, batch_size=64, shuffle=True)
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+        batch_count = 0
 
-        for epoch in range(epochs):
-            model.train()
-            total_loss = 0
+        for X_batch, mask_batch, y_batch in loader:
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
+            optimizer.zero_grad()
+            scores = model(X_batch, mask_batch)
+            loss = loss_fn(scores, y_batch)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            batch_count += 1
 
-            for X_batch, mask_batch, y_batch in loader:
-                X_batch = X_batch.to(device)
-                y_batch = y_batch.to(device)
-                optimizer.zero_grad()
-                scores = model(X_batch, mask_batch)
-                loss = loss_fn(scores, y_batch)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
+        if batch_count == 0:
+            raise ValueError("training dates produced no airport candidates")
 
-            print(
-                f"{train_dt} Epoch {epoch + 1:02d} "
-                f"Loss: {total_loss / len(loader):.4f}"
-            )
+        print(f"Epoch {epoch + 1:02d} Loss: {total_loss / batch_count:.4f}")
 
     path = model_folder_path() / "model.pt"
     os.makedirs(path.parent, exist_ok=True)
