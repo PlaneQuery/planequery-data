@@ -17,7 +17,9 @@ class EvalStats:
     def takeoff_airport_incorrect_count(self):
         return self.takeoff_airport_total_count - self.takeoff_airport_correct_count
     # derive percentages here or maybe do this in an __init__ ?
-    
+    @property
+    def nearest_takeoff_airport_incorrect_count(self):
+        return self.takeoff_airport_total_count - self.nearest_takeoff_airport_correct_count
 
     def to_record(self):
         return {
@@ -26,6 +28,7 @@ class EvalStats:
             "takeoff_airport_correct_count": self.takeoff_airport_correct_count,
             "takeoff_airport_incorrect_count": self.takeoff_airport_incorrect_count,
             "nearest_takeoff_airport_correct_count": self.nearest_takeoff_airport_correct_count,
+            "nearest_takeoff_airport_incorrect_count": self.nearest_takeoff_airport_incorrect_count,
         }
 
 
