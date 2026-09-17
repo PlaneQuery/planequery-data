@@ -132,27 +132,11 @@ def get_algorithm_airports_nn_flights(
     )
     if flights.is_empty():
         return flights
-    if adsb_src in ("adsblol", "adsbx"):
-        from flights_airport_nn.derive_day import derive_day
+    from flights_airport_nn.derive_day import derive_day
 
-        path = derive_day(
-            target_date, source=adsb_src, model_path=model_path, flights=flights
-        )
-        return pl.read_parquet(path)
-    from data_engineering.flights.flight_type import flights_to_flights_df
-    from flights_airport_nn.inference import load_model, run_inference
-
-    model, feature_config = load_model(model_path)
-    predicted = run_inference(
-        target_date,
-        model,
-        feature_config,
-        adsb_src=adsb_src,
-        flights=flights,
-    )
-    if len(predicted) != flights.height:
-        raise ValueError("Airport NN inference did not return every flight")
-    return flights_to_flights_df(list(predicted.values()))
+    return pl.read_parquet(derive_day(
+        target_date, source=adsb_src, model_path=model_path, flights=flights
+    ))
 
 
 def source_flights_reader(
