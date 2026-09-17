@@ -1,99 +1,114 @@
+"""CLI for cache preparation, training and a once-only final test."""
+
 import argparse
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+import json
+from datetime import date
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
-from data_engineering.flights.flight_type import flights_to_flights_df
-from data_engineering.utils import OUTPUT_DIR
-from flights_airport_nn.evaluate import evaluate_model
-from flights_airport_nn.features.features import ALL_FEATURE_CONFIG, FeatureConfig
-from flights_airport_nn.inference import run_inference
+from flights_airport_nn.benchmark import evaluate_dates, summarize
+from flights_airport_nn.dataset import cache_path, prepare_dates
+from flights_airport_nn.features.features import ALL_FEATURE_CONFIG
 from flights_airport_nn.train import run_train
-from planequery_data.utils import current_commit_hash
 
 
-@dataclass(frozen=True)
-class ExperimentConfig:
-    name: str
-    train_dates: tuple[date, ...]
-    eval_dates: tuple[date, ...]
-    epochs: int
-    features: FeatureConfig
-
-
-EXPERIMENTS_DIR = (
-    OUTPUT_DIR / "data" / "experiments" / "flights_airport_nn" / "runs"
-)
-
-
-def experiment_run_dir(experiment_name: str, run_dt: datetime) -> Path:
-    timestamp = run_dt.strftime("%Y-%m-%d_%H-%M-%S")
-    return EXPERIMENTS_DIR / f"{timestamp}_{experiment_name}_{current_commit_hash()}"
-
-
-def parse_experiment_config(argv: list[str] | None = None) -> ExperimentConfig:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="test_experiment")
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--train-dates",
-        type=int,
-        default=1,
-        help="number of training days starting from 2026-02-01",
+        "--train-dates", nargs="+", type=date.fromisoformat, required=True
     )
     parser.add_argument(
-        "--eval-dates",
-        type=date.fromisoformat,
-        nargs="+",
-        default=[date(2026, 3, 1)],
+        "--validation-dates", nargs="+", type=date.fromisoformat, required=True
     )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=2,
-        help="maximum number of training epochs",
-    )
+    parser.add_argument("--test-dates", nargs="+", type=date.fromisoformat, default=[])
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--patience", type=int, default=4)
+    parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--dropout", type=float, default=0.15)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--cache-workers", type=int, default=1)
     args = parser.parse_args(argv)
-    if args.train_dates < 1:
-        parser.error("--train-dates must be a positive integer")
-    if args.epochs < 1:
-        parser.error("--epochs must be a positive integer")
-
-    train_dates = tuple(
-        date(2026, 2, 1) + timedelta(days=offset)
-        for offset in range(args.train_dates)
+    splits = [set(args.train_dates), set(args.validation_dates), set(args.test_dates)]
+    if any(splits[i] & splits[j] for i in range(3) for j in range(i)):
+        parser.error("Train, validation and test dates must be disjoint")
+    if any(
+        len(dates) != len(set(dates))
+        for dates in [args.train_dates, args.validation_dates, args.test_dates]
+    ):
+        parser.error("Dates must be unique within each split")
+    if not args.prepare_only and (args.output_dir / "model.pt").exists():
+        parser.error(
+            "Output directory already contains a model; choose a new directory"
+        )
+    prepare_dates(
+        (*args.train_dates, *args.validation_dates, *args.test_dates),
+        args.cache_workers,
     )
-    return ExperimentConfig(
-        name=args.name,
-        train_dates=train_dates,
-        eval_dates=tuple(args.eval_dates),
-        epochs=args.epochs,
-        features=ALL_FEATURE_CONFIG,
-    )
-
-
-def run_experiment(config: ExperimentConfig):
+    if args.prepare_only:
+        return
     model = run_train(
-        config.train_dates,
-        config.features,
-        epochs=config.epochs,
+        args.train_dates,
+        epochs=args.epochs,
+        validation_dates=args.validation_dates,
+        output_dir=args.output_dir,
+        hidden_size=args.hidden_size,
+        dropout=args.dropout,
+        batch_size=args.batch_size,
+        seed=args.seed,
+        patience=args.patience,
+        prepare=False,
     )
-    eval_records = []
-    for eval_date in config.eval_dates:
-        flights = run_inference(eval_date, model, config.features)
-        df_flights = flights_to_flights_df(flights.values())
-        eval_stats = evaluate_model(eval_date, df_flights)
-        eval_records.append(eval_stats.to_record())
+    if args.test_dates:
+        final_test(model, args.test_dates, args.train_dates, args.output_dir)
 
-    output_dir = experiment_run_dir(config.name, datetime.now(UTC))
-    path = output_dir / "evaluation" / "metrics.csv"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df = pl.DataFrame(eval_records)
-    df.write_csv(path)
-    print(path)
-    print(df)
+
+def final_test(
+    model, test_dates, train_dates, output_dir, feature_config=ALL_FEATURE_CONFIG
+):
+    overlap = set(test_dates) & (
+        set(train_dates) | set(getattr(model, "validation_dates", ()))
+    )
+    if overlap:
+        raise ValueError(f"Test dates overlap training/validation: {sorted(overlap)}")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if (output_dir / "test_metrics.json").exists():
+        raise FileExistsError(
+            "Final test metrics already exist; choose a new output directory"
+        )
+    aircraft, airports = set(), set()
+    for day in train_dates:
+        with np.load(cache_path(day), allow_pickle=False) as z:
+            aircraft.update(s.split("_")[0] for s in z["flight_id"])
+            airports.update(z["truth"])
+    frame, _, _ = evaluate_dates(
+        model,
+        test_dates,
+        feature_config,
+        temperature=getattr(model, "temperature", 1.0),
+    )
+    frame = frame.with_columns(
+        pl.col("icao").is_in(sorted(aircraft)).alias("seen_aircraft"),
+        pl.col("truth").is_in(sorted(airports)).alias("seen_airport"),
+    )
+    frame.write_parquet(output_dir / "test_predictions.parquet")
+    metrics = summarize(frame)
+    metrics["test_dates"] = [d.isoformat() for d in test_dates]
+    metrics["limitations"] = [
+        "Labels are BTS/SFDPS agreement on US commercial flights; general aviation and worldwide performance are unmeasured.",
+        "Confidence is conditional on candidate retrieval; missing truth is counted as incorrect.",
+        "Date splits can share aircraft, airports and routes. Unseen groups are reported separately.",
+        "Binomial intervals do not account for correlations between endpoints, aircraft or days.",
+    ]
+    (output_dir / "test_metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
+    print(json.dumps(metrics, indent=2), flush=True)
+    return metrics
 
 
 if __name__ == "__main__":
-    run_experiment(parse_experiment_config())
+    main()

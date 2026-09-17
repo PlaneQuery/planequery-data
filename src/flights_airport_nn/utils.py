@@ -1,7 +1,9 @@
-import torch
-from datetime import datetime
-from pathlib import Path
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+
+import torch
+
 from data_engineering.utils import OUTPUT_DIR
 
 device = torch.device(
@@ -11,15 +13,18 @@ device = torch.device(
     if torch.backends.mps.is_available()
     else "cpu"
 )
+MODELS_DIR = OUTPUT_DIR / "data/models/flights_airport_nn"
 
-MODELS_DIR = OUTPUT_DIR / "data" / "models" / "flights_airport_nn"
 
-def model_folder_path(num_days: int | None = 0, dt: datetime | None = None, epochs: int = 0) -> Path:
-    dt = dt or datetime.now()
-    date_str = dt.strftime("%Y-%m-%d_%H-%M")
-    commit = subprocess.check_output(
-        ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
-    ).decode().strip()
-    runs_dir = MODELS_DIR / "runs"
-    folder = runs_dir / f"{date_str}_{commit}_{num_days}days_{epochs}epochs"
-    return folder
+def model_folder_path(num_days=0, dt: datetime | None = None, epochs=0) -> Path:
+    timestamp = (dt or datetime.now(UTC)).strftime("%Y-%m-%d_%H-%M-%S-%f")
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = "nogit"
+    return MODELS_DIR / "runs" / f"{timestamp}_{commit}_{num_days}days_{epochs}epochs"

@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "predictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "type": "string"
+          },
+          "airport_ident": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "airport_ident",
+          "confidence",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "predictions"
+  ],
+  "additionalProperties": false
+}
