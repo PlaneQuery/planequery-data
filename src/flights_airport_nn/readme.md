@@ -549,3 +549,63 @@ To repeat the broad training or score a new day with FAA source data, use:
 The source files for a requested day must exist locally. `stress_broad` scores
 normal reception and a fixed 10% reception-loss sample, retains candidate
 failures in the denominator, and writes the scored endpoints for audit.
+
+## European evaluation
+
+`evaluate_europe` applies the frozen model and nearest-airport baseline to
+independently segmented observations from each network. It supports the daily
+EUROCONTROL derived references and a separate OpenSky agreement check. Reference
+airports and times never enter segmentation or airport prediction.
+
+EUROCONTROL departure timestamps are **off-block**, not takeoff. Aircraft/time
+matching therefore allows native departure from 5 minutes before to 60 minutes
+after the reference departure, with arrival within 15 minutes. Matching must be
+unique in both directions. A stricter common subset uses -2/+30 minutes and
+arrival within 5 minutes. The primary score uses European endpoints with
+resolved airport labels and no overlapping-reference identity/time conflict;
+it does not require ground reception or discard prediction disagreements.
+
+The [EUROCONTROL metadata](https://www.eurocontrol.int/sites/default/files/2025-04/eurocontrol-aviation-data-repository-research-metadata.pdf)
+describes independent Network Manager airport records for scheduled and
+non-scheduled commercial traffic. Its research sample excludes general aviation,
+military and other categories. Cached derived references have already filtered
+unresolved airports and ambiguous registration-to-ICAO associations. This test
+also excludes flights crossing UTC midnight. EUROCONTROL data are acknowledged
+and used for research; raw reference data are not redistributed.
+
+OpenSky's [airport fields are estimates](https://openskynetwork.github.io/opensky-api/python.html).
+Its results are agreement scores and are never pooled with EUROCONTROL accuracy.
+Ground corroboration is a secondary diagnostic: nearby airport identifiers can
+both receive support, and missing ground reception does not invalidate a label.
+
+Historical full traces prepared for this experiment live outside the ordinary
+full-network cache because only reference aircraft were downloaded/extracted:
+
+```bash
+EUROPE_RUN=/mnt/storage1/planequery-data/data/experiments/flights_airport_nn/europe-2026-09-17
+POLARS_MAX_THREADS=2 OMP_NUM_THREADS=1 python -m flights_airport_nn.evaluate_europe \
+  --reference EUROCONTROL --dates 2024-06-01 --sources adsblol adsbx \
+  --prepared-root "$EUROPE_RUN" --output-dir "$EUROPE_RUN/eurocontrol-june01"
+POLARS_MAX_THREADS=2 OMP_NUM_THREADS=1 python -m flights_airport_nn.evaluate_europe \
+  --reference EUROCONTROL --dates 2024-06-15 --sources adsblol \
+  --prepared-root "$EUROPE_RUN" --output-dir "$EUROPE_RUN/eurocontrol-june15"
+POLARS_MAX_THREADS=2 OMP_NUM_THREADS=1 python -m flights_airport_nn.evaluate_europe \
+  --reference OpenSky --dates 2026-03-01 --sources adsblol adsbx \
+  --output-dir "$EUROPE_RUN/opensky-march01"
+python -m flights_airport_nn.audit_europe_errors "$EUROPE_RUN/eurocontrol-june01"
+```
+
+`prepare_europe_traces` records source URLs and the reference-aircraft population
+in acquisition manifests. Missing aircraft remain in the evaluation denominator;
+download failures abort preparation. ADSBx uses full traces, matching the
+ADSB.lol representation. June 1 and 15, 2024 are outside all model fitting and
+selection dates. These historical scores use today's airport catalog.
+
+Each run saves `results.md`, `metrics.json`, `endpoint_results.parquet`,
+`paired_endpoints.parquet`, reference/exclusion Parquets, and `protocol.json`.
+The paired file preserves the reference identifier plus each network's native
+flight identifier, boundaries, predictions and `match_status` for later analysis.
+Metrics include full-reference coverage, per-network and common matched scores,
+airport size and training novelty, aircraft-bootstrap intervals, and 60/180-second
+reception-loss tests. `disagreement_audit.parquet` flags physical evidence and
+registration discrepancies without changing labels or reported accuracy.
