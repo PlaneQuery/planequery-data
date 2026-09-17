@@ -333,11 +333,35 @@ airport. The older commercial-only checkpoint scored 99.9350% on that sample,
 to select the broader checkpoint.
 
 A paired March 1 source comparison used the same 2,257 labeled ADSB.lol
-segments and 4,514 endpoints, but supplied ADSBx observations to the nearest
-airport rule. ADSBx nearest scored 98.29%, compared with 99.89% for the new
-network on ADSB.lol and 98.56% for nearest on ADSB.lol. ADSBx provided a usable
-candidate on 4,513 endpoints. The exact pairings and source-limited results are
-in `$OUTPUT_DIR/data/experiments/flights_airport_nn/adsbx-vs-adsblol-2026-03-01/`.
+segments and 4,514 endpoints for both observation networks. The selected broad
+network scored 99.89% on either ADSB.lol or ADSBx; nearest scored 98.56% on
+ADSB.lol and 98.29% on ADSBx. ADSBx provided a usable candidate on 4,513
+endpoints. The four predictions and source-limited results are in
+`$OUTPUT_DIR/data/experiments/flights_airport_nn/source-matrix-commercial-2026-03-01/`.
+
+An additional March 1 source comparison used the **broader FAA SFDPS labels**:
+24,402 ADSB.lol segments matched FAA flights uniquely by aircraft and time.
+After excluding unresolved labels and unsupported airport types, the same 48,625
+endpoints were scored with each network's observations. Missing observations
+count as errors. The selected broad checkpoint gave:
+
+| FAA label group | Endpoints | ADSB.lol NN | ADSB.lol nearest | ADSBx NN | ADSBx nearest |
+|---|---:|---:|---:|---:|---:|
+| All | 48,625 | 98.35% | 94.50% | 98.34% | 94.21% |
+| Large | 32,924 | 99.53% | 98.37% | 99.51% | 98.11% |
+| Medium | 11,416 | 97.91% | 86.59% | 97.88% | 86.25% |
+| Small | 4,285 | 90.41% | 85.79% | 90.55% | 85.41% |
+
+ADSBx had an endpoint observation for 48,611 of the 48,625 scored endpoints.
+The FAA labels agreed with the original BTS/SFDPS commercial labels on all
+4,490 endpoints shared by the two March 1 matched-flight sets; that overlap
+does not validate the small-airport labels, which are outside the commercial set.
+These are agreement scores with one FAA label source on a date already used in
+the earlier commercial assessment, so they are an exploratory source comparison
+rather than a new held-out result. Per-endpoint paired predictions, counts and
+matching metadata are in
+`$OUTPUT_DIR/data/experiments/flights_airport_nn/source-matrix-faa-2026-03-01/`.
+Reproduce them with `python -m flights_airport_nn.compare_sources_broad`.
 
 April 2 and June 7–8 were also withheld from training and selection, but their
 segmented-flight files are partial. They contain 3,616 scored endpoints in total;

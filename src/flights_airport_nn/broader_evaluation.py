@@ -200,10 +200,14 @@ def endpoint_windows(flights):
     )
 
 
-def read_endpoint_messages(day, flights):
+def read_endpoint_messages(day, flights, source="adsblol"):
     windows = endpoint_windows(flights).sort(["icao", "_window_start"])
     messages = read_adsb(
-        day, icaos=flights["icao"].unique().to_list(), columns=ADSB_COLUMNS, lazy=True
+        day,
+        icaos=flights["icao"].unique().to_list(),
+        columns=ADSB_COLUMNS,
+        source=source,
+        lazy=True,
     )
     return (
         messages.sort(["icao", "time"])
