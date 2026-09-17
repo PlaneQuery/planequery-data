@@ -18,15 +18,17 @@ from flights_airport_nn.model import AirportGRU
 def run_train(
     train_dates: list[date] | tuple[date, ...],
     feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
+    epochs: int = 2,
 ):
     if not train_dates:
         raise ValueError("train_dates must contain at least one date")
+    if epochs < 1:
+        raise ValueError("epochs must be a positive integer")
 
     print(device)
     model = AirportGRU(input_size=feature_config.input_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = torch.nn.BCEWithLogitsLoss()
-    epochs = 2
     dataset = AirportCandidateDataset(train_dates, feature_config)
     loader = DataLoader(
         dataset,
