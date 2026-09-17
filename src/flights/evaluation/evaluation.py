@@ -1,5 +1,7 @@
 import argparse
+import json
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb
@@ -20,6 +22,7 @@ from flights.ground_truth.bts_and_sfdps_to_gold import (
     get_ground_truth_flights_for_day,
 )
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
+from flights_airport_nn.derive_day import DEFAULT_MODEL_PATH as DEFAULT_AIRPORT_NN_MODEL
 from planequery_data.utils import current_commit_hash
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.flights.mike import get_mike_flights_for_day
@@ -31,7 +34,7 @@ DEFAULT_ADSB_SRC_FOR_FLIGHTS = "adsblol"
 
 
 def default_stats_path() -> Path:
-    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M")
+    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S-%f")
     commit_hash = current_commit_hash()
     filename = f"{run_time}_{commit_hash}_flights_evaluation.csv"
     return OUTPUT_DIR / "data" / "experiments" / "comparison" / filename
@@ -110,9 +113,52 @@ def get_algorithm_flights_for_adsb_src(
     )
 
 
+def get_algorithm_airports_nn_flights(
+    target_date: date,
+    adsb_src: str,
+    model_path: Path = DEFAULT_AIRPORT_NN_MODEL,
+) -> pl.DataFrame:
+    """Assign airports to algorithm segments with the selected airport network."""
+    if adsb_src not in ALGORITHM_ADSB_SOURCES:
+        raise ValueError(f"algorithm-airports-nn does not support adsb_src={adsb_src!r}")
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(
+            f"Airport NN checkpoint not found: {model_path}. "
+            "Pass --airport-nn-model with an existing checkpoint."
+        )
+    flights = get_algorithm_flights_for_adsb_src(
+        target_date, adsb_src, no_airports_model=True
+    )
+    if flights.is_empty():
+        return flights
+    if adsb_src in ("adsblol", "adsbx"):
+        from flights_airport_nn.derive_day import derive_day
+
+        path = derive_day(
+            target_date, source=adsb_src, model_path=model_path, flights=flights
+        )
+        return pl.read_parquet(path)
+    from data_engineering.flights.flight_type import flights_to_flights_df
+    from flights_airport_nn.inference import load_model, run_inference
+
+    model, feature_config = load_model(model_path)
+    predicted = run_inference(
+        target_date,
+        model,
+        feature_config,
+        adsb_src=adsb_src,
+        flights=flights,
+    )
+    if len(predicted) != flights.height:
+        raise ValueError("Airport NN inference did not return every flight")
+    return flights_to_flights_df(list(predicted.values()))
+
+
 def source_flights_reader(
     src: str,
     adsb_src: str = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    airport_nn_model_path: Path = DEFAULT_AIRPORT_NN_MODEL,
 ):
     if src == "adsbx":
         return lambda target_date: get_flights(target_date, algorithm="adsbx")
@@ -124,6 +170,16 @@ def source_flights_reader(
         if adsb_src in ALGORITHM_ADSB_SOURCES:
             return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src, no_airports_model=True)
         raise ValueError(f"algorithm-no-airports source does not support adsb_src={adsb_src!r}")
+    if src == "algorithm-airports-nn":
+        if adsb_src in ALGORITHM_ADSB_SOURCES:
+            @lru_cache(maxsize=2)
+            def read_nn(target_date):
+                return get_algorithm_airports_nn_flights(
+                    target_date, adsb_src, airport_nn_model_path
+                )
+
+            return read_nn
+        raise ValueError(f"algorithm-airports-nn does not support adsb_src={adsb_src!r}")
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
@@ -144,7 +200,7 @@ def source_flights_reader(
     raise ValueError(f"Unknown flight source: {src}")
 
 def adsb_srcs_for_test_source(src: str, adsb_srcs: list[str]) -> list[str]:
-    if src in ("algorithm", "algorithm-no-airports"):
+    if src in ("algorithm", "algorithm-no-airports", "algorithm-airports-nn"):
         return adsb_srcs
     return [src]
 
@@ -208,7 +264,8 @@ def main( # TODO: Maybe rename to run_evaluation
     consecutive_airport_displacement_threshold_km = (
         DEFAULT_DISPLACEMENT_THRESHOLD_KM
     ),
-    write_outputs = True
+    write_outputs = True,
+    airport_nn_model_path: Path = DEFAULT_AIRPORT_NN_MODEL,
 ):
     if isinstance(test_src, str):
         test_src = [test_src]
@@ -221,18 +278,33 @@ def main( # TODO: Maybe rename to run_evaluation
 
     results = []
     rows = []
+    stats_output = default_stats_path()
+    comparison_dir = stats_output.with_suffix("")
+    comparison_index = []
+    if write_outputs:
+        comparison_dir.mkdir(parents=True, exist_ok=True)
     matched_gold_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
     adsb_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
     for src in test_src:
         for source_adsb_src in adsb_srcs_for_test_source(src, adsb_src):
-            get_source_flights = source_flights_reader(
-                src,
-                adsb_src=source_adsb_src,
-            )
-            for gold in gold_src:
-                get_gold_flights = source_flights_reader(
-                    gold,
+            if src == "algorithm-airports-nn":
+                get_source_flights = source_flights_reader(
+                    src,
+                    adsb_src=source_adsb_src,
+                    airport_nn_model_path=airport_nn_model_path,
                 )
+            else:
+                get_source_flights = source_flights_reader(
+                    src,
+                    adsb_src=source_adsb_src,
+                )
+            for gold in gold_src:
+                if gold == "algorithm-airports-nn":
+                    get_gold_flights = source_flights_reader(
+                        gold, airport_nn_model_path=airport_nn_model_path
+                    )
+                else:
+                    get_gold_flights = source_flights_reader(gold)
                 for test_date in test_dates:
                     df_test = get_source_flights(test_date)
                     df_gold = get_gold_flights(test_date)
@@ -288,6 +360,45 @@ def main( # TODO: Maybe rename to run_evaluation
                         )
                     df = df_flights_comparison(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
                     results.append(df)
+                    stats_adsb_src = (
+                        source_adsb_src
+                        if src in ("algorithm", "algorithm-no-airports", "algorithm-airports-nn")
+                        else None
+                    )
+                    if write_outputs:
+                        comparison_path = comparison_dir / (
+                            f"comparison-{len(comparison_index):04d}.parquet"
+                        )
+                        temporary_path = comparison_path.with_name(
+                            comparison_path.name + ".tmp"
+                        )
+                        df.write_parquet(temporary_path)
+                        temporary_path.replace(comparison_path)
+                        comparison_index.append({
+                            "path": comparison_path.name,
+                            "test_date": test_date.isoformat(),
+                            "test_src": src,
+                            "gold_src": gold,
+                            "adsb_src": stats_adsb_src,
+                            "matching_adsb_src": matching_adsb_src,
+                            "use_all_icaos": use_all_icaos,
+                            "filter_rotorcraft": filter_rotorcraft,
+                            "pia_or_american_ladd_only": pia_or_american_ladd_only,
+                            "rows": df.height,
+                        })
+                        index_path = comparison_dir / "index.json"
+                        temporary_index_path = comparison_dir / "index.json.tmp"
+                        temporary_index_path.write_text(
+                            json.dumps(
+                                {
+                                    "stats_csv": f"../{stats_output.name}",
+                                    "comparisons": comparison_index,
+                                },
+                                indent=2,
+                            ) + "\n"
+                        )
+                        temporary_index_path.replace(index_path)
+                        print(f"Comparison Parquet saved to {comparison_path}")
                     stats = df_flights_comparison_stats(df)
                     if include_consecutive_airport_metrics:
                         stats.update(
@@ -298,11 +409,6 @@ def main( # TODO: Maybe rename to run_evaluation
                                 ),
                             )
                         )
-                    stats_adsb_src = (
-                        source_adsb_src
-                        if src in ("algorithm", "algorithm-no-airports")
-                        else None
-                    )
                     rows.append({
                         "test_date": test_date.isoformat(),
                         "adsb_src": stats_adsb_src,
@@ -316,14 +422,12 @@ def main( # TODO: Maybe rename to run_evaluation
                     })
                     print(f"Stats for {src}:{gold}: {stats}")
 
-    stats_output = default_stats_path()
-    stats_output.parent.mkdir(parents=True, exist_ok=True)
     df_stats = pl.DataFrame(rows)
     if len(test_dates) > 1:
         df_stats = add_average_rows(df_stats)
     if write_outputs:
         df_stats.write_csv(stats_output)
-    print(f"Stats CSV saved to {stats_output}")
+        print(f"Stats CSV saved to {stats_output}")
     return results, df_stats
 
 
@@ -331,6 +435,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-src", nargs="+", default=["adsbx"])
     parser.add_argument("--adsb-src", nargs="+", default=[DEFAULT_ADSB_SRC_FOR_FLIGHTS])
+    parser.add_argument("--airport-nn-model", type=Path, default=DEFAULT_AIRPORT_NN_MODEL)
     parser.add_argument("--matching-adsb-src", default=DEFAULT_ADSB_SRC_FOR_MATCHING)
     parser.add_argument("--gold-src", nargs="+", default=["bts"])
     date_group = parser.add_mutually_exclusive_group()
@@ -366,6 +471,7 @@ if __name__ == "__main__":
     main(
         test_src=args.test_src,
         adsb_src=args.adsb_src,
+        airport_nn_model_path=args.airport_nn_model,
         matching_adsb_src=args.matching_adsb_src,
         gold_src=args.gold_src,
         test_dates=test_dates,

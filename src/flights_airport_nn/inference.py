@@ -124,11 +124,14 @@ def inference(features, model, feature_config=ALL_FEATURE_CONFIG):
 
 
 def run_inference(
-    target_dt, model, feature_config=ALL_FEATURE_CONFIG, aircraft_batch_size=128
+    target_dt,
+    model,
+    feature_config=ALL_FEATURE_CONFIG,
+    aircraft_batch_size=128,
+    adsb_src="adsblol",
+    flights=None,
 ):
     """Process aircraft batches so a worldwide day need not fit in RAM."""
-    from datetime import timedelta
-
     import polars as pl
 
     from data_engineering.adsb.read_adsb import read_adsb
@@ -137,16 +140,17 @@ def run_inference(
 
     if aircraft_batch_size < 1:
         raise ValueError("aircraft_batch_size must be positive")
-    flights = get_flights(target_dt, no_airports_model=True, adsb_src="adsblol")
+    if flights is None:
+        flights = get_flights(target_dt, no_airports_model=True, adsb_src=adsb_src)
     icaos = sorted(flights["icao"].unique().to_list())
     output = {}
     for start in range(0, len(icaos), aircraft_batch_size):
         batch_icaos = icaos[start : start + aircraft_batch_size]
         batch = flights.filter(pl.col("icao").is_in(batch_icaos))
         adsb = read_adsb(
-            batch["takeoff_time"].min(),
-            batch["landing_time"].max() + timedelta(milliseconds=1),
+            target_dt,
             icaos=batch_icaos,
+            source=adsb_src,
             columns=[
                 "time",
                 "icao",
