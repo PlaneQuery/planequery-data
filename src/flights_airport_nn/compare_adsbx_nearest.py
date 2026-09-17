@@ -1,4 +1,4 @@
-"""Compare ADSBx nearest airport with ADSB.lol model on identical labeled segments."""
+"""Compare both airport methods on ADSBx and ADSB.lol observations."""
 
 import argparse
 import hashlib
@@ -16,7 +16,7 @@ from flights_airport_nn.features.features import create_features
 from flights_airport_nn.features.ground_truth_join_segmentation_algorithm import (
     flights_features_df,
 )
-from flights_airport_nn.inference import load_model
+from flights_airport_nn.inference import load_model, predict_endpoints
 
 ADSB_COLUMNS = [
     "time",
@@ -34,7 +34,7 @@ ADSB_COLUMNS = [
 def rates(frame):
     n = frame.height
     covered = frame.filter(pl.col("adsbx_covered"))
-    return {
+    result = {
         "endpoints": n,
         "adsbx_covered": covered.height,
         "adsbx_coverage": covered.height / n if n else None,
@@ -50,6 +50,12 @@ def rates(frame):
         if covered.height
         else None,
     }
+    if "adsbx_model_correct" in frame.columns:
+        result["adsbx_model_accuracy_all"] = frame["adsbx_model_correct"].mean()
+        result["adsbx_model_accuracy_covered"] = (
+            covered["adsbx_model_correct"].mean() if covered.height else None
+        )
+    return result
 
 
 def bootstrap_difference(frame, seed=20260917, replicates=2000):
@@ -103,7 +109,15 @@ def run(day, model_path, output, batch_aircraft=64):
             pl.lit(None, dtype=pl.String).alias("landing_airport_ident"),
         )
         tracks = messages.filter(pl.col("icao").is_in(block))
-        for endpoint in create_features(subset, tracks).endpoints:
+        features = create_features(subset, tracks)
+        predictions = predict_endpoints(features, model, config)
+        if len(predictions) != len(features.endpoints):
+            raise ValueError("ADSBx model did not score every endpoint")
+        for endpoint, prediction in zip(features.endpoints, predictions, strict=True):
+            if (endpoint.flight_id, endpoint.endpoint) != (
+                prediction["flight_id"], prediction["endpoint"]
+            ):
+                raise ValueError("ADSBx model endpoint alignment failed")
             nearest_rows.append(
                 {
                     "flight_id": endpoint.flight_id,
@@ -111,6 +125,7 @@ def run(day, model_path, output, batch_aircraft=64):
                     "adsbx_nearest": endpoint.candidates[0].predicted_airport.ident
                     if endpoint.candidates
                     else None,
+                    "adsbx_model": prediction["airport_ident"],
                     "adsbx_endpoint_points": len(endpoint.candidates[0].features)
                     if endpoint.candidates
                     else 0,
@@ -134,6 +149,9 @@ def run(day, model_path, output, batch_aircraft=64):
         (pl.col("adsbx_nearest") == pl.col("truth"))
         .fill_null(False)
         .alias("adsbx_correct"),
+        (pl.col("adsbx_model") == pl.col("truth"))
+        .fill_null(False)
+        .alias("adsbx_model_correct"),
     )
     result.write_parquet(output / "paired_predictions.parquet")
     all_metrics = rates(result)
@@ -153,7 +171,7 @@ def run(day, model_path, output, batch_aircraft=64):
         "date": day.isoformat(),
         "model": str(model_path),
         "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
-        "definition": "Same BTS/SFDPS labels and ADSB.lol segmented flights; model uses ADSB.lol endpoint observations, nearest baseline uses ADSBx endpoint observations. No usable ADSBx airport candidate within the model's 10-minute endpoint window counts as an ADSBx failure.",
+        "definition": "Same BTS/SFDPS labels and ADSB.lol segmented flights; both the selected neural network and nearest-candidate rule are scored separately on ADSB.lol and ADSBx endpoint observations. No usable candidate within the 10-minute endpoint window counts as a failure.",
         "source_scope": "Original filtered commercial ground-truth population, not all raw flights or all airports.",
         "adsbx_observations": messages.height,
         "all": all_metrics,
@@ -165,27 +183,29 @@ def run(day, model_path, output, batch_aircraft=64):
     }
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
     lines = [
-        f"# ADSBx nearest versus ADSB.lol model, {day}",
+        f"# Airport network and nearest airport by ADS-B source, {day}",
         "",
         metrics["definition"],
         "",
-        "| Cohort | Endpoints | ADSBx nearest | ADSB.lol model | ADSB.lol nearest | ADSBx coverage |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Cohort | Endpoints | ADSB.lol NN | ADSB.lol nearest | ADSBx NN | ADSBx nearest | ADSBx coverage |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for key in ("all", "takeoff", "landing"):
         row = metrics[key]
         lines.append(
-            f"| {key} | {row['endpoints']:,} | {row['adsbx_nearest_accuracy_all']:.2%} | "
-            f"{row['adsblol_model_accuracy_all']:.2%} | "
+            f"| {key} | {row['endpoints']:,} | {row['adsblol_model_accuracy_all']:.2%} | "
             f"{row['adsblol_nearest_accuracy_all']:.2%} | "
+            f"{row['adsbx_model_accuracy_all']:.2%} | "
+            f"{row['adsbx_nearest_accuracy_all']:.2%} | "
             f"{row['adsbx_coverage']:.2%} |"
         )
     lines += [
         "",
         (
-            f"On the {covered.height:,} ADSBx-covered endpoints, ADSBx nearest was "
-            f"{all_metrics['adsbx_nearest_accuracy_covered']:.2%} and the ADSB.lol model "
-            f"was {all_metrics['adsblol_model_accuracy_covered']:.2%}."
+            f"On the {covered.height:,} ADSBx-covered endpoints, the ADSBx network "
+            f"was {all_metrics['adsbx_model_accuracy_covered']:.2%}, ADSBx nearest "
+            f"was {all_metrics['adsbx_nearest_accuracy_covered']:.2%}, and the "
+            f"ADSB.lol network was {all_metrics['adsblol_model_accuracy_covered']:.2%}."
         ),
         (
             f"The model alone was right on {discordance['model_correct_adsbx_wrong']} "
