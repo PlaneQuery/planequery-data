@@ -236,6 +236,8 @@ def run(day, model_path, output, batch_aircraft=128, workers=3):
         "",
         spec["definition"],
         spec["interpretation"],
+        "Both networks are clipped to ADSB.lol segment boundaries. This excludes extra ADSBx terminal observations and conditions membership on ADSB.lol detection; these scores do not measure the full benefit of either network's coverage.",
+        "FAA departurePoint/arrivalPoint describe ATC route endpoints, which need not be airports. Resolving these strings through a worldwide airport-code lookup can produce incorrect ground-truth labels.",
         "Unresolved labels and unsupported airport types are excluded from the scored rows. Missing observations or airport candidates count as errors.",
         "",
         "| Cohort | Endpoints | ADSB.lol NN | ADSB.lol nearest | ADSBx NN | ADSBx nearest |",
