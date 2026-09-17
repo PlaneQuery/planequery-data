@@ -332,6 +332,13 @@ airport. The older commercial-only checkpoint scored 99.9350% on that sample,
 14 additional correct endpoints. This secondary regression check was not used
 to select the broader checkpoint.
 
+A paired March 1 source comparison used the same 2,257 labeled ADSB.lol
+segments and 4,514 endpoints, but supplied ADSBx observations to the nearest
+airport rule. ADSBx nearest scored 98.29%, compared with 99.89% for the new
+network on ADSB.lol and 98.56% for nearest on ADSB.lol. ADSBx provided a usable
+candidate on 4,513 endpoints. The exact pairings and source-limited results are
+in `$OUTPUT_DIR/data/experiments/flights_airport_nn/adsbx-vs-adsblol-2026-03-01/`.
+
 April 2 and June 7–8 were also withheld from training and selection, but their
 segmented-flight files are partial. They contain 3,616 scored endpoints in total;
 the new network scored 96.54% versus 88.86% for nearest, including 91.00% versus
@@ -351,6 +358,43 @@ The same `load_model` and `predict_endpoints` inference functions load the new
 checkpoint. FAA SFDPS remains one label source, airport identities recur across
 dates, and no finite test can guarantee correctness on every flight or in every
 country.
+
+The flight evaluator exposes the checkpoint as `algorithm-airports-nn`. It
+starts from algorithm segments without airport assignments, reads endpoint
+observations from `--adsb-src`, and returns the normal flight schema:
+
+```bash
+.venv/bin/python -m flights.evaluation.evaluation \
+  --test-src algorithm-airports-nn --adsb-src adsblol \
+  --gold-src ground_truth --test-dates 2026-03-01
+```
+
+The default checkpoint is the selected broad model above. Use
+`--airport-nn-model /path/to/checkpoint.pt` to evaluate another checkpoint.
+For ADSB.lol, the evaluator first writes a reusable full-day file under
+`$OUTPUT_DIR/data/flights/algorithm-nn/year=YYYY/month=MM/day=DD/flights.parquet`.
+Progress is printed after each aircraft batch, and completed batches resume
+after interruption. Generate the March 1 file without running an evaluation:
+
+```bash
+.venv/bin/python -m flights_airport_nn.derive_day --date 2026-03-01
+```
+
+The flight evaluator saves its summary CSV in
+`$OUTPUT_DIR/data/experiments/comparison/`. Each run also has a sibling directory
+with the same filename stem. Its `index.json` identifies each comparison by
+date and source pair; the listed Parquet files preserve the full `df0`/`df1`
+columns and `match_status` returned by `df_flights_comparison`. For example:
+
+```python
+import json
+from pathlib import Path
+import polars as pl
+
+run = Path("/path/to/2026-..._flights_evaluation")
+entry = json.loads((run / "index.json").read_text())["comparisons"][0]
+comparison = pl.read_parquet(run / entry["path"])
+```
 
 To repeat the broad training or score a new day with FAA source data, use:
 
