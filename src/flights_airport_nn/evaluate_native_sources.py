@@ -169,6 +169,16 @@ def load_references(day, catalog):
 
 def temporal_matches(segments, references, tolerance=900):
     """Match independently within each reference source; never use airport labels."""
+    # Explicit per-reference bounds support off-block times without pretending
+    # they are takeoff times. Defaults preserve symmetric airborne matching.
+    bounds = {
+        "start_min_s": -tolerance,
+        "start_max_s": tolerance,
+        "end_tolerance_s": tolerance,
+    }
+    references = references.with_columns(
+        *[pl.lit(v).alias(k) for k, v in bounds.items() if k not in references.columns]
+    )
     candidates = (
         segments.select("flight_id", "icao", "takeoff_time", "landing_time")
         .join(
@@ -178,15 +188,15 @@ def temporal_matches(segments, references, tolerance=900):
                 "icao",
                 pl.col("takeoff_time").alias("reference_start"),
                 pl.col("landing_time").alias("reference_end"),
+                *bounds,
             ),
             on="icao",
         )
         .with_columns(
             (pl.col("takeoff_time") - pl.col("reference_start"))
             .dt.total_milliseconds()
-            .abs()
             .truediv(1000)
-            .alias("start_delta_s"),
+            .alias("signed_start_delta_s"),
             (pl.col("landing_time") - pl.col("reference_end"))
             .dt.total_milliseconds()
             .abs()
@@ -194,9 +204,12 @@ def temporal_matches(segments, references, tolerance=900):
             .alias("end_delta_s"),
         )
         .filter(
-            (pl.col("start_delta_s") <= tolerance)
-            & (pl.col("end_delta_s") <= tolerance)
+            pl.col("signed_start_delta_s").is_between(
+                pl.col("start_min_s"), pl.col("start_max_s")
+            )
+            & (pl.col("end_delta_s") <= pl.col("end_tolerance_s"))
         )
+        .with_columns(pl.col("signed_start_delta_s").abs().alias("start_delta_s"))
     )
     return candidates.with_columns(
         (
@@ -206,7 +219,13 @@ def temporal_matches(segments, references, tolerance=900):
     )
 
 
-def initialize(model_path):
+def initialize(model_path, parquet_roots=None):
+    if parquet_roots:
+        import importlib
+
+        reader = importlib.import_module("data_engineering.adsb.read_adsb")
+        for source, root in parquet_roots.items():
+            setattr(reader, "ADSBLOL_PARQUET_ROOT" if source == "adsblol" else "ADSBX_PARQUET_ROOT", Path(root))
     torch.set_num_threads(1)
     model, config = load_model(model_path)
     WORKER.update(model=model, config=config)
@@ -457,7 +476,8 @@ def run_part(day, source, references, path):
 
 
 def main(
-    days, sources, output, model_path=DEFAULT_MODEL_PATH, workers=3, batch_size=128
+    days, sources, output, model_path=DEFAULT_MODEL_PATH, workers=3, batch_size=128,
+    reference_loader=load_references, parquet_roots=None, extra_policy=None,
 ):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -483,15 +503,17 @@ def main(
     ):
         input_files.append(fingerprint(Path(__file__).parent / relative))
     for day in days:
-        refs, excluded, inputs = load_references(day, catalog)
+        refs, excluded, inputs = reference_loader(day, catalog)
         ref_frames.append(refs)
         input_files.extend(inputs)
         refs.write_parquet(output / f"references-{day}.parquet")
         excluded.write_parquet(output / f"excluded-flights-{day}.parquet")
         aircraft = refs["icao"].unique().sort().to_list()
         for source in sources:
-            raw = (_parquet_day_dir if source == "adsblol" else _adsbx_parquet_day_dir)(
-                day
+            raw = (
+                Path(parquet_roots[source]) / f"year={day.year}/month={day.month:02d}/day={day.day:02d}"
+                if parquet_roots and source in parquet_roots
+                else (_parquet_day_dir if source == "adsblol" else _adsbx_parquet_day_dir)(day)
             )
             files = sorted(raw.glob("icao_bucket=*/data.parquet"))
             if not files:
@@ -532,6 +554,10 @@ def main(
             "scope": "Same UTC day flights with reference aircraft identity. FAA cached aircraft associations may depend on ADSB.lol; BTS uses registration mapping. Observational corroboration is not an independent third label source.",
         },
     }
+    if extra_policy:
+        spec["policy"].update(extra_policy)
+    if parquet_roots:
+        spec["parquet_roots"] = {k: str(v) for k, v in parquet_roots.items()}
     manifest = output / "protocol.json"
     spec = json.loads(json.dumps(spec))
     if manifest.exists() and json.loads(manifest.read_text()) != spec:
@@ -546,7 +572,7 @@ def main(
         max_workers=workers,
         mp_context=multiprocessing.get_context("spawn"),
         initializer=initialize,
-        initargs=(model_path,),
+        initargs=(model_path, parquet_roots),
     ) as pool:
         futures = [pool.submit(run_part, *t) for t in remaining]
         for i, future in enumerate(as_completed(futures), 1):
