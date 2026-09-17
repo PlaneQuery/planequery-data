@@ -1,6 +1,10 @@
 # Airport prediction from segmented ADS-B flights
 
-**Recommended broad checkpoint:** `runs/2026-09-17-broad-finetune-v1/selected_model.pt` improves on nearest airport across large, medium and small airport groups on fresh June 5–6, 2026 flights. The earlier commercial-only checkpoint is evaluated separately below.
+**Selected broad checkpoint:** `runs/2026-09-17-broad-finetune-v1/selected_model.pt`.
+Use the native-network evaluation below for comparisons between ADSB.lol and
+ADSBx. Earlier FAA agreement scores used weaker labels, and the original source
+matrix clipped both sources to ADSB.lol segments; those figures do not establish
+full-network performance or universal superiority over nearest airport.
 
 A shared GRU ranks airport candidates for **takeoff and landing**. It uses relative
 geometry, altitude above airport elevation, ground speed, vertical rate, heading,
@@ -34,6 +38,84 @@ Source file metadata, feature source code metadata and retrieval settings valida
 cache reuse. Changing the feature representation requires a feature-version bump.
 
 ## Train and evaluate
+
+### Evaluate the frozen model on independently segmented networks
+
+```bash
+.venv/bin/python -m flights_airport_nn.evaluate_native_sources \
+  --dates 2026-03-01 --sources adsblol adsbx --workers 4 \
+  --output-dir "$OUTPUT_DIR/data/experiments/flights_airport_nn/native-evaluation-2026-09-17/march01"
+.venv/bin/python -m flights_airport_nn.report_native_evaluation \
+  --output-dir "$OUTPUT_DIR/data/experiments/flights_airport_nn/native-evaluation-2026-09-17/march01"
+```
+
+The evaluator reads full-day observations for every aircraft in the reference
+set and independently runs motion/ground-state segmentation for each network.
+It applies no airport-dependent segment filter. Reference airport labels and
+event times never enter segmentation or inference. Both algorithms use the
+same native segment and observations within each source; nearest queries the
+full supported airport catalog at the first/last endpoint observation.
+
+References are selected before predictions: same-UTC-day BTS airline reports
+and broader FAA flights with known aircraft identity. Unique aircraft/time
+matches use a 15-minute tolerance at both boundaries. Ambiguous and unmatched
+references remain in the saved results and full-reference denominator. Reports
+also compare exactly the same endpoints matched by both networks, separating
+airport-assignment performance from detection/association failures.
+
+`reference_labels.py` rejects ambiguous FAA route points, worldwide IATA
+fallback, and unrelated countries' local codes. FAA label quality is recorded
+separately: agreement with BTS, ground corroboration at the labeled airport,
+conflict, uncorroborated, or unresolved. Ground corroboration uses unmasked
+observations and never predictions; it selects better-observed endpoints and
+is not independent third-party ground truth. The report retains uncorroborated
+FAA agreement as a separate diagnostic and never silently converts it to
+verified accuracy.
+
+Harder checks include small airports, aircraft/airport labels absent from both
+pretraining and fine-tuning, per-airport macro accuracy, natural differences in
+ground coverage, and fixed 60/180-second terminal reception loss on a
+deterministic 20% aircraft sample. Reception loss holds native boundaries fixed
+and tests airport inference, not segmentation robustness. Paired differences
+include aircraft-cluster bootstrap intervals.
+
+`protocol.json` freezes inputs, model ancestry, code identity and rules before
+scoring. Batches are resumable. `endpoint_results.parquet` contains reference
+and native times, `match_status`, both predictions, candidate lists, label
+quality and stress scenario. `label_review.parquet` and `errors.parquet` retain
+cases for investigation. `metrics.json` and `results.md` summarize all cohorts.
+June 5–6 are evaluated with the same procedure under `june05-06/`, using
+ADSB.lol only because ADSBx data is unavailable on those dates. March 1 and
+June 5–6 have been inspected previously; all remain disjoint from training and
+model selection, but they are not newly untouched test dates.
+
+Completed March 1 results on identical endpoints matched in both networks:
+
+| Reference cohort | Endpoints | ADSB.lol NN | ADSB.lol nearest | ADSBx NN | ADSBx nearest |
+|---|---:|---:|---:|---:|---:|
+| Expanded BTS airline reports | 29,360 | 99.83% | 97.35% | 99.99% | 99.83% |
+| FAA ground corroborated, no BTS match | 15,952 | 99.32% | 95.93% | 99.97% | 99.95% |
+| Small airports within that FAA cohort | 2,402 | 97.13% | 95.30% | 99.88% | 99.88% |
+
+These FAA subsets select better-observed endpoints; they are not estimates for
+all general aviation. In the broader corroborated ADSBx cohort, the paired
+NN advantage's confidence interval includes zero, and equal-airport-weighted
+accuracy slightly favors nearest. On June 5–6, nearest also beats the NN on
+the 1,077 corroborated small-airport endpoints (99.81% versus 99.63%). The NN's
+advantage is much larger under controlled terminal reception loss: on 3,230
+March 1 corroborated FAA endpoints with three minutes removed from each end,
+NN/nearest score 87.71%/34.49% for ADSB.lol and 90.09%/40.31% for ADSBx.
+This stress test holds segment boundaries fixed.
+
+The combined report is
+`$OUTPUT_DIR/data/experiments/flights_airport_nn/native-evaluation-2026-09-17/results.md`.
+The March 1 directory additionally has `paired_endpoints.parquet`, with one
+reference endpoint per row and `adsblol_*`/`adsbx_*` predictions, native segment
+times and match statuses. All reference endpoints, including unresolved labels
+and unmatched flights, remain available in the result files. Nine focused unit
+tests and checks on all 333,458 source/endpoint/scenario rows passed.
+
+### Train a new model
 
 Pass explicit, disjoint dates. Use several weeks for training and later dates for
 validation and testing. This short example exercises the complete workflow:
@@ -362,6 +444,35 @@ rather than a new held-out result. Per-endpoint paired predictions, counts and
 matching metadata are in
 `$OUTPUT_DIR/data/experiments/flights_airport_nn/source-matrix-faa-2026-03-01/`.
 Reproduce them with `python -m flights_airport_nn.compare_sources_broad`.
+
+**Coverage and label audit:** those scores clip both networks to ADSB.lol's
+segment boundaries and select flights detected by ADSB.lol. They do not measure
+ADSBx's full coverage advantage. On the same 48,625 endpoints, taking each
+network's closest observation in time to the FAA event (within 15 minutes)
+gives nearest-airport agreement of 93.42% for ADSB.lol and 97.24% for ADSBx.
+This uses supplied FAA event times and is a timing diagnostic, not an updated
+deployment score. Observations within 60 seconds exist for 36,489 versus 44,907
+endpoints; sustained ground evidence at the labeled airport exists for 26,829
+versus 40,475. The ground-evidence rule requires at least three observations
+spanning ten seconds, within 2 km of the airport center, on ground or within
+300 ft of airport elevation at no more than 100 knots.
+
+The NAS schemas define departurePoint/arrivalPoint as ATC route endpoints,
+not necessarily airports. The current airport-code resolver can turn those
+strings into unrelated airports: for example, VTU resolves to MUVT in Cuba
+for 18 audited departures with sustained ground observations at KCMA or KOXR
+in both networks. There are 160 label/timing/association suspects with support
+for the same different airport in both sources and none for the label; these
+are review candidates, not automatically corrected labels. An expanded BTS
+cross-check agrees with FAA on all 26,106 overlapping endpoints, so the label
+concern does not invalidate the commercial cohort wholesale.
+
+Audit tables and suspect observations are saved in
+`source-matrix-faa-2026-03-01/coverage-label-audit/`, including
+`endpoint_audit.parquet`, `label_or_timing_suspects.parquet`, and `results.md`.
+Reproduce the coverage audit with
+`python -m flights_airport_nn.audit_source_matrix --output-dir "$OUTPUT_DIR/data/experiments/flights_airport_nn/source-matrix-faa-2026-03-01/coverage-label-audit"`.
+The frozen model and benchmark scores have not been changed by this audit.
 
 April 2 and June 7–8 were also withheld from training and selection, but their
 segmented-flight files are partial. They contain 3,616 scored endpoints in total;
