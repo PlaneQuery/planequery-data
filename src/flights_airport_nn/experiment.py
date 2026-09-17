@@ -19,6 +19,7 @@ class ExperimentConfig:
     name: str
     train_dates: tuple[date, ...]
     eval_dates: tuple[date, ...]
+    epochs: int
     features: FeatureConfig
 
 
@@ -47,9 +48,17 @@ def parse_experiment_config(argv: list[str] | None = None) -> ExperimentConfig:
         nargs="+",
         default=[date(2026, 3, 1)],
     )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=2,
+        help="maximum number of training epochs",
+    )
     args = parser.parse_args(argv)
     if args.train_dates < 1:
         parser.error("--train-dates must be a positive integer")
+    if args.epochs < 1:
+        parser.error("--epochs must be a positive integer")
 
     train_dates = tuple(
         date(2026, 2, 1) + timedelta(days=offset)
@@ -59,12 +68,17 @@ def parse_experiment_config(argv: list[str] | None = None) -> ExperimentConfig:
         name=args.name,
         train_dates=train_dates,
         eval_dates=tuple(args.eval_dates),
+        epochs=args.epochs,
         features=ALL_FEATURE_CONFIG,
     )
 
 
 def run_experiment(config: ExperimentConfig):
-    model = run_train(config.train_dates, config.features)
+    model = run_train(
+        config.train_dates,
+        config.features,
+        epochs=config.epochs,
+    )
     eval_records = []
     for eval_date in config.eval_dates:
         flights = run_inference(eval_date, model, config.features)
