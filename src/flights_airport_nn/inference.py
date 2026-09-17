@@ -1,116 +1,163 @@
 from datetime import date
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 import torch
 
-from airports.airport_lookup import Airport
 from flights_airport_nn.features.features import (
     ALL_FEATURE_CONFIG,
+    FEATURE_VERSION,
     FeatureConfig,
     FeatureName,
-    Features,
-    create_features_for_day,
 )
-from flights_airport_nn.utils import device
 from flights_airport_nn.model import AirportGRU
+from flights_airport_nn.utils import device
 
 
-def load_model(
-    model_path: str | Path,
-) -> tuple[AirportGRU, FeatureConfig]:
-    """Load a trained airport GRU on the best available device."""
-    checkpoint = torch.load(
-        model_path,
-        map_location=device,
-        weights_only=True,
+def load_model(model_path: str | Path):
+    checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+    config = FeatureConfig(
+        tuple(FeatureName(name) for name in checkpoint["feature_names"])
     )
-    feature_config = FeatureConfig(
-        enabled=tuple(
-            FeatureName(name)
-            for name in checkpoint["feature_names"]
+    if checkpoint.get("feature_version") != FEATURE_VERSION:
+        raise ValueError(
+            "Checkpoint uses incompatible feature preprocessing; retrain with feature version 2"
         )
-    )
     model = AirportGRU(
-        input_size=feature_config.input_size,
-        hidden_size=checkpoint["hidden_size"],
+        config.input_size,
+        checkpoint["hidden_size"],
+        checkpoint.get("dropout", 0.15),
+        distance_index=checkpoint.get("distance_index"),
     ).to(device)
-    model.load_state_dict(
-        checkpoint["model_state_dict"]
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.temperature = checkpoint.get("temperature", 1.0)
+    model.training_dates = tuple(
+        date.fromisoformat(d) for d in checkpoint.get("train_dates", [])
+    )
+    model.validation_dates = tuple(
+        date.fromisoformat(d) for d in checkpoint.get("validation_dates", [])
     )
     model.eval()
-    return model, feature_config
+    return model, config
 
 
-def predict(
-    model: AirportGRU,
-    features: np.ndarray,
-    mask: np.ndarray,
-    batch_size: int = 256,
-) -> np.ndarray:
+def predict(model, features, mask, batch_size=512):
+    """Return ranking logits. Use a softmax within each endpoint for probabilities."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if len(features) == 0:
+        return np.empty(0, np.float32)
     model.eval()
+    target_device = next(model.parameters()).device
     outputs = []
-
     with torch.inference_mode():
         for start in range(0, len(features), batch_size):
-            end = start + batch_size
-
-            batch = torch.as_tensor(
-                features[start:end],
+            x = torch.as_tensor(
+                features[start : start + batch_size],
                 dtype=torch.float32,
-                device=device,
+                device=target_device,
             )
-            mask_batch = torch.as_tensor(
-                mask[start:end],
-                dtype=torch.bool,
+            m = torch.as_tensor(
+                mask[start : start + batch_size], dtype=torch.bool, device=target_device
             )
-
-            probabilities = torch.sigmoid(
-                model(batch, mask_batch)
-            )
-            outputs.append(probabilities.cpu().numpy())
-
+            outputs.append(model(x, m).cpu().numpy())
     return np.concatenate(outputs)
-def inference(
-    features: Features,
-    model: AirportGRU,
-    feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
+
+
+def predict_endpoints(
+    features, model, feature_config=ALL_FEATURE_CONFIG, top_k=3, endpoint_batch_size=16
 ):
-    X, mask, y, candidate_rows = features.numpy_features(feature_config)
-    flights = features.flights_by_id
-    output = predict(model, X, mask)
+    """No labels required. Confidence is conditional on the retrieved candidates."""
+    if top_k < 1 or endpoint_batch_size < 1:
+        raise ValueError("top_k and endpoint_batch_size must be positive")
+    predictions = []
+    endpoints = features.endpoints
+    for start in range(0, len(endpoints), endpoint_batch_size):
+        group = endpoints[start : start + endpoint_batch_size]
+        candidates = [c for endpoint in group for c in endpoint.candidates]
+        logits = np.empty(0, dtype=np.float32)
+        if candidates:
+            n = max(len(c.features) for c in candidates)
+            x, masks, _ = zip(
+                *(c.features_to_numpy(n, feature_config) for c in candidates)
+            )
+            logits = predict(model, np.asarray(x), np.asarray(masks)) / getattr(
+                model, "temperature", 1.0
+            )
+        offset = 0
+        for endpoint in group:
+            row = {
+                "flight_id": endpoint.flight_id,
+                "endpoint": endpoint.endpoint,
+                "airport_ident": None,
+                "confidence": 0.0,
+                "alternatives": [],
+            }
+            count = len(endpoint.candidates)
+            if count:
+                scores = logits[offset : offset + count]
+                probabilities = np.exp(scores - scores.max())
+                probabilities /= probabilities.sum()
+                order = np.argsort(-probabilities)[:top_k]
+                row["alternatives"] = [
+                    {
+                        "airport_ident": endpoint.candidates[i].predicted_airport.ident,
+                        "confidence": float(probabilities[i]),
+                    }
+                    for i in order
+                ]
+                row.update(row["alternatives"][0])
+            offset += count
+            predictions.append(row)
+    return predictions
 
-    scores_by_flight_id: defaultdict[str, dict[Airport, float]] = defaultdict(dict)
-    for i in range(len(output)):
-        score = output[i]
-        candidate = candidate_rows[i]
-        flight_id = candidate.flight_id
-        scores_by_flight_id[flight_id][candidate.predicted_airport] = score
 
-    for flight_id, flight_scores in scores_by_flight_id.items():
-        airport = max(
-            flight_scores,
-            key=lambda candidate: flight_scores[candidate],
+def inference(features, model, feature_config=ALL_FEATURE_CONFIG):
+    for row in predict_endpoints(features, model, feature_config):
+        # Clear unknown endpoints so a supplied label or previous guess cannot leak through.
+        setattr(
+            features.flights_by_id[row["flight_id"]],
+            row["endpoint"] + "_airport_ident",
+            row["airport_ident"],
         )
-        score = flight_scores[airport]
-        flights[flight_id].takeoff_airport_ident = airport.ident
-        
-    return flights
+    return features.flights_by_id
 
 
 def run_inference(
-    target_dt: date,
-    model: AirportGRU,
-    feature_config: FeatureConfig = ALL_FEATURE_CONFIG,
+    target_dt, model, feature_config=ALL_FEATURE_CONFIG, aircraft_batch_size=128
 ):
-    features = create_features_for_day(target_dt)
-    flights = inference(features, model, feature_config)
-    return flights
+    """Process aircraft batches so a worldwide day need not fit in RAM."""
+    from datetime import timedelta
 
-if __name__ == "__main__":
-    from datetime import date
-    model, feature_config = load_model(
-        model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
-    )
-    run_inference(date(2026, 3, 2), model, feature_config)
+    import polars as pl
+
+    from data_engineering.adsb.read_adsb import read_adsb
+    from data_engineering.flights.flight_type import get_flights
+    from flights_airport_nn.features.features import create_features
+
+    if aircraft_batch_size < 1:
+        raise ValueError("aircraft_batch_size must be positive")
+    flights = get_flights(target_dt, no_airports_model=True, adsb_src="adsblol")
+    icaos = sorted(flights["icao"].unique().to_list())
+    output = {}
+    for start in range(0, len(icaos), aircraft_batch_size):
+        batch_icaos = icaos[start : start + aircraft_batch_size]
+        batch = flights.filter(pl.col("icao").is_in(batch_icaos))
+        adsb = read_adsb(
+            batch["takeoff_time"].min(),
+            batch["landing_time"].max() + timedelta(milliseconds=1),
+            icaos=batch_icaos,
+            columns=[
+                "time",
+                "icao",
+                "lat",
+                "lon",
+                "baro_altitude_ft",
+                "ground_speed_kt",
+                "track_deg",
+                "baro_rate_fpm",
+                "on_ground",
+            ],
+        )
+        output.update(inference(create_features(batch, adsb), model, feature_config))
+    return output
