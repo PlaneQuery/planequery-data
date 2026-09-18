@@ -208,7 +208,10 @@ def prepare_part(day, network, refs, path):
             "landing_time": pl.Datetime("ms"),
         },
     ).with_row_index("segment")
-    matches = match_references(segments, refs)
+    matches = match_references(segments, refs).filter(
+        pl.min_horizontal("landing_time", "landing_time_ref")
+        > pl.max_horizontal("takeoff_time", "takeoff_time_ref")
+    )
     selected = segments.filter(pl.col("segment").is_in(matches["segment"].implode()))
     trajectories_by_key = {
         (selected[e.row, "segment"], e.endpoint): e
@@ -290,8 +293,27 @@ def prepare_part(day, network, refs, path):
             eligible=frame["eligible"].to_numpy(),
         )
     frame.write_parquet(path.with_suffix(".parquet"))
+    times = {
+        key[0]: track["time"].dt.epoch("ms").to_numpy() for key, track in tracks.items()
+    }
+    observations = []
+    for icao, start_ms, end_ms in refs.select(
+        "icao",
+        pl.col("takeoff_time").dt.epoch("ms"),
+        pl.col("landing_time").dt.epoch("ms"),
+    ).iter_rows():
+        observed = times.get(icao, np.empty(0, np.int64))
+        observations.append(
+            int(
+                np.searchsorted(observed, end_ms, side="right")
+                - np.searchsorted(observed, start_ms)
+            )
+        )
     refs.with_columns(
-        pl.col("reference_id").is_in(matches["reference_id"].implode()).alias("matched")
+        pl.Series("observations_in_reference_window", observations, dtype=pl.Int64),
+        pl.col("reference_id")
+        .is_in(matches["reference_id"].implode())
+        .alias("matched"),
     ).write_parquet(path.with_name(path.stem + "-references.parquet"))
     path.with_suffix(".tmp").replace(path)
     return str(path)
@@ -501,6 +523,13 @@ def run(day, networks, model_path, output=ROOT, workers=4):
                 "matched_flights": scoped["matched"].sum(),
                 "overlapping_references": scoped["time_conflict"].sum(),
                 "match_pct": 100 * scoped["matched"].mean() if scoped.height else None,
+                "flights_with_observed_positions": scoped.filter(
+                    pl.col("observations_in_reference_window") > 0
+                ).height,
+                "observed_but_unmatched_flights": scoped.filter(
+                    (pl.col("observations_in_reference_window") > 0)
+                    & ~pl.col("matched")
+                ).height,
             }
     if len(networks) > 1:
         shared = (

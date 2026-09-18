@@ -94,7 +94,17 @@ at least one evaluated network; this shared eligibility rule does not use model
 or nearest predictions. Uncorroborated agreement is separate. Results are
 conditional on unambiguous temporal matches, with unmatched references retained
 in `references.parquet` alongside predictions and `match_status`.
+The network benchmark also requires overlapping reference/segment intervals
+and records how many observed positions fall inside each reference interval,
+separating absent observations from observed but unmatched flights.
 
 Results live under
 `data/experiments/flights_airport_nn/february-2026-march-test/{date}/`.
 No March data are used for optimization or checkpoint selection.
+
+The completed run's [report and Parquet results](/mnt/storage1/planequery-data/data/experiments/flights_airport_nn/february-2026-march-test/results.md)
+include reference-flight recovery, shared-network cohorts, unseen-airport and
+aircraft breakdowns, and an audit of reference/endpoint disagreements. The
+March 1 small-airport subset remains a weakness: nearest has higher reference
+agreement than this NN on both networks. March 2 has a more selective reference
+cohort because only ADSB.lol corroboration is available.
