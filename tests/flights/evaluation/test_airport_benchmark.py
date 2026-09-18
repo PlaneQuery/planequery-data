@@ -61,6 +61,7 @@ def test_report_retains_unmatched_references_and_empty_cohorts(monkeypatch, tmp_
             "source": ["broad"] * 2,
             "matched": [True, False],
             "time_conflict": [False] * 2,
+            "observations_in_reference_window": [10, 0],
         }
     ).write_parquet(part.with_name("part-references.parquet"))
     frame = pl.DataFrame(
