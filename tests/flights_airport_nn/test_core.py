@@ -12,7 +12,14 @@ from flights_airport_nn import derive_day as daily
 from flights_airport_nn.evaluate import metrics
 from flights_airport_nn.inference import predict_flights
 from flights_airport_nn.model import AirportRanker
-from flights_airport_nn.train import TEST_DAYS, TRAIN_DAYS, VALIDATION_DAYS
+from flights_airport_nn.train import (
+    BUFFER_DAYS,
+    EUROPE_VALIDATION_DAYS,
+    TEST_DAYS,
+    TRAIN_DAYS,
+    VALIDATION_DAYS,
+    selection_loss,
+)
 
 
 @pytest.fixture
@@ -183,12 +190,31 @@ def test_faa_codes_require_unambiguous_supported_identifiers(monkeypatch):
 
 
 def test_split_is_disjoint_and_february_only():
-    all_days = TRAIN_DAYS + VALIDATION_DAYS + TEST_DAYS
-    assert len(all_days) == len(set(all_days)) == 28
-    assert all(data.february(d) == d for d in all_days)
+    all_days = (
+        TRAIN_DAYS + VALIDATION_DAYS + EUROPE_VALIDATION_DAYS + BUFFER_DAYS + TEST_DAYS
+    )
+    assert len(all_days) == len(set(all_days)) == 32
+    assert TRAIN_DAYS == [date(2026, 2, d) for d in range(1, 21)]
+    assert VALIDATION_DAYS == [date(2026, 2, d) for d in range(21, 28)]
+    assert EUROPE_VALIDATION_DAYS == [date(2024, 6, 12), date(2024, 6, 15)]
+    assert BUFFER_DAYS == [date(2026, 2, 28)]
+    assert TEST_DAYS == [date(2026, 3, 1), date(2024, 6, 1)]
+    assert all(data.february(d) == d for d in TRAIN_DAYS)
     for day in [date(2026, 1, 31), date(2026, 3, 1), date(2025, 2, 1)]:
         with pytest.raises(ValueError, match="February 2026"):
             data.february(day)
+
+
+def test_selection_weights_regions_equally_and_requires_every_day():
+    losses = {str(d): 0.1 for d in VALIDATION_DAYS}
+    losses.update({str(d): 0.9 for d in EUROPE_VALIDATION_DAYS})
+    assert selection_loss(losses) == pytest.approx(0.5)
+    losses[str(EUROPE_VALIDATION_DAYS[0])] = float("inf")
+    with pytest.raises(ValueError, match="Every validation day"):
+        selection_loss(losses)
+    del losses[str(EUROPE_VALIDATION_DAYS[0])]
+    with pytest.raises(KeyError):
+        selection_loss(losses)
 
 
 def test_retrieval_failures_stay_in_accuracy_denominator():
