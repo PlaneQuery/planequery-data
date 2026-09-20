@@ -177,20 +177,28 @@ def references(day):
     }
 
 
-def prepare_part(day, network, refs, path):
+def prepare_part(day, network, refs, path, parquet_root=None, matcher=match_references):
     start = datetime.combine(day, time())
+    columns = COLUMNS + ["geom_altitude_ft", "callsign"]
+    aircraft = refs["icao"].unique().to_list()
+    if parquet_root is None:
+        observations = read_adsb(
+            day, source=network, icaos=aircraft, columns=columns, lazy=True
+        )
+    else:
+        partition = (
+            Path(parquet_root)
+            / f"year={day.year}/month={day.month:02d}/day={day.day:02d}"
+        )
+        observations = (
+            pl.scan_parquet(str(partition / "icao_bucket=*/*.parquet"))
+            .filter(pl.col("icao").is_in(aircraft))
+            .select(columns)
+        )
     messages = clean_messages(
-        read_adsb(
-            day,
-            source=network,
-            icaos=refs["icao"].unique().to_list(),
-            columns=COLUMNS + ["geom_altitude_ft", "callsign"],
-            lazy=True,
-        )
-        .filter(
+        observations.filter(
             (pl.col("time") >= start) & (pl.col("time") < start + timedelta(days=1))
-        )
-        .collect(engine="streaming")
+        ).collect(engine="streaming")
     )
     native = _segment_adsb_df(messages)
     segments = pl.DataFrame(
@@ -208,7 +216,7 @@ def prepare_part(day, network, refs, path):
             "landing_time": pl.Datetime("ms"),
         },
     ).with_row_index("segment")
-    matches = match_references(segments, refs).filter(
+    matches = matcher(segments, refs).filter(
         pl.min_horizontal("landing_time", "landing_time_ref")
         > pl.max_horizontal("takeoff_time", "takeoff_time_ref")
     )

@@ -17,7 +17,7 @@ from data_engineering.flights.flight_type import get_flights, with_flight_schema
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_MODEL_PATH = (
-    OUTPUT_DIR / "data/models/flights_airport_nn/february-2026/model.pt"
+    OUTPUT_DIR / "data/models/flights_airport_nn/february-2026-europe-validation/model.pt"
 )
 
 
