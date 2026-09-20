@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import torch
 
-from flights_airport_nn.data import CACHE, TYPES, february
+from flights_airport_nn.data import CACHE, TYPES
 from flights_airport_nn.model import load_model
 
 
@@ -38,12 +38,17 @@ def iter_parts(files):
 def files_for(root, days):
     files = []
     for day in days:
-        folder = Path(root) / str(february(day))
+        folder = Path(root) / str(day)
         manifest = json.loads((folder / "manifest.json").read_text())
         if manifest["date"] != str(day) or manifest["network"] != "adsblol":
             raise ValueError(f"Wrong training source: {folder}")
         parts = [folder / f"part-{i:04d}.npz" for i in range(manifest["parts"])]
-        if any(not p.exists() or not p.with_suffix(".parquet").exists() for p in parts):
+        if any(
+            not p.exists()
+            or not p.with_suffix(".parquet").exists()
+            or not p.with_name(p.stem + "-references.parquet").exists()
+            for p in parts
+        ):
             raise FileNotFoundError(f"Incomplete data preparation: {folder}")
         files.extend(parts)
     return files
@@ -176,7 +181,7 @@ def write_report(data, files, output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--days", nargs="+", type=int, default=[25, 26, 27, 28])
+    parser.add_argument("--days", nargs="+", type=int, default=list(range(21, 28)))
     parser.add_argument("--cache", type=Path, default=CACHE)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
