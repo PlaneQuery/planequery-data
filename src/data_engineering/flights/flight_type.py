@@ -308,6 +308,9 @@ LIKELY_COMMERCIAL_CATEGORIES = {
 def is_valid_category() -> pl.Expr:
     return pl.col("category").is_in(AIRCRAFT_ADSB_CATEGORIES)
 
+def is_commercial_category() -> pl.Expr:
+    return pl.col("category").is_in(LIKELY_COMMERCIAL_CATEGORIES)
+
 def add_flight_id_col(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(
     (
