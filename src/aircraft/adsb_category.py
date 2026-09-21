@@ -1,5 +1,4 @@
 from enum import StrEnum
-from typing import Literal, TypeAlias
 
 import polars as pl
 
@@ -19,10 +18,6 @@ class AircraftAdsbCategory(StrEnum):
     B5 = "B5"  # Reserved
     B6 = "B6"  # Unmanned aerial vehicle
     B7 = "B7"  # Space / trans-atmospheric vehicle
-
-
-AircraftCategoryKey: TypeAlias = AircraftAdsbCategory | Literal["unknown"]
-AircraftCategoryCounts: TypeAlias = dict[AircraftCategoryKey, int]
 
 LIKELY_COMMERCIAL_CATEGORIES = {
     AircraftAdsbCategory.A3,
