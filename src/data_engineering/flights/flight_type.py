@@ -282,15 +282,15 @@ def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
     )
     return df
 
-def add_flight_id_col(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.with_columns(
-    (
-        pl.col("icao").cast(pl.Utf8)
+def flight_id_expr(
+    icao_col: str = "icao",
+    takeoff_time_col: str = "takeoff_time",
+) -> pl.Expr:
+    return (
+        pl.col(icao_col).cast(pl.Utf8)
         + "_"
-        + pl.col("takeoff_time").dt.strftime("%Y-%m-%d_%H-%M")
+        + pl.col(takeoff_time_col).dt.strftime("%Y-%m-%d_%H-%M")
     ).alias("flight_id")
-    )
-    return df
 
 
 def flights_parquet_path(target_date: date):
