@@ -50,8 +50,8 @@ class FlightsMetrics():
             )
         return "\n".join(lines)
 
-    def to_vis(self):
-        print(self.category_distribution_text())
+    def to_vis(self) -> str:
+        return self.category_distribution_text()
 
     day: date
     number: int
