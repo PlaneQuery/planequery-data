@@ -9,8 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from data_engineering.utils import OUTPUT_DIR
-from flights_airport_nn.data import CACHE, TYPES, february, fingerprint
+from flights_airport_nn.data import CACHE, EUROPE_CACHE, TYPES, february, fingerprint
 from flights_airport_nn.derive_day import DEFAULT_MODEL_PATH
 from flights_airport_nn.evaluate import (
     files_for,
@@ -27,10 +26,6 @@ VALIDATION_DAYS = [date(2026, 2, i) for i in range(21, 28)]
 EUROPE_VALIDATION_DAYS = [date(2024, 6, 12), date(2024, 6, 15)]
 BUFFER_DAYS = [date(2026, 2, 28)]
 TEST_DAYS = [date(2026, 3, 1), date(2024, 6, 1)]
-EUROPE_CACHE = (
-    OUTPUT_DIR
-    / "data/experiments/flights_airport_nn/split-2026-09-20/validation-europe"
-)
 
 
 def selection_loss(losses):
@@ -99,15 +94,10 @@ def train(
                 for p in (
                     path,
                     path.with_suffix(".parquet"),
-                    path.with_name(path.stem + "-references.parquet"),
                 )
             ]
             for key, files in paths.items()
         },
-        "preparation_manifests": [
-            json.loads((folder / "manifest.json").read_text())
-            for folder in sorted({p.parent for files in paths.values() for p in files})
-        ],
         "code_sha256": hashlib.sha256(
             b"".join(p.read_bytes() for p in sorted(Path(__file__).parent.glob("*.py")))
         ).hexdigest(),
@@ -224,7 +214,7 @@ def train(
     model = load_model(output / "best.pt", device)
     for day, files in validation_paths.items():
         validation, _ = score(model, files, batch_size)
-        write_report(validation, files, output / "validation" / day)
+        write_report(validation, output / "validation" / day)
     (output / "best.pt").replace(output / "model.pt")
     print(
         "Frozen checkpoint published; final benchmark dates were not loaded.",

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 import polars as pl
 
-from flights.evaluation.eurocontrol_benchmark import match_eurocontrol
+from flights_airport_nn.europe import match_eurocontrol
 
 
 def test_offblock_matching_accepts_taxi_time_but_rejects_ambiguity_and_conflicts():

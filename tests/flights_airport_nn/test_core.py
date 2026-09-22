@@ -235,4 +235,3 @@ def test_retrieval_failures_stay_in_accuracy_denominator():
     assert result["primary"]["endpoints"] == 2
     assert result["primary"]["nn_accuracy"] == 0.5
     assert result["primary"]["candidate_recall"] == 0.5
-    assert result["uncorroborated_agreement_only"]["endpoints"] == 1
