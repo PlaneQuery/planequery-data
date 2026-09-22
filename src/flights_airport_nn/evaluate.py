@@ -43,12 +43,7 @@ def files_for(root, days):
         if manifest["date"] != str(day) or manifest["network"] != "adsblol":
             raise ValueError(f"Wrong training source: {folder}")
         parts = [folder / f"part-{i:04d}.npz" for i in range(manifest["parts"])]
-        if any(
-            not p.exists()
-            or not p.with_suffix(".parquet").exists()
-            or not p.with_name(p.stem + "-references.parquet").exists()
-            for p in parts
-        ):
+        if any(not p.exists() or not p.with_suffix(".parquet").exists() for p in parts):
             raise FileNotFoundError(f"Incomplete data preparation: {folder}")
         files.extend(parts)
     return files
@@ -144,36 +139,14 @@ def metrics(data):
             name: rates(eligible.filter(pl.col("airport_type") == name))
             for name in TYPES
         },
-        "bts_reported": rates(eligible.filter(pl.col("source").str.contains("BTS"))),
-        "sfdps_ground_only": rates(eligible.filter(pl.col("source") == "SFDPS")),
-        "uncorroborated_agreement_only": rates(
-            data.filter(
-                ~pl.col("eligible")
-                & ~pl.col("label_conflict")
-                & (pl.col("truth") != "")
-            )
-        ),
     }
 
 
-def write_report(data, files, output):
+def write_report(data, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     data.write_parquet(output / "endpoints.parquet")
     summary = metrics(data)
-    refs = pl.concat(
-        [pl.read_parquet(p.with_name(p.stem + "-references.parquet")) for p in files]
-    )
-    refs.write_parquet(output / "references.parquet")
-    summary["reference_matching"] = (
-        refs.group_by("source")
-        .agg(
-            pl.len().alias("flights"),
-            pl.col("matched").sum(),
-            pl.col("time_conflict").sum(),
-        )
-        .to_dicts()
-    )
     (output / "metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
 
@@ -181,13 +154,13 @@ def write_report(data, files, output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--days", nargs="+", type=int, default=list(range(21, 28)))
+    parser.add_argument("--dates", nargs="+", type=date.fromisoformat, required=True)
     parser.add_argument("--cache", type=Path, default=CACHE)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     torch.set_num_threads(4)
-    paths = files_for(args.cache, [date(2026, 2, d) for d in args.days])
+    paths = files_for(args.cache, args.dates)
     data, _ = score(
         load_model(args.model, "cuda" if torch.cuda.is_available() else "cpu"), paths
     )
-    print(json.dumps(write_report(data, paths, args.output), indent=2))
+    print(json.dumps(write_report(data, args.output), indent=2))
