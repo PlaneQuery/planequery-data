@@ -84,20 +84,18 @@ def get_flights(
     else:
         raise ValueError(f"Unknown FlightSource type: {type(source)}")
 
-@dataclass(frozen=True)
-class BTSFlightSource(NonADSBFlightSource):
-    name: str = "bts"
-    version: int = 3
-    uses_adsb_source: bool = False
-
-    def create_flights_for_day(
-        self,
-        dt: date,
-    ) -> pl.DataFrame:
-        from data_engineering.bts.read_bts_ontime_to_flights import (
-            get_bts_flights_for_day,
-        )
-        return get_bts_flights_for_day(dt)
-
-
+def write_flights(
+    source: FlightSource,
+    dt: date,
+    adsb_src: ADSBSource | None = None,
+) -> pl.DataFrame:
+    '''
+    sideeffect: write parquet to disk
+    '''
+    path = flight_path(source, dt, adsb_src)
+    print(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df_flights = get_flights(source, dt, adsb_src, use_cache=False)
+    df_flights.write_parquet(path)
+    return df_flights
 
