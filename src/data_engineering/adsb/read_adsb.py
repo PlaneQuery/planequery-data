@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
+from enum import StrEnum
 import os
 import shutil
 from pathlib import Path
@@ -9,6 +10,11 @@ import polars as pl
 
 from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
+
+class ADSBSource(StrEnum):
+    ADSBLOL = "adsblol"
+    ADSBX = "adsbx"
+    OPENSKY = "opensky"
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
