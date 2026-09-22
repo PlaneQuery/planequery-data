@@ -10,7 +10,7 @@ import polars as pl
 from data_engineering.bts import read_bts_ontime_to_flights as bts_module
 from data_engineering.bts.read_bts_ontime_to_flights import (
     _compute_bts_timestamps,
-    _write_bts_flights_by_day,
+    create_flights_from_bts,
 )
 
 
@@ -90,7 +90,7 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
     }
 
 
-def test_write_bts_flights_by_day_writes_every_day_in_target_month(monkeypatch):
+def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     df = pl.DataFrame(
         {
             "icao": ["outside-before", "abc123", "abc123", "def456", "outside-after"],
@@ -110,17 +110,12 @@ def test_write_bts_flights_by_day_writes_every_day_in_target_month(monkeypatch):
             ],
         }
     )
-    writes = []
+    monkeypatch.setattr(
+        bts_module,
+        "_create_flights_from_bts_month",
+        lambda year, month: df,
+    )
 
-    def capture_write(day_df, target_date, source, adsb_src):
-        writes.append((target_date, source, adsb_src, day_df))
+    result = create_flights_from_bts(date(2026, 3, 1))
 
-    monkeypatch.setattr(bts_module, "write_flights_for_day", capture_write)
-
-    result = _write_bts_flights_by_day(df, 2026, 3)
-
-    assert len(writes) == 31
-    assert writes[0][:3] == (date(2026, 3, 1), bts_module.FlightSource.BTS, None)
-    assert writes[-1][0] == date(2026, 3, 31)
-    assert writes[1][3].is_empty()
     assert result.get_column("icao").to_list() == ["def456"]
