@@ -17,8 +17,11 @@ df: pl.DataFrame = results[0]
 df = df.with_columns(flight_id_expr())
 evaluatable = df.filter(pl.col("match_status") == "both")
 evaluatable_flight_ids = set(evaluatable.get_column("flight_id")) # this is the test_dataframe
+correct_flight_ids = set(evaluatable.filter(pl.col("same_takeoff_airport_ident") == True).get_column("flight_id"))
 df_test = get_flights(date(2026, 3, 1), adsb_src="adsblol", algorithm="algorithm", no_airports_model=True)
 df_test = df_test.with_columns(flight_id_expr())
 evaluatable = df_test.filter(pl.col("flight_id").is_in(evaluatable_flight_ids))
+correct = df_test.filter(pl.col("flight_id").is_in(correct_flight_ids))
 
 print(FlightsMetrics(evaluatable, date(2026, 3, 1)).to_vis())
+print(FlightsMetrics(correct, date(2026, 3, 1)).to_vis())
