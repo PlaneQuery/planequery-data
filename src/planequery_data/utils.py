@@ -1,5 +1,7 @@
 import math
 import subprocess
+from datetime import date, timedelta
+from collections.abc import Iterator
 
 def haversine(lat1, lon1, lat2, lon2):
     '''Returned distance in km'''
@@ -46,3 +48,9 @@ def initial_bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 def current_commit_hash() -> str:
     return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+
+def date_range(start_date: date, end_date: date) -> Iterator[date]:
+    current_date = start_date
+    while current_date <= end_date:
+        yield current_date
+        current_date += timedelta(days=1)
