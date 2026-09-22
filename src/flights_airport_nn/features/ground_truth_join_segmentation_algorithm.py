@@ -4,6 +4,7 @@ from datetime import date
 
 import polars as pl
 
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.flights.flight_type import with_flight_schema_columns
 from flights.evaluation.evaluation import main as run_evaluation
 
@@ -15,8 +16,8 @@ def flights_features_df(test_dt: date):
                 "algorithm-no-airports",
                 "ground_truth",
                 test_dates=test_dt,
-                adsb_src="adsblol",
-                matching_adsb_src="adsblol",
+                adsb_src=ADSBSource.ADSBLOL,
+                matching_adsb_src=ADSBSource.ADSBLOL,
                 write_outputs=False
             )
 
