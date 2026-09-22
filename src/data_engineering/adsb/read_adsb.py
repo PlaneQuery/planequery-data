@@ -11,10 +11,19 @@ import polars as pl
 from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 
+
 class ADSBSource(StrEnum):
     ADSBLOL = "adsblol"
     ADSBX = "adsbx"
     OPENSKY = "opensky"
+
+
+def _as_adsb_source(source: ADSBSource | str) -> ADSBSource:
+    try:
+        return ADSBSource(source)
+    except ValueError as exc:
+        raise ValueError(f"Unknown ADS-B source: {source!r}") from exc
+
 
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
@@ -328,16 +337,14 @@ def _scan_opensky_days(
     return lf.select(columns)
 
 
-ADSB_SOURCES = ("adsblol", "adsbx", "opensky")
-
-
 def ensure_adsb_source_data(
     start: date | datetime,
     end: datetime | None = None,
     *,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     pia_or_american_ladd_only: bool = False,
 ) -> list[date]:
+    source = _as_adsb_source(source)
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -346,7 +353,7 @@ def ensure_adsb_source_data(
         end_dt = end if end is not None else start_dt + timedelta(days=1)
 
     days = _date_range_for_interval(start_dt, end_dt)
-    if source == "adsblol":
+    if source is ADSBSource.ADSBLOL:
         return [
             day
             for day in days
@@ -355,10 +362,10 @@ def ensure_adsb_source_data(
                 pia_or_american_ladd_only=pia_or_american_ladd_only,
             )
         ]
-    elif source == "adsbx":
+    elif source is ADSBSource.ADSBX:
         for day in days:
             create_adsbx_parquet_for_day(day)
-    elif source == "opensky":
+    elif source is ADSBSource.OPENSKY:
         from data_engineering.opensky.read_opensky_trino_states import (
             write_opensky_state_vectors_cache_for_day,
         )
@@ -366,7 +373,7 @@ def ensure_adsb_source_data(
         for day in days:
             write_opensky_state_vectors_cache_for_day(day)
     else:
-        raise ValueError(f"Unknown ADS-B source: {source!r}")
+        raise AssertionError(f"Unhandled ADS-B source: {source!r}")
     return []
 
 
@@ -379,7 +386,7 @@ def read_adsb(
     *,
     icaos: list[str] | None = None,
     pia_or_american_ladd_only: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     lazy: Literal[False] = False,
 ) -> pl.DataFrame: ...
 
@@ -393,7 +400,7 @@ def read_adsb(
     *,
     icaos: list[str] | None = None,
     pia_or_american_ladd_only: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     lazy: Literal[True],
 ) -> pl.LazyFrame: ...
 
@@ -406,7 +413,7 @@ def read_adsb(
     *,
     icaos: list[str] | None = None,
     pia_or_american_ladd_only: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Read ADS-B messages.
@@ -415,10 +422,12 @@ def read_adsb(
     `start`/`end` to read a `[start, end)` range spanning one or more days
     (e.g. a context window around a target day).
 
-    `source` selects the data provider: "adsblol" (default), "adsbx", or
-    "opensky". Set `lazy=True` to return a `polars.LazyFrame`; by default the
-    result is collected and returned as a `polars.DataFrame`.
+    `source` selects the data provider with `ADSBSource`. Legacy string values
+    are normalized at the API boundary. Set `lazy=True` to return a
+    `polars.LazyFrame`; by default the result is collected and returned as a
+    `polars.DataFrame`.
     """
+    source = _as_adsb_source(source)
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -430,14 +439,14 @@ def read_adsb(
     scan_columns = _column_list(requested_columns, ["time"])
     days = _date_range_for_interval(start_dt, end_dt)
 
-    if source == "opensky":
+    if source is ADSBSource.OPENSKY:
         lf = _scan_opensky_days(
             days,
             scan_columns,
             icaos=icaos,
             pia_or_american_ladd_only=pia_or_american_ladd_only,
         )
-    elif source == "adsblol":
+    elif source is ADSBSource.ADSBLOL:
         lf = pl.concat(
             [
                 scan_adsb(
@@ -449,7 +458,7 @@ def read_adsb(
                 for day in days
             ]
         )
-    elif source == "adsbx":
+    elif source is ADSBSource.ADSBX:
         lf = _scan_adsbx_days(
             days,
             scan_columns,
@@ -457,8 +466,7 @@ def read_adsb(
             pia_or_american_ladd_only=pia_or_american_ladd_only,
         )
     else:
-        raise ValueError(f"Unknown ADS-B source: {source!r}")
-
+        raise AssertionError(f"Unhandled ADS-B source: {source!r}")
     lf = lf.filter((pl.col("time") >= start_dt) & (pl.col("time") < end_dt)).select(requested_columns)
     return lf if lazy else lf.collect()
 
@@ -468,21 +476,25 @@ def read_icaos_from_adsb(current_day: date, icaos: list[str], columns=DEFAULT_CO
 
 
 
-def get_icaos_in_adsb(current_day: date, source: str = "adsblol") -> list[str]:
+def get_icaos_in_adsb(
+    current_day: date,
+    source: ADSBSource = ADSBSource.ADSBLOL,
+) -> list[str]:
     '''
     List of distinct ICAOs seen on `current_day` for the given `source`.
-    Invalid ICAOs are filtered out for the "adsblol" source.
+    Invalid ICAOs are filtered out for the adsb.lol source.
     '''
-    if source == "opensky":
+    source = _as_adsb_source(source)
+    if source is ADSBSource.OPENSKY:
         from data_engineering.opensky.read_opensky_trino_states import get_icaos_in_opensky
         return get_icaos_in_opensky(current_day)
-    if source == "adsbx":
+    if source is ADSBSource.ADSBX:
         df = _scan_adsbx_days([current_day], ["icao"]).unique().collect()
         return df.get_column("icao").drop_nulls().to_list()
-    if source == "adsblol":
+    if source is ADSBSource.ADSBLOL:
         df = scan_adsb(current_day, columns=["icao"]).filter(exclude_invalid_icaos()).unique().collect()
         return df["icao"].to_list()
-    raise ValueError(f"Unknown ADS-B source: {source!r}")
+    raise AssertionError(f"Unhandled ADS-B source: {source!r}")
 
 def exclude_invalid_icaos(col: str = "icao") -> pl.Expr:
     return (pl.col(col) >= "010000") & (pl.col(col) != "ffffff") & ~pl.col(col).str.starts_with("~")

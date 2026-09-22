@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 import polars as pl
 
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
 from data_engineering.utils import OUTPUT_DIR
@@ -11,13 +11,14 @@ from flights.flights_comparison import df_flights_comparison
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 
 
-def ground_truth_flights_output_path(target_date: date, adsb_src) -> Path:
+def ground_truth_flights_output_path(target_date: date, adsb_src: ADSBSource) -> Path:
+    adsb_src = ADSBSource(adsb_src)
     return (
         OUTPUT_DIR
         / "data"
         / "flights"
         / "ground-truth"
-        / adsb_src 
+        / adsb_src.value
         / f"year={target_date.year}"
         / f"month={target_date.month:02d}"
         / f"day={target_date.day:02d}"
@@ -27,7 +28,7 @@ def ground_truth_flights_output_path(target_date: date, adsb_src) -> Path:
 
 def get_ground_truth_flights_for_day(
     target_date: date,
-    adsb_src: str = "adsblol",
+    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
     use_cache: bool = True,
 ) -> pl.DataFrame:
     output_path = ground_truth_flights_output_path(target_date, adsb_src=adsb_src)
@@ -62,5 +63,9 @@ def get_ground_truth_flights_for_day(
 
 if __name__ == "__main__":
     target_date = date(2026, 3, 1)
-    df_gold = get_ground_truth_flights_for_day(target_date, adsb_src="adsblol", use_cache=False)
+    df_gold = get_ground_truth_flights_for_day(
+        target_date,
+        adsb_src=ADSBSource.ADSBLOL,
+        use_cache=False,
+    )
     print(df_gold)

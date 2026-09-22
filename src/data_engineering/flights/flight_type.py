@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 import polars as pl
 
 from airports.airport_lookup import Airport
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
 
 
@@ -288,23 +289,24 @@ def flights_parquet_path(target_date: date):
     )
 
 
-ALGORITHM_ADSB_SOURCES = ("adsblol", "opensky", "adsbx")
+ALGORITHM_ADSB_SOURCES = tuple(ADSBSource)
 FLIGHT_ALGORITHMS = ("algorithm", "opensky", "adsbx")
 
 
 
-def _flights_algorithm_source_dir(adsb_src: str) -> str:
-    if adsb_src not in ALGORITHM_ADSB_SOURCES:
+def _flights_algorithm_source_dir(adsb_src: ADSBSource) -> str:
+    try:
+        return ADSBSource(adsb_src).value
+    except ValueError as exc:
         raise ValueError(
             f"Unknown flights algorithm ADS-B source: {adsb_src!r}. "
             f"Expected one of {ALGORITHM_ADSB_SOURCES!r}"
-        )
-    return adsb_src
+        ) from exc
 
 
 def flights_algorithm_output_path(
     target_date: date,
-    adsb_src: str = "adsblol",
+    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
     no_airports_model: bool = False,
 ):
     return (
@@ -331,7 +333,7 @@ def _date_range(start_date: date, end_date: date):
 def _get_algorithm_flights_for_day(
     target_date: date,
     no_airports_model: bool = False,
-    adsb_src: str = "adsblol",
+    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
 ):
     path = flights_algorithm_output_path(
         target_date,
@@ -353,7 +355,7 @@ def _get_algorithm_flights_for_day(
 def _get_flights_for_day(
     target_date: date,
     no_airports_model: bool = False,
-    adsb_src: str = "adsblol",
+    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
     algorithm: str = "algorithm",
 ):
     if algorithm == "algorithm":
@@ -380,7 +382,7 @@ def get_flights(
     start_date: date,
     end_date: date | None = None,
     no_airports_model: bool = False,
-    adsb_src: str = "adsblol",
+    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
     algorithm: str = "algorithm",
 ):
     if end_date is None:

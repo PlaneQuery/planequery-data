@@ -1,6 +1,6 @@
 
 from datetime import date, datetime
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.flights.flight_type import Flight
 from src.flights.evaluation.flights_test_package import FlightsTestPackage
 
@@ -42,7 +42,7 @@ A0205C_TEST = FlightsTestPackage(
     flights=A0205C_FLIGHTS,
     start_dt=datetime(2026, 4, 1, 0, 0),
     end_dt=datetime(2026, 4, 2, 0, 0),
-    adsb_source="adsblol",
+    adsb_source=ADSBSource.ADSBLOL,
     is_accurate=False
 )
 
