@@ -1,14 +1,19 @@
 from datetime import date, datetime, timedelta
-import os
-from pathlib import Path
 from zoneinfo import ZoneInfo
+
 import polars as pl
 from timezonefinder import TimezoneFinder
-from data_engineering.flights.flight_type import with_flight_schema_columns
+
 from airports.airport_lookup import AirportLookup
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.flights.flight_type import with_flight_schema_columns
+from data_engineering.flights.get_flights import (
+    FlightSource,
+    flights_path,
+    write_flights_for_day,
+)
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
+
 airport_lookup = AirportLookup()
 tf = TimezoneFinder()
 
@@ -22,7 +27,6 @@ COLUMNS = set([
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
 
-BTS_FLIGHTS_VERSION = "v3"
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 
 
@@ -111,18 +115,6 @@ def _compute_bts_timestamps(row: dict) -> dict:
     return {"time_takeoff": takeoff_utc, "time_landing": landing_utc}
 
 
-def _bts_flights_parquet_path(year: int, month: int) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "bts"
-        / BTS_FLIGHTS_VERSION
-        / f"year={year}"
-        / f"month={month:02d}"
-        / "bts_flights.parquet"
-    )
-
 def ident_to_timezone_mapping():
     airport_lookup.ident_index
     ident_to_timezone = {}
@@ -141,6 +133,65 @@ def get_registration_to_icao() -> pl.DataFrame:
         scan_latest_faa_registration_icao_for_join(real_icao_column="icao")
         .collect()
     )
+
+
+def _month_bounds(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    if month == 12:
+        return start, date(year + 1, 1, 1)
+    return start, date(year, month + 1, 1)
+
+
+def _remove_overlapping_flights(
+    df: pl.DataFrame,
+    target_date: date,
+) -> pl.DataFrame:
+    overlaps = (
+        df.sort(["icao", "takeoff_time"])
+        .with_columns(
+            pl.col("landing_time").shift(1).over("icao").alias("prev_landing_time")
+        )
+        .filter(pl.col("takeoff_time") < pl.col("prev_landing_time"))
+    )
+    print(len(overlaps), "overlapping flights found for", target_date)
+    if not overlaps.is_empty():
+        overlapping_icaos = (
+            overlaps.get_column("icao").drop_nulls().unique().to_list()
+        )
+        df = df.filter(~pl.col("icao").is_in(overlapping_icaos))
+    return df.sort(["icao", "takeoff_time"])
+
+
+def _write_bts_flights_by_day(
+    df: pl.DataFrame,
+    year: int,
+    month: int,
+) -> pl.DataFrame:
+    """Write one canonical parquet per UTC takeoff day in the target month."""
+    month_start, next_month_start = _month_bounds(year, month)
+    monthly_df = df.filter(
+        (pl.col("takeoff_time").dt.date() >= month_start)
+        & (pl.col("takeoff_time").dt.date() < next_month_start)
+    )
+
+    daily_frames = []
+    target_date = month_start
+    while target_date < next_month_start:
+        daily_df = monthly_df.filter(
+            pl.col("takeoff_time").dt.date() == target_date
+        )
+        daily_df = _remove_overlapping_flights(daily_df, target_date)
+        write_flights_for_day(
+            daily_df,
+            target_date,
+            FlightSource.BTS,
+            adsb_src=None,
+        )
+        daily_frames.append(daily_df)
+        target_date += timedelta(days=1)
+
+    return pl.concat(daily_frames)
+
 
 def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     '''
@@ -215,32 +266,18 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     df = df.rename({"time_takeoff": "takeoff_time", "time_landing": "landing_time"})
     df = with_flight_schema_columns(df)
     df = df.with_columns(pl.col("icao").str.to_lowercase())
-    flights_output_path = _bts_flights_parquet_path(year, month)
-    os.makedirs(flights_output_path.parent, exist_ok=True)
-    df.write_parquet(flights_output_path)
-    return df
+    return _write_bts_flights_by_day(df, year, month)
 
-def get_bts_flights_for_day(target_date: date, use_cache = True) -> pl.DataFrame: # TODO: raise error if a particular date has no data. 
-    path = _bts_flights_parquet_path(target_date.year, target_date.month)
-    if use_cache == False or not path.exists():
+
+def get_bts_flights_for_day(
+    target_date: date,
+    use_cache: bool = True,
+) -> pl.DataFrame:
+    path = flights_path(target_date, FlightSource.BTS)
+    if not use_cache or not path.exists():
         create_flights_from_bts(target_date.year, target_date.month)
-    df = pl.read_parquet(path)
-    df = df.filter(
-        (pl.col("takeoff_time").dt.date() == target_date) 
-        # & (pl.col("landing_time").dt.date() == current_date.date())
-    )
-    overlaps = (
-    df.sort(["icao", "takeoff_time"])
-    .with_columns(
-        pl.col("landing_time").shift(1).over("icao").alias("prev_landing_time")
-    )
-    .filter(pl.col("takeoff_time") < pl.col("prev_landing_time"))
-    )
-    print(len(overlaps), "overlapping flights found for", target_date)
-    if len(overlaps) > 0:
-        df = df.filter(~pl.col("icao").is_in(overlaps["icao"].implode()))
-    df = df.sort(["icao", "takeoff_time"])
-    return df
+    return pl.read_parquet(path)
+
 
 if __name__ == "__main__":
     df = create_flights_from_bts(2026, 3)

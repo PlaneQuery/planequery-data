@@ -16,7 +16,7 @@ def test_ground_truth_cache_reads_existing_parquet(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ground_truth,
         "ground_truth_flights_output_path",
-        lambda _: cache_path,
+        lambda *_args, **_kwargs: cache_path,
     )
     monkeypatch.setattr(
         ground_truth,
@@ -44,7 +44,7 @@ def test_ground_truth_generation_writes_daily_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ground_truth,
         "ground_truth_flights_output_path",
-        lambda _: cache_path,
+        lambda *_args, **_kwargs: cache_path,
     )
     monkeypatch.setattr(
         ground_truth,
@@ -63,9 +63,10 @@ def test_ground_truth_generation_writes_daily_cache(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         ground_truth,
-        "df_flights_comparision",
+        "df_flights_comparison",
         lambda df_bts, *_args, **_kwargs: df_bts.with_columns(
-            pl.lit("both").alias("match_status")
+            pl.lit("both").alias("match_status"),
+            pl.lit("").alias("category_df1"),
         ),
     )
     monkeypatch.setattr(
