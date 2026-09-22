@@ -50,6 +50,7 @@ def get_ground_truth_flights_for_day(
     df = df.filter(
     (pl.col("match_status") == "both").all().over("icao")
     )
+    df = df.with_columns(pl.col("category_df1").alias("category"))
     df = df.select(original_columns)
     df_adsb = read_adsb(target_date, icaos = df["icao"].unique().to_list(), source = adsb_src)
     df_gold = get_matching_icaos_in_flights(df, df_adsb, start_dt)
