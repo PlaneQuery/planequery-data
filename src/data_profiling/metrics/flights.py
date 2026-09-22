@@ -7,6 +7,7 @@ from aircraft.adsb_category import (
     AircraftAdsbCategory,
     is_valid_aircraft_category,
 )
+from airports.polars_exprs import airport_size_expr, airport_has_icao_code_expr, airport_has_iata_code_expr
 from data_engineering.flights.flight_type import get_flights
 
 
@@ -19,15 +20,47 @@ class CategoryDistribution:
 
 @dataclass
 class AirportDistribution:
-    airport_types: str
-    has_icao: bool
-
-    # will have properties that get percentage 
-    pass
+    total: int
+    size_counts: dict[str, int]
+    has_icao_code_count: int
+    has_iata_code_count: int
 
 class FlightsMetrics():
     def __init__(self, df: pl.DataFrame, day: date):
         self.day = day
+        self.generate_category_statistics(df)
+        self.generate_airport_statistics(df)
+
+    def generate_airport_statistics(self, df: pl.DataFrame) -> None:
+        df = df.with_columns(
+            expr
+            for prefix in ("takeoff", "landing")
+            for expr in (
+                airport_size_expr(f"{prefix}_airport_ident"),
+                airport_has_icao_code_expr(f"{prefix}_airport_ident"),
+                airport_has_iata_code_expr(f"{prefix}_airport_ident"),
+            )
+        )
+        self.airport_statistics: dict[str, AirportDistribution] = {}
+        for prefix in ("takeoff", "landing"):
+            size_counts = dict(
+                df.get_column(f"{prefix}_airport_size")
+                .fill_null("unknown")
+                .value_counts()
+                .iter_rows()
+            )
+            self.airport_statistics[prefix] = AirportDistribution(
+                total=df.height,
+                size_counts=size_counts,
+                has_icao_code_count=int(
+                    df.get_column(f"{prefix}_airport_has_icao_code").sum() or 0
+                ),
+                has_iata_code_count=int(
+                    df.get_column(f"{prefix}_airport_has_iata_code").sum() or 0
+                ),
+            )
+
+    def generate_category_statistics(self, df: pl.DataFrame) -> None:
         self.category_counts: AircraftCategoryCounts = {}
         self.category_counts["unknown"] = len(
             df.filter(~is_valid_aircraft_category().fill_null(False))
@@ -50,8 +83,40 @@ class FlightsMetrics():
             )
         return "\n".join(lines)
 
+    def airport_statistics_text(self) -> str:
+        lines = [
+            f"Airport statistics for {self.day:%Y-%m-%d}:",
+        ]
+        size_order = (
+            "large_airport",
+            "medium_airport",
+            "small_airport",
+            "unknown",
+        )
+        for prefix, statistics in self.airport_statistics.items():
+            lines.extend([
+                f"  {prefix.title()} airports ({statistics.total:,} flight endpoints):",
+                f"    {'Attribute':<20} {'Count':>8} {'Percent':>9}",
+            ])
+            for airport_size in size_order:
+                count = statistics.size_counts.get(airport_size, 0)
+                percentage = count / statistics.total if statistics.total else 0.0
+                lines.append(
+                    f"    {airport_size:<20} {count:>8,} {percentage:>8.2%}"
+                )
+            for label, count in (
+                ("has_icao_code", statistics.has_icao_code_count),
+                ("has_iata_code", statistics.has_iata_code_count),
+            ):
+                percentage = count / statistics.total if statistics.total else 0.0
+                lines.append(f"    {label:<20} {count:>8,} {percentage:>8.2%}")
+        return "\n".join(lines)
+
     def to_vis(self) -> str:
-        return self.category_distribution_text()
+        return "\n\n".join([
+            self.category_distribution_text(),
+            self.airport_statistics_text(),
+        ])
 
     day: date
     number: int
