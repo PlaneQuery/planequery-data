@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-os.environ["OUTPUT_DIR"] = str(Path(__file__).resolve().parents[2])
+os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 
 from airports.airport_lookup import AirportLookup
 
