@@ -1,4 +1,4 @@
-"""February-only SFDPS/BTS supervision, independent segmentation, bounded caches."""
+"""Prepare ADSB.lol training (February BTS/SFDPS) and European validation."""
 
 import argparse
 import csv
@@ -20,6 +20,7 @@ from flights_airport_nn.features import COLUMNS, clean_messages, pack, trajector
 from flights_algorithm.main import _segment_adsb_df
 
 CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
+EUROPE_CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/europe-validation"
 TYPES = ("large_airport", "medium_airport", "small_airport")
 
 
@@ -195,21 +196,27 @@ def ground_support(messages, ident, boundary):
     return bool(len(times) >= 3 and times[-1] - times[0] >= 10_000)
 
 
-def prepare_part(day, refs, path):
+def prepare_part(day, refs, path, parquet_root=None, europe=False):
     start = datetime.combine(day, time())
-    messages = (
-        read_adsb(
-            day,
-            source="adsblol",
-            icaos=refs["icao"].unique().to_list(),
-            columns=COLUMNS + ["geom_altitude_ft", "callsign"],
-            lazy=True,
+    columns = COLUMNS + ["geom_altitude_ft", "callsign"]
+    aircraft = refs["icao"].unique().to_list()
+    if parquet_root is None:
+        observations = read_adsb(
+            day, source="adsblol", icaos=aircraft, columns=columns, lazy=True
         )
-        .filter(
-            (pl.col("time") >= start) & (pl.col("time") < start + timedelta(days=1))
+    else:
+        partition = (
+            Path(parquet_root)
+            / f"year={day.year}/month={day.month:02d}/day={day.day:02d}"
         )
-        .collect(engine="streaming")
-    )
+        observations = (
+            pl.scan_parquet(str(partition / "icao_bucket=*/*.parquet"))
+            .filter(pl.col("icao").is_in(aircraft))
+            .select(columns)
+        )
+    messages = observations.filter(
+        (pl.col("time") >= start) & (pl.col("time") < start + timedelta(days=1))
+    ).collect(engine="streaming")
     messages = clean_messages(messages)
     native = _segment_adsb_df(messages)
     segments = pl.DataFrame(
@@ -227,11 +234,24 @@ def prepare_part(day, refs, path):
             "landing_time": pl.Datetime("ms"),
         },
     ).with_row_index("segment")
-    matches = match_references(segments, refs)
+    if europe:
+        from flights_airport_nn.europe import match_eurocontrol
+
+        matches = match_eurocontrol(segments, refs)
+    else:
+        matches = match_references(segments, refs)
     selected = segments.filter(pl.col("segment").is_in(matches["segment"].implode()))
     chosen = {k[0]: g for k, g in matches.partition_by("segment", as_dict=True).items()}
     tracks = messages.partition_by("icao", as_dict=True)
     endpoints = list(trajectories(selected, messages))
+    if europe:
+        # Preserve reference order used by European validation batches.
+        by_key = {(selected[e.row, "segment"], e.endpoint): e for e in endpoints}
+        endpoints = [
+            by_key[segment, end]
+            for segment in matches["segment"]
+            for end in ("takeoff", "landing")
+        ]
     rows = []
     for endpoint in endpoints:
         flight = selected.row(endpoint.row, named=True)
@@ -251,7 +271,7 @@ def prepare_part(day, refs, path):
             ground_support(
                 tracks[(flight["icao"],)], truth, flight[f"{endpoint.endpoint}_time"]
             )
-            if truth
+            if truth and not europe
             else False
         )
         rows.append(
@@ -267,7 +287,9 @@ def prepare_part(day, refs, path):
                 "source": "+".join(sorted(set(labels["source"]))),
                 "ground_supported": grounded,
                 "label_conflict": conflict,
-                "eligible": bool(truth and (bts or grounded) and not conflict),
+                "eligible": bool(
+                    truth and (europe or bts or grounded) and not conflict
+                ),
                 "nearest": endpoint.nearest,
                 "candidates": endpoint.airports,
                 "target": endpoint.airports.index(truth)
@@ -303,10 +325,6 @@ def prepare_part(day, refs, path):
             eligible=metadata["eligible"].to_numpy(),
         )
     metadata.write_parquet(path.with_suffix(".parquet"))
-    status = refs.with_columns(
-        pl.col("reference_id").is_in(matches["reference_id"].implode()).alias("matched")
-    )
-    status.write_parquet(path.with_name(path.stem + "-references.parquet"))
     temp.replace(path)
     return {
         "day": str(day),
@@ -318,13 +336,29 @@ def prepare_part(day, refs, path):
     }
 
 
-def prepare(days, output=CACHE, workers=4, batch_aircraft=256):
+def prepare(
+    days, output=CACHE, workers=4, batch_aircraft=256, parquet_root=None, europe=False
+):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
+    if workers < 1 or batch_aircraft < 1:
+        raise ValueError("Workers and aircraft batch size must be positive")
     tasks = []
     for day in days:
-        refs, paths = references(february(day))
-        raw = sorted(_parquet_day_dir(day).glob("icao_bucket=*/data.parquet"))
+        if europe:
+            from flights_airport_nn.europe import references as european_references
+
+            refs, ref_path = european_references(day)
+            paths = [ref_path, Path(__file__).with_name("europe.py")]
+        else:
+            refs, paths = references(february(day))
+        raw_day = (
+            _parquet_day_dir(day)
+            if parquet_root is None
+            else Path(parquet_root)
+            / f"year={day.year}/month={day.month:02d}/day={day.day:02d}"
+        )
+        raw = sorted(raw_day.glob("icao_bucket=*/*.parquet"))
         if not raw:
             raise FileNotFoundError(f"No local ADSB.lol data for {day}")
         folder = output / str(day)
@@ -349,7 +383,9 @@ def prepare(days, output=CACHE, workers=4, batch_aircraft=256):
             "batch_aircraft": batch_aircraft,
             "parts": (len(aircraft) + batch_aircraft - 1) // batch_aircraft,
             "inputs": [fingerprint(p) for p in files],
-            "labels": "BTS or conservative SFDPS airport with observed ground support; conflicts excluded; no target in segmentation/features",
+            "labels": "EUROCONTROL European endpoints"
+            if europe
+            else "BTS or ground-supported SFDPS; conflicts excluded",
             "segmentation": "Fresh native segments from this UTC day only; no cached airport guesses",
         }
         dest = folder / "manifest.json"
@@ -358,7 +394,7 @@ def prepare(days, output=CACHE, workers=4, batch_aircraft=256):
         dest.write_text(json.dumps(manifest, indent=2) + "\n")
         for i, start in enumerate(range(0, len(aircraft), batch_aircraft)):
             path = folder / f"part-{i:04d}.npz"
-            if not path.exists():
+            if not path.exists() or not path.with_suffix(".parquet").exists():
                 tasks.append(
                     (
                         day,
@@ -368,6 +404,8 @@ def prepare(days, output=CACHE, workers=4, batch_aircraft=256):
                             )
                         ),
                         path,
+                        parquet_root,
+                        europe,
                     )
                 )
     print(f"Preparing {len(tasks)} aircraft batches", flush=True)
@@ -384,8 +422,24 @@ def prepare(days, output=CACHE, workers=4, batch_aircraft=256):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--days", nargs="+", type=int, default=list(range(1, 29)))
-    parser.add_argument("--output", type=Path, default=CACHE)
+    parser.add_argument("--dates", nargs="+", type=date.fromisoformat)
+    parser.add_argument(
+        "--europe",
+        action="store_true",
+        help="Prepare EUROCONTROL validation, never optimizer data",
+    )
+    parser.add_argument(
+        "--parquet-root",
+        type=Path,
+        help="ADSB.lol observations root containing year=/month=/day= partitions",
+    )
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
-    prepare([date(2026, 2, d) for d in args.days], args.output, args.workers)
+    if args.europe and not args.dates:
+        parser.error("European validation requires explicit --dates")
+    days = args.dates or [date(2026, 2, d) for d in range(1, 28)]
+    output = args.output or (EUROPE_CACHE if args.europe else CACHE)
+    prepare(
+        days, output, args.workers, parquet_root=args.parquet_root, europe=args.europe
+    )

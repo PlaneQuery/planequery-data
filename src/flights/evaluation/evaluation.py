@@ -1,5 +1,4 @@
 import argparse
-import json
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -263,32 +262,17 @@ def main( # TODO: Maybe rename to run_evaluation
     results = []
     rows = []
     stats_output = default_stats_path()
-    comparison_dir = stats_output.with_suffix("")
-    comparison_index = []
-    if write_outputs:
-        comparison_dir.mkdir(parents=True, exist_ok=True)
     matched_gold_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
     adsb_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
     for src in test_src:
         for source_adsb_src in adsb_srcs_for_test_source(src, adsb_src):
-            if src == "algorithm-airports-nn":
-                get_source_flights = source_flights_reader(
-                    src,
-                    adsb_src=source_adsb_src,
-                    airport_nn_model_path=airport_nn_model_path,
-                )
-            else:
-                get_source_flights = source_flights_reader(
-                    src,
-                    adsb_src=source_adsb_src,
-                )
+            get_source_flights = source_flights_reader(
+                src, adsb_src=source_adsb_src, airport_nn_model_path=airport_nn_model_path
+            )
             for gold in gold_src:
-                if gold == "algorithm-airports-nn":
-                    get_gold_flights = source_flights_reader(
-                        gold, airport_nn_model_path=airport_nn_model_path
-                    )
-                else:
-                    get_gold_flights = source_flights_reader(gold)
+                get_gold_flights = source_flights_reader(
+                    gold, airport_nn_model_path=airport_nn_model_path
+                )
                 for test_date in test_dates:
                     df_test = get_source_flights(test_date)
                     df_gold = get_gold_flights(test_date)
@@ -349,40 +333,6 @@ def main( # TODO: Maybe rename to run_evaluation
                         if src in ("algorithm", "algorithm-no-airports", "algorithm-airports-nn")
                         else None
                     )
-                    if write_outputs:
-                        comparison_path = comparison_dir / (
-                            f"comparison-{len(comparison_index):04d}.parquet"
-                        )
-                        temporary_path = comparison_path.with_name(
-                            comparison_path.name + ".tmp"
-                        )
-                        df.write_parquet(temporary_path)
-                        temporary_path.replace(comparison_path)
-                        comparison_index.append({
-                            "path": comparison_path.name,
-                            "test_date": test_date.isoformat(),
-                            "test_src": src,
-                            "gold_src": gold,
-                            "adsb_src": stats_adsb_src,
-                            "matching_adsb_src": matching_adsb_src,
-                            "use_all_icaos": use_all_icaos,
-                            "filter_rotorcraft": filter_rotorcraft,
-                            "pia_or_american_ladd_only": pia_or_american_ladd_only,
-                            "rows": df.height,
-                        })
-                        index_path = comparison_dir / "index.json"
-                        temporary_index_path = comparison_dir / "index.json.tmp"
-                        temporary_index_path.write_text(
-                            json.dumps(
-                                {
-                                    "stats_csv": f"../{stats_output.name}",
-                                    "comparisons": comparison_index,
-                                },
-                                indent=2,
-                            ) + "\n"
-                        )
-                        temporary_index_path.replace(index_path)
-                        print(f"Comparison Parquet saved to {comparison_path}")
                     stats = df_flights_comparison_stats(df)
                     if include_consecutive_airport_metrics:
                         stats.update(
@@ -410,6 +360,7 @@ def main( # TODO: Maybe rename to run_evaluation
     if len(test_dates) > 1:
         df_stats = add_average_rows(df_stats)
     if write_outputs:
+        stats_output.parent.mkdir(parents=True, exist_ok=True)
         df_stats.write_csv(stats_output)
         print(f"Stats CSV saved to {stats_output}")
     return results, df_stats
