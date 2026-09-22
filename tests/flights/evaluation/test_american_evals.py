@@ -4,7 +4,7 @@ from pathlib import Path
 import polars as pl
 
 
-os.environ["OUTPUT_DIR"] = str(Path(__file__).resolve().parents[3])
+os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 from flights.evaluation.american_evals import (  # noqa: E402
     add_airspace_columns,
