@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from data_engineering.adsb.read_adsb import ADSBSource
 from flights.evaluation.evaluation import main
 from flights.flights_comparison import df_flights_comparison_stats
 
@@ -124,8 +125,8 @@ def test_flight_evaluation_matrix_meets_recorded_bounds(expected: dict[str, str]
         test_src=expected["test_src"],
         gold_src=expected["gold_src"],
         test_dates=date.fromisoformat(expected["test_date"]),
-        adsb_src=expected["adsb_src"] or "adsblol",
-        matching_adsb_src=expected["matching_adsb_src"],
+        adsb_src=ADSBSource(expected["adsb_src"] or ADSBSource.ADSBLOL),
+        matching_adsb_src=ADSBSource(expected["matching_adsb_src"]),
         use_all_icaos=expected["use_all_icaos"] == "true",
         filter_rotorcraft=expected["filter_rotorcraft"] == "true",
         pia_or_american_ladd_only=(
@@ -155,12 +156,12 @@ def test_algorithm_flights_recreate_with_adsbx_meets_daily_bounds():
     dt = date(2026, 3, 1)
     from flights_algorithm.main import run_main
 
-    run_main(target_date=dt, source="adsbx")
+    run_main(target_date=dt, source=ADSBSource.ADSBX)
     results, _ = main(
         test_src="algorithm",
         gold_src="sfdps",
         test_dates=dt,
-        adsb_src="adsbx",
+        adsb_src=ADSBSource.ADSBX,
     )
 
     assert len(results) == 1

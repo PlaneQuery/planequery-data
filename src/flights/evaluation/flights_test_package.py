@@ -2,7 +2,7 @@
 import polars as pl
 from functools import cached_property
 from datetime import datetime
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.flights.flight_type import Flight, flights_to_flights_df
 from flights.flights_match_adsb import flights_match_adsb
 
@@ -13,7 +13,7 @@ class FlightsTestPackage:
         flights: list[Flight],
         start_dt: datetime,
         end_dt: datetime,
-        adsb_source: str = "adsblol",
+        adsb_source: ADSBSource = ADSBSource.ADSBLOL,
         is_accurate: bool = True
     ) -> None:
         self.flights = flights

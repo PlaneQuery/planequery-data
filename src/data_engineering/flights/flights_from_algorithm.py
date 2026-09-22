@@ -16,6 +16,7 @@ from pathlib import Path
 import polars as pl
 
 import flights_algorithm.main as flights_algorithm
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.flights.flight_type import (
     ALGORITHM_ADSB_SOURCES,
     flights_algorithm_output_path,
@@ -60,7 +61,7 @@ def _date_range(start_date: date, end_date: date):
 def publish_flights_parquet(
     df_flights: pl.DataFrame,
     target_date: date,
-    source: str,
+    source: ADSBSource,
     no_airports_model: bool,
 ) -> Path:
     output_path = flights_algorithm_output_path(
@@ -118,7 +119,12 @@ def main() -> None:
     )
     parser.add_argument("start_date", type=_date_arg)
     parser.add_argument("end_date", type=_date_arg)
-    parser.add_argument("--source", choices=ALGORITHM_ADSB_SOURCES, default="adsblol")
+    parser.add_argument(
+        "--source",
+        type=ADSBSource,
+        choices=ALGORITHM_ADSB_SOURCES,
+        default=ADSBSource.ADSBLOL,
+    )
     parser.add_argument("--max-workers", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--no-airports-model", action="store_true")
     parser.add_argument("--write-to-s3", action="store_true")

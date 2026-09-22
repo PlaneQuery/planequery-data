@@ -2,6 +2,7 @@ from datetime import date
 import polars as pl
 
 from airports.polars_exprs import airport_size_expr
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.flights.flight_type import get_flights
 from data_profiling.metrics.flights import FlightCohort
 from flights.evaluation.evaluation import main as run_evaluation
@@ -12,7 +13,7 @@ results, stats = run_evaluation(
     test_src="algorithm-no-airports",
     gold_src="sfdps",
     test_dates=TARGET_DATE,
-    adsb_src="adsblol",  # Internal name for adsb.lol
+    adsb_src=ADSBSource.ADSBLOL,
     write_outputs=False
 )
 comparison: pl.DataFrame = results[0]
@@ -35,7 +36,7 @@ evaluation_annotations = (
 
 df_test = get_flights(
     TARGET_DATE,
-    adsb_src="adsblol",
+    adsb_src=ADSBSource.ADSBLOL,
     algorithm="algorithm",
     no_airports_model=True,
 )

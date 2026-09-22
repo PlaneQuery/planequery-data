@@ -4,7 +4,7 @@ import polars as pl
 import numpy as np
 from airports.airport_lookup import Airport, AirportLookup
 from data_engineering.adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df, closest_time_row_idx
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.flights.flight_type import Flight, flights_df_to_flights
 from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_for_day
 from datetime import date, timedelta
@@ -179,7 +179,11 @@ def create_features(df_flights: pl.DataFrame, df_adsb: pl.DataFrame):
 
 def create_features_for_day(target_dt: date):
     df_flights = flights_features_df(target_dt)
-    df_adsb = read_adsb(target_dt, icaos=df_flights["icao"].unique().to_list(), source="adsblol")
+    df_adsb = read_adsb(
+        target_dt,
+        icaos=df_flights["icao"].unique().to_list(),
+        source=ADSBSource.ADSBLOL,
+    )
     features = create_features(df_flights, df_adsb)
     return features
 
