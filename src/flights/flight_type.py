@@ -1,12 +1,10 @@
 from bisect import bisect_left
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 import polars as pl
 
 from airports.airport_lookup import Airport
-from data_engineering.adsb.read_adsb import ADSBSource
-from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
 
 
 FLIGHT_POLARS_SCHEMA = {
@@ -147,7 +145,7 @@ class FlightIndex:
         self._ladd_takeoff_times = [flight.takeoff_time for flight in self._ladd_flights]
 
     def get_flight_by_id(self, flight_id: str) -> Flight:
-        """Return the flight for ``flight_id``, or ``None`` when it is absent."""
+        """Return the flight for ``flight_id``."""
         return self._flights_by_id[flight_id]
 
     def get_flights_ids(self) -> list[str]:
@@ -273,137 +271,6 @@ def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
 def flights_to_flights_df(flights: list[Flight]) -> pl.DataFrame:
     df = pl.DataFrame([asdict(flight) for flight in flights], schema=FLIGHT_POLARS_SCHEMA)
     return df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
-
-def flights_parquet_path(target_date: date):
-    """Public data-lake path retained by planequery-data publishing jobs."""
-
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / FLIGHTS_VERSION
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "part-0.parquet"
-    )
-
-
-ALGORITHM_ADSB_SOURCES = tuple(ADSBSource)
-FLIGHT_ALGORITHMS = ("algorithm", "opensky", "adsbx")
-
-
-
-def _flights_algorithm_source_dir(adsb_src: ADSBSource) -> str:
-    try:
-        return ADSBSource(adsb_src).value
-    except ValueError as exc:
-        raise ValueError(
-            f"Unknown flights algorithm ADS-B source: {adsb_src!r}. "
-            f"Expected one of {ALGORITHM_ADSB_SOURCES!r}"
-        ) from exc
-
-
-def flights_algorithm_output_path(
-    target_date: date,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-    no_airports_model: bool = False,
-):
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / ("algorithm-no-airports" if no_airports_model else "algorithm")
-        / "v3"
-        / _flights_algorithm_source_dir(adsb_src)
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "flights.parquet"
-    )
-
-
-def _date_range(start_date: date, end_date: date):
-    current_date = start_date
-    while current_date < end_date:
-        yield current_date
-        current_date += timedelta(days=1)
-
-
-def _get_algorithm_flights_for_day(
-    target_date: date,
-    no_airports_model: bool = False,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-):
-    path = flights_algorithm_output_path(
-        target_date,
-        adsb_src=adsb_src,
-        no_airports_model=no_airports_model,
-    )
-    if not no_airports_model and not path.exists():
-        no_airports_path = flights_algorithm_output_path(
-            target_date,
-            adsb_src=adsb_src,
-            no_airports_model=True,
-        )
-        if no_airports_path.exists():
-            path = no_airports_path
-    df = pl.read_parquet(path)
-    return with_flight_schema_columns(df)
-
-
-def _get_flights_for_day(
-    target_date: date,
-    no_airports_model: bool = False,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-    algorithm: str = "algorithm",
-):
-    if algorithm == "algorithm":
-        return _get_algorithm_flights_for_day(
-            target_date,
-            no_airports_model=no_airports_model,
-            adsb_src=adsb_src,
-        )
-    if algorithm == "opensky":
-        from data_engineering.opensky.create_flights_from_trino_parquets import read_opensky_flights
-
-        return with_flight_schema_columns(read_opensky_flights(target_date))
-    if algorithm == "adsbx":
-        from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
-
-        return with_flight_schema_columns(get_adsbx_flights_for_day(target_date))
-    raise ValueError(
-        f"Unknown flights algorithm: {algorithm!r}. "
-        f"Expected one of {FLIGHT_ALGORITHMS!r}"
-    )
-
-
-def get_flights(
-    start_date: date,
-    end_date: date | None = None,
-    no_airports_model: bool = False,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-    algorithm: str = "algorithm",
-):
-    if end_date is None:
-        return _get_flights_for_day(
-            start_date,
-            no_airports_model=no_airports_model,
-            adsb_src=adsb_src,
-            algorithm=algorithm,
-        )
-    if end_date <= start_date:
-        return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
-    return pl.concat([
-        _get_flights_for_day(
-            target_date,
-            no_airports_model=no_airports_model,
-            adsb_src=adsb_src,
-            algorithm=algorithm,
-        )
-        for target_date in _date_range(start_date, end_date)
-    ])
-
 
 def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
     from airports.airport_lookup import AirportLookup

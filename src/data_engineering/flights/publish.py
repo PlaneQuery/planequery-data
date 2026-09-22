@@ -1,9 +1,4 @@
-"""Run the canonical flights algorithm and publish its output.
-
-This module keeps planequery-data's S3 and Spark/Iceberg integration around
-the implementation in ``flights_algorithm.main``.  The historical neural
-flight model pipeline has been removed.
-"""
+"""Run the flights algorithm and publish its output to external stores."""
 
 from __future__ import annotations
 
@@ -15,13 +10,10 @@ from pathlib import Path
 
 import polars as pl
 
-import flights_algorithm.main as flights_algorithm
+from flights import algorithm
 from data_engineering.adsb.read_adsb import ADSBSource
-from data_engineering.flights.flight_type import (
-    ALGORITHM_ADSB_SOURCES,
-    flights_algorithm_output_path,
-    with_flight_schema_columns,
-)
+from flights.flight_source import flight_path
+from flights.flight_type import with_flight_schema_columns
 from data_engineering.utils import (
     upload_to_s3,
 )
@@ -62,12 +54,11 @@ def publish_flights_parquet(
     df_flights: pl.DataFrame,
     target_date: date,
     source: ADSBSource,
-    no_airports_model: bool,
 ) -> Path:
-    output_path = flights_algorithm_output_path(
+    output_path = flight_path(
+        algorithm.AlgorithmNearestFlightSource(),
         target_date,
-        adsb_src=source,
-        no_airports_model=no_airports_model,
+        source,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with_flight_schema_columns(df_flights).write_parquet(output_path)
@@ -122,11 +113,10 @@ def main() -> None:
     parser.add_argument(
         "--source",
         type=ADSBSource,
-        choices=ALGORITHM_ADSB_SOURCES,
+        choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
     )
     parser.add_argument("--max-workers", type=int, default=os.cpu_count() or 1)
-    parser.add_argument("--no-airports-model", action="store_true")
     parser.add_argument("--write-to-s3", action="store_true")
     parser.add_argument("--ingest-to-iceberg", action="store_true")
     parser.add_argument("--prod", action="store_true")
@@ -142,17 +132,15 @@ def main() -> None:
         dates = [dates[int(array_index)]]
 
     for target_date in dates:
-        df_flights = flights_algorithm.main(
+        df_flights = algorithm.create_flights_for_day(
             target_date=target_date,
-            source=args.source,
+            adsb_src=args.source,
             max_workers=args.max_workers,
-            no_airports_model=args.no_airports_model,
         )
         output_path = publish_flights_parquet(
             df_flights,
             target_date,
             args.source,
-            args.no_airports_model,
         )
         print(f"Published {len(df_flights)} flights to {output_path}")
         if args.write_to_s3:

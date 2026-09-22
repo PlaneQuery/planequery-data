@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime, timedelta
 
-from data_engineering.flights.flight_type import Flight
+from flights.flight_type import Flight
 
 initial_time = datetime(2026, 1, 1, 1)
 

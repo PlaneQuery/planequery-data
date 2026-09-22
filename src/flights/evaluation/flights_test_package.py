@@ -3,7 +3,7 @@ import polars as pl
 from functools import cached_property
 from datetime import datetime
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from data_engineering.flights.flight_type import Flight, flights_to_flights_df
+from flights.flight_type import Flight, flights_to_flights_df
 from flights.flights_match_adsb import flights_match_adsb
 
 

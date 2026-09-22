@@ -3,8 +3,8 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+from flights.providers.bts import get_bts_flights_for_day
+from flights.providers.sfdps import get_sfdps_flights_day
 from data_engineering.utils import OUTPUT_DIR
 from flights.evaluation.american_evals import continental_usa_to_continental_usa
 from flights.flights_comparison import df_flights_comparison

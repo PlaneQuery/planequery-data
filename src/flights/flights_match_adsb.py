@@ -1,4 +1,4 @@
-from data_engineering.flights.flight_type import flights_df_to_flights
+from flights.flight_type import flights_df_to_flights
 import polars as pl
 from dataclasses import dataclass
 from datetime import datetime, timedelta

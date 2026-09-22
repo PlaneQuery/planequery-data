@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 
-from flights_algorithm.main import (
+from flights.segmentation.algorithm import (
     AdsbPositionMessage,
     _segments_to_flights_df,
     identify_flight_segments,
 )
-from flights_algorithm.readsb_legs import mark_leg_indexes
+from flights.segmentation.readsb_legs import mark_leg_indexes
 
 
 ICAO = "abc123"
@@ -185,7 +185,7 @@ def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
     ]
 
     segments = identify_flight_segments(messages)
-    monkeypatch.setattr("flights_algorithm.main._get_airport_lookup", lambda: None)
+    monkeypatch.setattr("flights.segmentation.algorithm._get_airport_lookup", lambda: None)
 
     flights = _segments_to_flights_df(segments)
 

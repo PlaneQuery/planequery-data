@@ -5,13 +5,13 @@ import numpy as np
 from airports.airport_lookup import Airport, AirportLookup
 from data_engineering.adsb.adsb_messages_types import AdsbMessage, adsb_messages_from_parquet_df, closest_time_row_idx
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from data_engineering.flights.flight_type import Flight, flights_df_to_flights
+from flights.flight_type import Flight, flights_df_to_flights
 from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_for_day
 from datetime import date, timedelta
 from functools import cached_property
 import math
 
-from flights_airport_nn.features.ground_truth_join_segmentation_algorithm import flights_features_df
+from flights.airport_nn.ground_truth import flights_features_df
 from planequery_data.utils import haversine, initial_bearing_deg
 
 FEATURE_PERIOD = timedelta(minutes=15)

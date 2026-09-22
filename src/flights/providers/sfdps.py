@@ -1,16 +1,15 @@
 import argparse
-import os
+from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
 
 import polars as pl
 
 from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import scan_adsb
-from data_engineering.flights.flight_type import with_flight_schema_columns
+from flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.swim.utils import MISSING_SFDPS_DAYS
-from data_engineering.utils import OUTPUT_DIR
+from flights.flight_source import NonADSBFlightSource, get_flights
 
 
 ADSB_ICAO_INFO_COLUMNS = [
@@ -370,21 +369,9 @@ def sfdps_flights_derive_icao(df_sfdps_flights: pl.DataFrame, current_day: datet
     return add_adsb_icao_info(df_flights, current_day)
 
 
-def sfdps_flights_parquet_path(target_date: date) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "sfdps"
-        / "v1"
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "part-0.parquet"
-    )
-
-
 def create_sfdps_flights_day(target_date: date) -> pl.DataFrame:
+    assert target_date not in _missing_sfdps_days()
+    assert target_date >= date(2026, 1, 1)
     day_dt = datetime(target_date.year, target_date.month, target_date.day)
     df_flights = sfdps_to_flights(day_dt)
     df_flights = filter_sfdps_flights(df_flights, day_dt)
@@ -394,23 +381,23 @@ def create_sfdps_flights_day(target_date: date) -> pl.DataFrame:
     return df_flights
 
 
+@dataclass(frozen=True)
+class SFDPSFlightSource(NonADSBFlightSource):
+    name: str = "sfdps"
+    version: int = 1
+
+    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
+        return create_sfdps_flights_day(dt)
+
+
 def get_sfdps_flights_day(target_date: date, use_cache: bool = True) -> pl.DataFrame:
-    missing_sfdps_days = _missing_sfdps_days()
-    if target_date in missing_sfdps_days or target_date < date(2026, 1, 1):
-        raise Exception("trying to load missing data")
-
-    parquet_path = sfdps_flights_parquet_path(target_date)
-    if use_cache and parquet_path.exists():
-        return pl.read_parquet(parquet_path)
-
-    df_flights = create_sfdps_flights_day(target_date)
-    os.makedirs(parquet_path.parent, exist_ok=True)
-    df_flights.write_parquet(parquet_path)
-    return df_flights
+    return get_flights(SFDPSFlightSource(), target_date, use_cache=use_cache)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build/load SFDPS flights for one UTC day.")
+    parser = argparse.ArgumentParser(
+        description="Build/load SFDPS flights for one UTC day."
+    )
     parser.add_argument("date", help="UTC date in YYYY-MM-DD format")
     parser.add_argument(
         "--no-cache",

@@ -1,7 +1,7 @@
 from datetime import timedelta
 import os
 from pathlib import Path
-from data_engineering.flights.flight_type import Flight
+from flights.flight_type import Flight
 from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
 from data_engineering.utils import OUTPUT_DIR

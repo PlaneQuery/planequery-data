@@ -10,7 +10,8 @@ from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import get_ground_truth_mappings
 
-from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights
+from flights.algorithm import get_flights_range
+from flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
@@ -302,7 +303,7 @@ def pia_tester(
 
     df_mappings = get_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
-    df_flights = get_flights(start_date, end_date)
+    df_flights = get_flights_range(start_date, end_date)
     df_flights = make_pia_consistent(df_flights)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
         n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))

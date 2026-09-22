@@ -1,7 +1,7 @@
 
 from datetime import timedelta
 from enum import Enum, unique
-from data_engineering.flights.flight_type import Flight, add_lat_lon_to_airport_ident_columns, flights_df_to_flights
+from flights.flight_type import Flight, add_lat_lon_to_airport_ident_columns, flights_df_to_flights
 import polars as pl
 from itertools import zip_longest
 from planequery_data.utils import haversine
