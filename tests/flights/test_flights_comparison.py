@@ -3,7 +3,7 @@
 # flight takeoff_time, landing_time fixed, 
 
 from datetime import date, datetime, time, timedelta
-from data_engineering.flights.flight_type import Flight
+from flights.flight_type import Flight
 from flights.flights_comparison import Match, df_flights_comparison, df_flights_comparison_stats, flights_comparison
 import polars as pl
 import pytest

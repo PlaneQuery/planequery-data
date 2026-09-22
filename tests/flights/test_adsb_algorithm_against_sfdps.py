@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 import polars as pl
 
-from data_engineering.flights.flight_type import Flight, FLIGHT_POLARS_SCHEMA
+from flights.flight_type import Flight, FLIGHT_POLARS_SCHEMA
 
 flights_taylor_swift = [
     Flight(icao="a03b95", takeoff_time=datetime(2025,5,29,21,47), takeoff_airport_ident="KBNA",  landing_time=datetime(2025,5,30,1,37),  landing_airport_ident="KBUR"),

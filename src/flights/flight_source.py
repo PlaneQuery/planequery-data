@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -13,13 +13,20 @@ from data_engineering.utils import OUTPUT_DIR
 class FlightSource(ABC):
     name: str
     version: int = 1
-    uses_adsb_source: bool = False
+
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    def adsb_read_interval(
+        self,
+        dt: date,
+    ) -> tuple[date | datetime, datetime | None]:
+        return dt, None
+
     @abstractmethod
     def create_flights_for_day(
         self,
+        dt: date,
         df_adsb: pl.DataFrame,
     ) -> pl.DataFrame:
         ...
@@ -34,23 +41,15 @@ class NonADSBFlightSource(FlightSource):
     ) -> pl.DataFrame:
         ...
 
+
 def flight_path(
     source: FlightSource,
     dt: date,
     adsb_src: ADSBSource | None = None,
 ) -> Path:
-    if source.uses_adsb_source and adsb_src is None:
-        raise ValueError(f"{source.name} requires an ADS-B source")
+    assert isinstance(source, ADSBFlightSource) == (adsb_src is not None)
 
-    if not source.uses_adsb_source and adsb_src is not None:
-        raise ValueError(f"{source.name} does not use an ADS-B source")
-
-    path = (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / f"source={source.name}"
-    )
+    path = OUTPUT_DIR / "data" / "flights" / f"source={source.name}"
 
     if adsb_src is not None:
         path /= f"adsb_source={adsb_src.value}"
@@ -74,28 +73,24 @@ def get_flights(
     path = flight_path(source, dt, adsb_src)
     if use_cache and path.exists():
         return pl.read_parquet(path)
-    
+
     if isinstance(source, ADSBFlightSource):
         assert adsb_src is not None, f"{source.name} requires an ADS-B source"
-        df_adsb = read_adsb(dt, source=adsb_src) # may need buffer
-        return source.create_flights_for_day(df_adsb)
-    elif isinstance(source, NonADSBFlightSource):
+        start, end = source.adsb_read_interval(dt)
+        df_adsb = read_adsb(start, end, source=adsb_src)
+        return source.create_flights_for_day(dt, df_adsb)
+    if isinstance(source, NonADSBFlightSource):
         return source.create_flights_for_day(dt)
-    else:
-        raise ValueError(f"Unknown FlightSource type: {type(source)}")
+    raise ValueError(f"Unknown FlightSource type: {type(source)}")
+
 
 def write_flights(
     source: FlightSource,
     dt: date,
     adsb_src: ADSBSource | None = None,
 ) -> pl.DataFrame:
-    '''
-    sideeffect: write parquet to disk
-    '''
     path = flight_path(source, dt, adsb_src)
-    print(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df_flights = get_flights(source, dt, adsb_src, use_cache=False)
     df_flights.write_parquet(path)
     return df_flights
-

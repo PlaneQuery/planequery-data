@@ -1,4 +1,4 @@
-from data_engineering.flights.flight_type import Flight, FlightIndex
+from flights.flight_type import Flight, FlightIndex
 
 
 def flight_overlaps(

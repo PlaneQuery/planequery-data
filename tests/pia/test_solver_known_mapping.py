@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from data_engineering.flights.flight_type import Flight, FlightIndex
+from flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate
 from pia.solver import (
     mapping_from_selected_candidates,

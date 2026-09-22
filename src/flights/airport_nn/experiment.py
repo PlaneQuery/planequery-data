@@ -5,12 +5,12 @@ from pathlib import Path
 
 import polars as pl
 
-from data_engineering.flights.flight_type import flights_to_flights_df
+from flights.flight_type import flights_to_flights_df
 from data_engineering.utils import OUTPUT_DIR
-from flights_airport_nn.evaluate import evaluate_model
-from flights_airport_nn.features.features import ALL_FEATURE_CONFIG, FeatureConfig
-from flights_airport_nn.inference import run_inference
-from flights_airport_nn.train import run_train
+from flights.airport_nn.evaluate import evaluate_model
+from flights.airport_nn.features import ALL_FEATURE_CONFIG, FeatureConfig
+from flights.airport_nn.inference import run_inference
+from flights.airport_nn.train import run_train
 from planequery_data.utils import current_commit_hash
 
 

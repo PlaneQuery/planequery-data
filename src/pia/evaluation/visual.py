@@ -28,11 +28,11 @@ import plotly.graph_objects as go
 import polars as pl
 
 from data_engineering.filters import pia_or_american_ladd_icao
-from data_engineering.flights.flight_type import (
+from flights.algorithm import get_flights_range
+from flights.flight_type import (
     Flight,
     FlightIndex,
     flights_df_to_flights,
-    get_flights,
 )
 from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.utils import OUTPUT_DIR
@@ -451,7 +451,7 @@ def load_real_flight_case(
     )
     relevant_icaos = set(pia_to_real_icao) | set(pia_to_real_icao.values())
     frame = (
-        get_flights(start_date, end_date)
+        get_flights_range(start_date, end_date)
         .filter(pia_or_american_ladd_icao())
         .filter(pl.col("icao").str.len_chars() == 6)
         .filter(pl.col("icao").is_in(relevant_icaos))
@@ -495,7 +495,7 @@ def main() -> Path:
     args = _parse_args()
     flights = load_real_flight_case(args.start_date, args.end_date)
     if args.icao is not None:
-        df_flights = get_flights(args.start_date, args.end_date)
+        df_flights = get_flights_range(args.start_date, args.end_date)
         df_flights = df_flights.filter(pia_or_american_ladd_icao())
         flights = flights_df_to_flights(df_flights)
         flight_index = FlightIndex(flights)
