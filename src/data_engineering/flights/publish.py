@@ -14,6 +14,7 @@ from flights import algorithm
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.flight_source import flight_path
 from flights.flight_type import with_flight_schema_columns
+from planequery_data.utils import date_range
 from data_engineering.utils import (
     upload_to_s3,
 )
@@ -41,14 +42,6 @@ BOOLEAN_COLUMNS = ["pia", "ladd", "military", "interesting"]
 
 def _date_arg(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
-
-
-def _date_range(start_date: date, end_date: date):
-    current_date = start_date
-    while current_date < end_date:
-        yield current_date
-        current_date += timedelta(days=1)
-
 
 def publish_flights_parquet(
     df_flights: pl.DataFrame,
@@ -127,7 +120,7 @@ def main() -> None:
     if args.max_workers < 1:
         parser.error("--max-workers must be positive")
     array_index = os.getenv("AWS_BATCH_JOB_ARRAY_INDEX")
-    dates = list(_date_range(args.start_date, args.end_date))
+    dates = list(date_range(args.start_date, args.end_date))
     if array_index is not None:
         dates = [dates[int(array_index)]]
 

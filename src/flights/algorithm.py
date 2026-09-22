@@ -1,7 +1,7 @@
 import argparse
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Sequence
 
 import polars as pl
@@ -9,6 +9,7 @@ import polars as pl
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.flight_source import ADSBFlightSource, flight_path
 from flights.segmentation import algorithm as segmentation
+from planequery_data.utils import date_range
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ def get_flights_range(
     assert end_date > start_date
     return pl.concat([
         get_flights(target_date, adsb_src)
-        for target_date in _date_range(start_date, end_date)
+        for target_date in date_range(start_date, end_date)
     ])
 
 
@@ -95,13 +96,6 @@ def write_flights_for_day(
     flights_df.write_parquet(output_path)
     return flights_df
 
-
-def _date_range(start_date: date, end_date: date):
-    while start_date < end_date:
-        yield start_date
-        start_date += timedelta(days=1)
-
-
 def cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("start_date", type=date.fromisoformat)
@@ -125,7 +119,7 @@ def cli() -> None:
     assert args.end_date > args.start_date
     assert args.max_workers > 0
 
-    for target_date in _date_range(args.start_date, args.end_date):
+    for target_date in date_range(args.start_date, args.end_date):
         write_flights_for_day(
             target_date=target_date,
             icaos=args.icaos,
