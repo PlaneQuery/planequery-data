@@ -13,7 +13,7 @@ from data_engineering.utils import OUTPUT_DIR
 class FlightSource(ABC):
     name: str
     version: int = 1
-
+    # TODO: Can have missing days range
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
