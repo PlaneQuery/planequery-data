@@ -1,0 +1,85 @@
+import argparse
+from dataclasses import replace
+from datetime import date
+from pathlib import Path
+from typing import Sequence
+
+from data_engineering.adsb.read_adsb import ADSBSource
+from flights.algorithm import AlgorithmNearestFlightSource
+from flights.flight_source import (
+    ADSBFlightSource,
+    FlightSource,
+    flight_path,
+    write_flights,
+)
+from flights.providers.bts import BTSFlightSource
+from flights.providers.eurocontrol import EurocontrolFlightSource
+from flights.providers.mike import MikeFlightSource
+from flights.providers.sfdps import SFDPSFlightSource
+from planequery_data.utils import date_range
+
+
+FLIGHT_SOURCES = (
+    AlgorithmNearestFlightSource(),
+    BTSFlightSource(),
+    EurocontrolFlightSource(),
+    MikeFlightSource(),
+    SFDPSFlightSource(),
+)
+FLIGHT_SOURCES_BY_NAME = {source.name: source for source in FLIGHT_SOURCES}
+assert len(FLIGHT_SOURCES_BY_NAME) == len(FLIGHT_SOURCES)
+
+def write_flights_range(
+    start_date: date,
+    end_date: date,
+    source: FlightSource,
+    adsb_source: ADSBSource = ADSBSource.ADSBLOL,
+) -> None:
+    source_adsb = adsb_source if isinstance(source, ADSBFlightSource) else None
+
+    for target_date in date_range(start_date, end_date):
+        flights = write_flights(source, target_date, source_adsb)
+        print(
+            f"Wrote {len(flights)} {source.name} flights for {target_date} to "
+            f"{flight_path(source, target_date, source_adsb)}"
+        )
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create daily flight parquet files for a [start, end) date range."
+    )
+    parser.add_argument("start_date", type=date.fromisoformat)
+    parser.add_argument("end_date", type=date.fromisoformat)
+    parser.add_argument("source", choices=FLIGHT_SOURCES_BY_NAME)
+    parser.add_argument(
+        "--adsb-source",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=ADSBSource.ADSBLOL,
+        help="ADS-B provider used by algorithm-nearest (default: adsblol).",
+    )
+    parser.add_argument(
+        "--mike-input",
+        type=Path,
+        help="Input CSV used by the mike source.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    source = FLIGHT_SOURCES_BY_NAME[args.source]
+    if args.mike_input is not None:
+        assert isinstance(source, MikeFlightSource)
+        source = replace(source, input_csv=args.mike_input)
+    write_flights_range(
+        args.start_date,
+        args.end_date,
+        source,
+        adsb_source=args.adsb_source,
+    )
+
+
+if __name__ == "__main__":
+    main()
