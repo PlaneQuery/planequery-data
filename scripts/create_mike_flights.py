@@ -1,22 +1,16 @@
 import argparse
+from datetime import date
 from pathlib import Path
 
-from data_engineering.flights.mike import (
-    CSV_TIMESTAMP_FORMAT,
-    DEFAULT_INPUT,
-    MIKE_FLIGHTS_VERSION,
-    create_mike_flights,
-    get_mike_flights_for_day,
-    mike_flights_parquet_path,
-    normalize_mike_flights,
-    read_mike_flights_csv,
-)
+from flights.flight_source import write_flights
+from flights.providers.mike import DEFAULT_INPUT, MikeFlightSource
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert Mike's flights CSV into daily Parquet partitions."
+        description="Convert Mike's flights CSV into one daily flight partition."
     )
+    parser.add_argument("date", type=date.fromisoformat)
     parser.add_argument(
         "input_csv",
         nargs="?",
@@ -28,7 +22,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    create_mike_flights(parse_args().input_csv)
+    args = parse_args()
+    write_flights(
+        MikeFlightSource(input_csv=args.input_csv),
+        args.date,
+    )
 
 
 if __name__ == "__main__":
