@@ -6,11 +6,6 @@ from timezonefinder import TimezoneFinder
 
 from airports.airport_lookup import AirportLookup
 from data_engineering.flights.flight_type import with_flight_schema_columns
-from data_engineering.flights.get_flights import (
-    FlightSource,
-    flights_path,
-    write_flights_for_day,
-)
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
 
@@ -135,13 +130,6 @@ def get_registration_to_icao() -> pl.DataFrame:
     )
 
 
-def _month_bounds(year: int, month: int) -> tuple[date, date]:
-    start = date(year, month, 1)
-    if month == 12:
-        return start, date(year + 1, 1, 1)
-    return start, date(year, month + 1, 1)
-
-
 def _remove_overlapping_flights(
     df: pl.DataFrame,
     target_date: date,
@@ -162,38 +150,7 @@ def _remove_overlapping_flights(
     return df.sort(["icao", "takeoff_time"])
 
 
-def _write_bts_flights_by_day(
-    df: pl.DataFrame,
-    year: int,
-    month: int,
-) -> pl.DataFrame:
-    """Write one canonical parquet per UTC takeoff day in the target month."""
-    month_start, next_month_start = _month_bounds(year, month)
-    monthly_df = df.filter(
-        (pl.col("takeoff_time").dt.date() >= month_start)
-        & (pl.col("takeoff_time").dt.date() < next_month_start)
-    )
-
-    daily_frames = []
-    target_date = month_start
-    while target_date < next_month_start:
-        daily_df = monthly_df.filter(
-            pl.col("takeoff_time").dt.date() == target_date
-        )
-        daily_df = _remove_overlapping_flights(daily_df, target_date)
-        write_flights_for_day(
-            daily_df,
-            target_date,
-            FlightSource.BTS,
-            adsb_src=None,
-        )
-        daily_frames.append(daily_df)
-        target_date += timedelta(days=1)
-
-    return pl.concat(daily_frames)
-
-
-def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
+def _create_flights_from_bts_month(year: int, month: int) -> pl.DataFrame:
     '''
     On 2025, 10 for example some flights from UTC day 2025-11-01 and 2025-09-30 are included
     '''
@@ -265,20 +222,38 @@ def create_flights_from_bts(year: int, month: int) -> pl.DataFrame:
     )
     df = df.rename({"time_takeoff": "takeoff_time", "time_landing": "landing_time"})
     df = with_flight_schema_columns(df)
-    df = df.with_columns(pl.col("icao").str.to_lowercase())
-    return _write_bts_flights_by_day(df, year, month)
+    return df.with_columns(pl.col("icao").str.to_lowercase())
+
+
+def create_flights_from_bts(target_date: date) -> pl.DataFrame:
+    """Create the finalized BTS flights dataframe for one UTC takeoff day."""
+    monthly_df = _create_flights_from_bts_month(
+        target_date.year,
+        target_date.month,
+    )
+    daily_df = monthly_df.filter(
+        pl.col("takeoff_time").dt.date() == target_date
+    )
+    return _remove_overlapping_flights(daily_df, target_date)
 
 
 def get_bts_flights_for_day(
     target_date: date,
     use_cache: bool = True,
 ) -> pl.DataFrame:
-    path = flights_path(target_date, FlightSource.BTS)
-    if not use_cache or not path.exists():
-        create_flights_from_bts(target_date.year, target_date.month)
-    return pl.read_parquet(path)
+    """Compatibility wrapper around the canonical flight-source reader."""
+    from data_engineering.flights.flight_source import (
+        BTSFlightSource,
+        get_flights,
+    )
+
+    return get_flights(
+        BTSFlightSource(),
+        target_date,
+        use_cache=use_cache,
+    )
 
 
 if __name__ == "__main__":
-    df = create_flights_from_bts(2026, 3)
+    df = create_flights_from_bts(date(2026, 3, 1))
     print(df)
