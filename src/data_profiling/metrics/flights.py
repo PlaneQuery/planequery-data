@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, TypeAlias
 import polars as pl
@@ -7,8 +7,11 @@ from aircraft.adsb_category import (
     AircraftAdsbCategory,
     is_valid_aircraft_category,
 )
-from airports.polars_exprs import airport_size_expr, airport_has_icao_code_expr, airport_has_iata_code_expr
-from data_engineering.flights.flight_type import get_flights
+from airports.polars_exprs import (
+    airport_has_iata_code_expr,
+    airport_has_icao_code_expr,
+    airport_size_expr,
+)
 
 
 AircraftCategoryKey: TypeAlias = AircraftAdsbCategory | Literal["unknown"]
@@ -24,6 +27,58 @@ class AirportDistribution:
     size_counts: dict[str, int]
     has_icao_code_count: int
     has_iata_code_count: int
+
+
+@dataclass
+class FlightCohort:
+    name: str
+    df: pl.DataFrame
+    children: list["FlightCohort"] = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return self.df.height
+
+    def add_child(self, name: str, df: pl.DataFrame) -> "FlightCohort":
+        child = FlightCohort(name=name, df=df)
+        self.children.append(child)
+        return child
+
+    def add_subset(self, name: str, predicate: pl.Expr) -> "FlightCohort":
+        return self.add_child(name, self.df.filter(predicate))
+
+    def to_text(
+        self,
+        *,
+        root_count: int | None = None,
+        parent_count: int | None = None,
+        depth: int = 0,
+    ) -> str:
+        if root_count is None:
+            root_count = self.count
+
+        line = f"{'  ' * depth}{self.name}: {self.count:,}"
+        if parent_count is not None:
+            parent_percentage = self.count / parent_count if parent_count else 0.0
+            total_percentage = self.count / root_count if root_count else 0.0
+            if parent_count == root_count:
+                line += f" ({total_percentage:.2%} of total)"
+            else:
+                line += (
+                    f" ({parent_percentage:.2%} of parent, "
+                    f"{total_percentage:.2%} of total)"
+                )
+
+        lines = [line]
+        for child in self.children:
+            lines.append(
+                child.to_text(
+                    root_count=root_count,
+                    parent_count=self.count,
+                    depth=depth + 1,
+                )
+            )
+        return "\n".join(lines)
 
 class FlightsMetrics():
     def __init__(self, df: pl.DataFrame, day: date):
