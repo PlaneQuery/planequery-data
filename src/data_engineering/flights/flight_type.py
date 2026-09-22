@@ -6,7 +6,6 @@ import polars as pl
 
 from airports.airport_lookup import Airport
 from data_engineering.utils import FLIGHTS_VERSION, OUTPUT_DIR
-from planequery_data.utils import haversine
 
 
 FLIGHT_POLARS_SCHEMA = {
@@ -273,25 +272,6 @@ def flights_df_to_flights(df: pl.DataFrame) -> list[Flight]:
 def flights_to_flights_df(flights: list[Flight]) -> pl.DataFrame:
     df = pl.DataFrame([asdict(flight) for flight in flights], schema=FLIGHT_POLARS_SCHEMA)
     return df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
-
-FLIGHT_NUMBER_REGEX = r"^[A-Z]{3}\d{1,4}[A-Z]?$"
-def flight_number_validation(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.filter(
-    pl.col("flight")
-    .str.contains(FLIGHT_NUMBER_REGEX)
-    )
-    return df
-
-def flight_id_expr(
-    icao_col: str = "icao",
-    takeoff_time_col: str = "takeoff_time",
-) -> pl.Expr:
-    return (
-        pl.col(icao_col).cast(pl.Utf8)
-        + "_"
-        + pl.col(takeoff_time_col).dt.strftime("%Y-%m-%d_%H-%M")
-    ).alias("flight_id")
-
 
 def flights_parquet_path(target_date: date):
     """Public data-lake path retained by planequery-data publishing jobs."""
