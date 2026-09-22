@@ -1,11 +1,8 @@
-import argparse
 import math
 import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from functools import cache
-from pathlib import Path
 from typing import Sequence
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
@@ -20,9 +17,7 @@ from data_engineering.adsb.read_adsb import (
     read_adsb,
     remove_adsb_parquet_days,
 )
-from data_engineering.flights.flight_type import flights_algorithm_output_path
-from data_engineering.utils import OUTPUT_DIR
-from flights_algorithm.readsb_legs import mark_leg_indexes
+from flights.segmentation.readsb_legs import mark_leg_indexes
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -638,7 +633,7 @@ def _airport_ident_guesses_for_segments(
 
 
 def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+    from flights.flight_type import FLIGHT_POLARS_SCHEMA
 
     if not segments:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
@@ -702,14 +697,11 @@ def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
-def _source_read_window(
-    day_start: datetime,
-    day_end: datetime,
-) -> tuple[datetime, datetime]:
-    return day_start, day_end
-
-
-def _segment_takes_off_in_window(segment: FlightSegment, start: datetime, end: datetime) -> bool:
+def _segment_takes_off_in_window(
+    segment: FlightSegment,
+    start: datetime,
+    end: datetime,
+) -> bool:
     return start <= segment.takeoff_time < end
 
 
@@ -733,18 +725,16 @@ def _segment_adsb_df(
         for _, df_icao in df_adsb.group_by("icao", maintain_order=True)
     ]
 
-    processed_icaos = 0
     segments = []
     for df_icao in icao_dfs:
         segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
-        processed_icaos += 1
 
     return segments
 
 
 def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
-    from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-    from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
+    from flights.providers.bts import get_bts_flights_for_day
+    from flights.providers.sfdps import get_sfdps_flights_day
 
     source_icaos = set()
     for flights_reader in (get_sfdps_flights_day, get_bts_flights_for_day):
@@ -785,57 +775,37 @@ def _limit_icaos_to_ground_truth(icaos: Sequence[str]) -> list[str]:
     ground_truth_icaos = set(_ground_truth_icaos())
     return [icao for icao in icaos if icao in ground_truth_icaos]
 
-MODEL_PATH = Path(
-    os.getenv(
-        "FLIGHTS_AIRPORT_MODEL_PATH",
-        OUTPUT_DIR / "data/models/flights_ai_model_airport/runs/2026-07-11_01-04_8d67e59_8days/model.pkl",
-    )
-)
 
-# @cache
-# def _get_airport_model():
-#     from flights_ai_model_airport.inference import load_model
-#     return load_model(MODEL_PATH)
-
-def _run_airport_model_inference(
-    flights_df: pl.DataFrame,
-    df_adsb_full: pl.DataFrame,
+def create_flights_from_adsb(
+    df_adsb: pl.DataFrame,
+    target_date: date,
 ) -> pl.DataFrame:
-    return flights_df
-    # from flights_ai_model_airport.inference import inference
-
-    # return inference(
-    #     flights_df,
-    #     _get_airport_model(),
-    #     df_adsb_full,
-    # )
-
-
-def process_icaos(
-    day_start: datetime,
-    day_end: datetime,
-    icaos: list[str],
-    no_airports_model: bool = False,
-    source: ADSBSource = ADSBSource.ADSBLOL,
-) -> pl.DataFrame:
-    source = ADSBSource(source)
-    read_start, read_end = _source_read_window(day_start, day_end)
-    df_adsb = read_adsb(read_start, read_end, icaos=icaos, source=source)
+    """Segment ADS-B messages and assign endpoint-nearest airports for one day."""
+    day_start, day_end = _day_bounds(target_date)
     segments = _segment_adsb_df(df_adsb)
     segments = [
         segment
         for segment in segments
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
-    flights_df = _segments_to_flights_df(segments)
-    flights_df = _filter_short_same_airport_flights(flights_df)
-    if not no_airports_model:
-        flights_df = _run_airport_model_inference(flights_df, df_adsb)
+    return _filter_short_same_airport_flights(_segments_to_flights_df(segments))
+
+
+def process_icaos(
+    day_start: datetime,
+    day_end: datetime,
+    icaos: list[str],
+    source: ADSBSource = ADSBSource.ADSBLOL,
+) -> pl.DataFrame:
+    source = ADSBSource(source)
+    df_adsb = read_adsb(day_start, day_end, icaos=icaos, source=source)
+    flights_df = create_flights_from_adsb(df_adsb, day_start.date())
     if len(flights_df) == 0:
         print(f"Empty chunk: processed {len(icaos)} ICAOs, found 0 flights")
         return flights_df
     print(f"Processed {len(icaos)} ICAOs, found {len(flights_df)} flights")
     return flights_df
+
 
 def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
     return [
@@ -843,13 +813,15 @@ def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
         for start in range(0, len(items), chunk_size)
     ]
 
+
 def _number_of_workers_default() -> int:
     cpu_count = os.cpu_count()
     if cpu_count is None:
         return 1
     return max(1, cpu_count // 2)
 
-def main(
+
+def create_flights_for_day(
     target_date: date = date(2026, 3, 1),
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
@@ -857,16 +829,14 @@ def main(
     ground_truth_only: bool = False,
     source: ADSBSource = ADSBSource.ADSBLOL,
     max_workers: int = _number_of_workers_default(),
-    no_airports_model: bool = False,
 ) -> pl.DataFrame:
     source = ADSBSource(source)
     print(f"number of workers: {max_workers}")
 
     day_start, day_end = _day_bounds(target_date)
-    read_start, read_end = _source_read_window(day_start, day_end)
     created_parquet_days = ensure_adsb_source_data(
-        read_start,
-        read_end,
+        day_start,
+        day_end,
         source=source,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
@@ -881,14 +851,16 @@ def main(
     if ground_truth_only:
         icaos = _limit_icaos_to_ground_truth(icaos)
     icao_lists = _chunks_by_size(icaos, 500)
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp.get_context("spawn")) as executor:
+    with ProcessPoolExecutor(
+        max_workers=max_workers,
+        mp_context=mp.get_context("spawn"),
+    ) as executor:
         futures = [
             executor.submit(
                 process_icaos,
                 day_start,
                 day_end,
                 icao_list,
-                no_airports_model,
                 source,
             )
             for icao_list in icao_lists
@@ -898,137 +870,3 @@ def main(
     if source == ADSBSource.ADSBLOL:
         remove_adsb_parquet_days(created_parquet_days)
     return flights_df
-
-
-def run_main(
-    target_date: date = date(2026, 3, 1),
-    icaos: Sequence[str] | None = None,
-    pia_or_american_ladd_only: bool = False,
-    sfdps_or_bts_only: bool = False,
-    ground_truth_only: bool = False,
-    source: ADSBSource = ADSBSource.ADSBLOL,
-    max_workers: int = os.cpu_count() or 1,
-    no_airports_model: bool = False,
-) -> pl.DataFrame:
-    """Run the algorithm and write its algorithm-cache parquet output."""
-    flights_df = main(
-        target_date=target_date,
-        icaos=icaos,
-        pia_or_american_ladd_only=pia_or_american_ladd_only,
-        sfdps_or_bts_only=sfdps_or_bts_only,
-        ground_truth_only=ground_truth_only,
-        source=source,
-        max_workers=max_workers,
-        no_airports_model=no_airports_model,
-    )
-    output_path = flights_algorithm_output_path(
-        target_date,
-        adsb_src=source,
-        no_airports_model=no_airports_model,
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    flights_df.write_parquet(output_path)
-    return flights_df
-
-
-def _date_arg(value: str) -> date:
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("expected date in YYYY-MM-DD format") from exc
-
-
-def _positive_int_arg(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("expected positive integer") from exc
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("expected positive integer")
-    return parsed
-
-
-def _icao_arg(value: str) -> str:
-    icao = value.strip().lower()
-    if not icao:
-        raise argparse.ArgumentTypeError("expected non-empty ICAO")
-    return icao
-
-
-def _date_range(start_date: date, end_date: date):
-    current_date = start_date
-    while current_date < end_date:
-        yield current_date
-        current_date += timedelta(days=1)
-
-
-def cli() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("start_date", type=_date_arg)
-    parser.add_argument("end_date", type=_date_arg)
-    parser.add_argument(
-        "--pia-or-american-ladd-only",
-        action="store_true",
-        help="only segment and output PIA ICAOs or American LADD aircraft",
-    )
-    parser.add_argument(
-        "--sfdps-or-bts-only",
-        action="store_true",
-        help="only segment ICAOs present in SFDPS or BTS flights for the target date",
-    )
-    parser.add_argument(
-        "--ground-truth-only",
-        action="store_true",
-        help=(
-            "only segment ICAOs present in ground-truth flights for 2026-03-01"
-        ),
-    )
-    parser.add_argument(
-        "--source",
-        type=ADSBSource,
-        choices=tuple(ADSBSource),
-        default=ADSBSource.ADSBLOL,
-        help="ADS-B data provider to read (default: adsblol)",
-    )
-    parser.add_argument(
-        "--max-workers",
-        type=_positive_int_arg,
-    )
-    parser.add_argument(
-        "--icaos",
-        nargs="+",
-        type=_icao_arg,
-        help="only run the algorithm for these ICAOs",
-    )
-    parser.add_argument(
-        "--no-airports-model",
-        action="store_true",
-        help="use closest first/last ADS-B message airports instead of LightGBM airport inference",
-    )
-    args = parser.parse_args()
-
-    if args.end_date <= args.start_date:
-        parser.error("end_date must be after start_date")
-
-    if args.max_workers is None:
-        cpu_count = os.cpu_count()
-        max_workers = cpu_count // 2 if cpu_count is not None else 1
-    else:
-        max_workers = args.max_workers
-    for target_date in _date_range(args.start_date, args.end_date):
-        print(f"Running flights algorithm for {target_date}")
-        flights_df = run_main(
-            target_date=target_date,
-            pia_or_american_ladd_only=args.pia_or_american_ladd_only,
-            sfdps_or_bts_only=args.sfdps_or_bts_only,
-            ground_truth_only=args.ground_truth_only,
-            source=args.source,
-            max_workers=max_workers,
-            icaos=args.icaos,
-            no_airports_model=args.no_airports_model,
-        )
-        print(flights_df)
-
-
-if __name__ == "__main__":
-    cli()

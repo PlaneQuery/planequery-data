@@ -7,8 +7,8 @@ os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 import polars as pl
 
-from data_engineering.bts import read_bts_ontime_to_flights as bts_module
-from data_engineering.bts.read_bts_ontime_to_flights import (
+from flights.providers import bts as bts_module
+from flights.providers.bts import (
     _compute_bts_timestamps,
     create_flights_from_bts,
 )

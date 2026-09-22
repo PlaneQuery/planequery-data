@@ -3,7 +3,7 @@
 # They can change PIA callsign either, every flight, every day, every X days
 # change some flights in df_flights to pia flights with pia icao: pia_0343, will genereate unique pias
 import polars as pl
-from data_engineering.flights.flight_type import flights_df_to_flights, flights_to_flights_df
+from flights.flight_type import flights_df_to_flights, flights_to_flights_df
 from airports.airport_lookup import AirportLookup
 import hashlib
 import random

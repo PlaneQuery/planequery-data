@@ -6,15 +6,15 @@ import numpy as np
 import torch
 
 from airports.airport_lookup import Airport
-from flights_airport_nn.features.features import (
+from flights.airport_nn.features import (
     ALL_FEATURE_CONFIG,
     FeatureConfig,
     FeatureName,
     Features,
     create_features_for_day,
 )
-from flights_airport_nn.utils import device
-from flights_airport_nn.model import AirportGRU
+from flights.airport_nn.utils import device
+from flights.airport_nn.model import AirportGRU
 
 
 def load_model(

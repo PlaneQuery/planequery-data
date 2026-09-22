@@ -1,7 +1,7 @@
 # this would be passing in the filghts is useful so I can reuse ground truth flights here. Although loading them is not that expensive at all and saves ram. 
 from datetime import timedelta, datetime
 import polars as pl
-from data_engineering.flights.flight_type import get_flights
+from flights.algorithm import get_flights
 from flights.flights_comparison import df_flights_comparison, df_flights_comparison_stats
 from flights.ground_truth.bts_and_sfdps_to_gold import get_ground_truth_flights_for_day
 
@@ -34,7 +34,7 @@ class EvalStats:
 
 # I should still have the neareast airport approach in the .csvs just for compariaision. I can save that data to OUTPUT_DIR/cache/
 def get_nearest_airport_method_stats(df_gt, eval_dt):
-    df_nearest_flights = get_flights(eval_dt, no_airports_model=True)
+    df_nearest_flights = get_flights(eval_dt)
     df = df_flights_comparison(df_nearest_flights, df_gt, datetime(eval_dt.year, eval_dt.month, eval_dt.day), datetime(eval_dt.year, eval_dt.month, eval_dt.day) + timedelta(days=1), compare_airports=False)
     df = df.filter(pl.col("match_status") == "both")
     stats = df_flights_comparison_stats(df)
@@ -64,14 +64,14 @@ def evaluate_model(eval_dt, df_flights):
 
 if __name__ == "__main__":
     from datetime import date
-    from flights_airport_nn.inference import run_inference, load_model
+    from flights.airport_nn.inference import run_inference, load_model
 
     model, feature_config = load_model(
         model_path="/Volumes/T2-SSD/planequery/data/models/flights_airport_nn/runs/2026-09-13_17-39_9a999b3_0days_0epochs/model.pt",
     )
     eval_dt = date(2026, 3, 1)
     flights = run_inference(eval_dt, model, feature_config)
-    from data_engineering.flights.flight_type import flights_to_flights_df
+    from flights.flight_type import flights_to_flights_df
     df_flights = flights_to_flights_df(flights.values())
     eval_stats = evaluate_model(eval_dt, df_flights)
     df = pl.DataFrame([eval_stats.to_record()])

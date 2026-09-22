@@ -379,7 +379,7 @@ def _natural_empty_expr(col_name: str, dtype: pl.DataType) -> pl.Expr:
 
 
 def fr24_raw_to_flights(df: pd.DataFrame | pl.DataFrame) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+    from flights.flight_type import FLIGHT_POLARS_SCHEMA
 
     if isinstance(df, pd.DataFrame):
         if df.empty:

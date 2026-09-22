@@ -1,6 +1,6 @@
 
 from datetime import date, datetime, time, timedelta
-from data_engineering.flights.flight_type import Flight, FlightIndex, get_flights
+from flights.flight_type import Flight, FlightIndex
 from flights.flights_comparison import Match, df_flights_comparison, df_flights_comparison_stats, flights_comparison
 import polars as pl
 

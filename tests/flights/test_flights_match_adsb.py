@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
-from data_engineering.flights.flight_type import Flight, flights_to_flights_df
+from flights.flight_type import Flight, flights_to_flights_df
 from flights.evaluation.flights_test_package import flights_match_real_adsb_with_dropout
 from flights.flights_match_adsb import flights_match_adsb
 from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
