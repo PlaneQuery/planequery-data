@@ -1,8 +1,10 @@
 from datetime import date, datetime
 
 import polars as pl
+import pytest
 
 from data_engineering.adsb import read_adsb as read_adsb_module
+from data_engineering.adsb.read_adsb import ADSBSource
 
 
 def _scan_fixture(*args, **kwargs) -> pl.LazyFrame:
@@ -80,10 +82,15 @@ def test_read_adsb_applies_opensky_preprocessing_after_icao_filter(monkeypatch):
         date(2026, 1, 2),
         columns=["time", "icao", "lat", "lon"],
         icaos=["abc123"],
-        source="opensky",
+        source=ADSBSource.OPENSKY,
     )
 
     assert result.get_column("time").to_list() == [
         datetime(2026, 1, 2, 0, 0, 0),
         datetime(2026, 1, 2, 0, 0, 20),
     ]
+
+
+def test_read_adsb_rejects_unknown_source():
+    with pytest.raises(ValueError, match="Unknown ADS-B source"):
+        read_adsb_module.read_adsb(date(2026, 1, 2), source="unknown")

@@ -2,7 +2,7 @@ import argparse
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import polars as pl
-from data_engineering.adsb.read_adsb import read_adsb
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
 from data_engineering.filters import pia_or_american_ladd
 
@@ -26,8 +26,8 @@ from data_engineering.flights.mike import get_mike_flights_for_day
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
-DEFAULT_ADSB_SRC_FOR_MATCHING = "adsbx"
-DEFAULT_ADSB_SRC_FOR_FLIGHTS = "adsblol"
+DEFAULT_ADSB_SRC_FOR_MATCHING = ADSBSource.ADSBX
+DEFAULT_ADSB_SRC_FOR_FLIGHTS = ADSBSource.ADSBLOL
 
 
 def default_stats_path() -> Path:
@@ -78,7 +78,7 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
 
 def get_algorithm_flights_for_adsb_src(
     target_date: date,
-    adsb_src: str,
+    adsb_src: ADSBSource,
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
     from data_engineering.flights.flight_type import flights_algorithm_output_path
@@ -112,7 +112,7 @@ def get_algorithm_flights_for_adsb_src(
 
 def source_flights_reader(
     src: str,
-    adsb_src: str = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
 ):
     if src == "adsbx":
         return lambda target_date: get_flights(target_date, algorithm="adsbx")
@@ -143,10 +143,13 @@ def source_flights_reader(
 
     raise ValueError(f"Unknown flight source: {src}")
 
-def adsb_srcs_for_test_source(src: str, adsb_srcs: list[str]) -> list[str]:
+def adsb_srcs_for_test_source(
+    src: str,
+    adsb_srcs: list[ADSBSource],
+) -> list[ADSBSource]:
     if src in ("algorithm", "algorithm-no-airports"):
         return adsb_srcs
-    return [src]
+    return [DEFAULT_ADSB_SRC_FOR_FLIGHTS]
 
 def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
     metadata_cols = {
@@ -183,7 +186,7 @@ def read_adsb_for_matching(
     df_flights: pl.DataFrame,
     target_date: date,
     *,
-    adsb_src: str = DEFAULT_ADSB_SRC_FOR_MATCHING,
+    adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_MATCHING,
     pia_or_american_ladd_only: bool,
 ) -> pl.DataFrame:
     return read_adsb(
@@ -199,8 +202,8 @@ def main( # TODO: Maybe rename to run_evaluation
     test_src: str | list[str],
     gold_src: str | list[str],
     test_dates: date | list[date],
-    adsb_src: str | list[str] = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
-    matching_adsb_src: str = DEFAULT_ADSB_SRC_FOR_MATCHING,
+    adsb_src: ADSBSource | list[ADSBSource] = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    matching_adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_MATCHING,
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
@@ -215,7 +218,10 @@ def main( # TODO: Maybe rename to run_evaluation
     if isinstance(gold_src, str):
         gold_src = [gold_src]
     if isinstance(adsb_src, str):
-        adsb_src = [adsb_src]
+        adsb_src = [ADSBSource(adsb_src)]
+    else:
+        adsb_src = [ADSBSource(source) for source in adsb_src]
+    matching_adsb_src = ADSBSource(matching_adsb_src)
     if isinstance(test_dates, date):
         test_dates = [test_dates]
 
@@ -330,8 +336,19 @@ def main( # TODO: Maybe rename to run_evaluation
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-src", nargs="+", default=["adsbx"])
-    parser.add_argument("--adsb-src", nargs="+", default=[DEFAULT_ADSB_SRC_FOR_FLIGHTS])
-    parser.add_argument("--matching-adsb-src", default=DEFAULT_ADSB_SRC_FOR_MATCHING)
+    parser.add_argument(
+        "--adsb-src",
+        nargs="+",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=[DEFAULT_ADSB_SRC_FOR_FLIGHTS],
+    )
+    parser.add_argument(
+        "--matching-adsb-src",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=DEFAULT_ADSB_SRC_FOR_MATCHING,
+    )
     parser.add_argument("--gold-src", nargs="+", default=["bts"])
     date_group = parser.add_mutually_exclusive_group()
     date_group.add_argument("--test-dates", nargs="+", dest="test_dates")

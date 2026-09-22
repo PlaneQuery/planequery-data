@@ -14,7 +14,7 @@ import polars as pl
 
 from data_engineering.adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.adsb.read_adsb import (
-    ADSB_SOURCES,
+    ADSBSource,
     ensure_adsb_source_data,
     get_icaos_in_adsb,
     read_adsb,
@@ -816,8 +816,9 @@ def process_icaos(
     day_end: datetime,
     icaos: list[str],
     no_airports_model: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
 ) -> pl.DataFrame:
+    source = ADSBSource(source)
     read_start, read_end = _source_read_window(day_start, day_end)
     df_adsb = read_adsb(read_start, read_end, icaos=icaos, source=source)
     segments = _segment_adsb_df(df_adsb)
@@ -854,10 +855,11 @@ def main(
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
     ground_truth_only: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     max_workers: int = _number_of_workers_default(),
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
+    source = ADSBSource(source)
     print(f"number of workers: {max_workers}")
 
     day_start, day_end = _day_bounds(target_date)
@@ -893,7 +895,7 @@ def main(
         ]
     flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
-    if source == "adsblol":
+    if source == ADSBSource.ADSBLOL:
         remove_adsb_parquet_days(created_parquet_days)
     return flights_df
 
@@ -904,7 +906,7 @@ def run_main(
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
     ground_truth_only: bool = False,
-    source: str = "adsblol",
+    source: ADSBSource = ADSBSource.ADSBLOL,
     max_workers: int = os.cpu_count() or 1,
     no_airports_model: bool = False,
 ) -> pl.DataFrame:
@@ -983,8 +985,9 @@ def cli() -> None:
     )
     parser.add_argument(
         "--source",
-        choices=ADSB_SOURCES,
-        default="adsblol",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=ADSBSource.ADSBLOL,
         help="ADS-B data provider to read (default: adsblol)",
     )
     parser.add_argument(
