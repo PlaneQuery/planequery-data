@@ -50,7 +50,9 @@ def current_commit_hash() -> str:
     return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
 
 def date_range(start_date: date, end_date: date) -> Iterator[date]:
+    """Yield dates in the half-open interval ``[start_date, end_date)``."""
+    assert end_date > start_date
     current_date = start_date
-    while current_date <= end_date:
+    while current_date < end_date:
         yield current_date
         current_date += timedelta(days=1)
