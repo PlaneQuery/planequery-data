@@ -3,11 +3,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
+from flights.providers.bts import get_bts_flights_for_day
 from data_engineering.filters import pia_or_american_ladd
 
-from data_engineering.flights.flight_type import ALGORITHM_ADSB_SOURCES, get_flights
-from data_engineering.eurocontrol.read import get_eurocontrol_flights
+from flights.algorithm import get_flights as get_algorithm_flights
+from flights.flight_type import with_flight_schema_columns
+from flights.providers.eurocontrol import get_eurocontrol_flights
 from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.evaluation.consecutive_airports import (
@@ -21,13 +22,14 @@ from flights.ground_truth.bts_and_sfdps_to_gold import (
 )
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
 from planequery_data.utils import current_commit_hash
-from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
-from data_engineering.flights.mike import get_mike_flights_for_day
+from flights.providers.sfdps import get_sfdps_flights_day
+from flights.providers.mike import get_mike_flights_for_day
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
 DEFAULT_ADSB_SRC_FOR_MATCHING = ADSBSource.ADSBX
 DEFAULT_ADSB_SRC_FOR_FLIGHTS = ADSBSource.ADSBLOL
+ALGORITHM_ADSB_SOURCES = tuple(ADSBSource)
 
 
 def default_stats_path() -> Path:
@@ -69,9 +71,6 @@ def is_helicopter_expr(
 
 
 def read_fr24_flights(target_date: date) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import (
-    with_flight_schema_columns,
-    )
     return with_flight_schema_columns(
         pl.read_parquet(fr24_flights_parquet_path(target_date))
     )
@@ -79,35 +78,8 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
 def get_algorithm_flights_for_adsb_src(
     target_date: date,
     adsb_src: ADSBSource,
-    no_airports_model: bool = False,
 ) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import flights_algorithm_output_path
-    from flights_algorithm.main import run_main
-
-    output_path = flights_algorithm_output_path(target_date, adsb_src=adsb_src, no_airports_model=no_airports_model)
-    if output_path.exists():
-        return get_flights(
-            target_date,
-            no_airports_model=no_airports_model,
-            adsb_src=adsb_src,
-        )
-
-    label = "algorithm (no airports model)" if no_airports_model else "algorithm"
-    print(f"Missing {label} {adsb_src} flights for {target_date}; generating at {output_path}")
-    run_main(
-        target_date=target_date,
-        no_airports_model=no_airports_model,
-        source=adsb_src,
-    )
-    if not output_path.exists():
-        raise FileNotFoundError(
-            f"Failed to generate {label} {adsb_src} flights for {target_date}: {output_path}"
-        )
-    return get_flights(
-        target_date,
-        no_airports_model=no_airports_model,
-        adsb_src=adsb_src,
-    )
+    return get_algorithm_flights(target_date, adsb_src)
 
 
 def source_flights_reader(
@@ -115,15 +87,15 @@ def source_flights_reader(
     adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
 ):
     if src == "adsbx":
-        return lambda target_date: get_flights(target_date, algorithm="adsbx")
-    if src == "algorithm":
+        from data_engineering.adsbx.get_flights import get_adsbx_flights_for_day
+
+        return lambda target_date: with_flight_schema_columns(
+            get_adsbx_flights_for_day(target_date)
+        )
+    if src in ("algorithm", "algorithm-nearest", "algorithm-no-airports"):
         if adsb_src in ALGORITHM_ADSB_SOURCES:
             return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src)
-        raise ValueError(f"algorithm source does not support adsb_src={adsb_src!r}")
-    if src == "algorithm-no-airports":
-        if adsb_src in ALGORITHM_ADSB_SOURCES:
-            return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src, no_airports_model=True)
-        raise ValueError(f"algorithm-no-airports source does not support adsb_src={adsb_src!r}")
+        raise ValueError(f"algorithm-nearest does not support adsb_src={adsb_src!r}")
     if src == "sfdps":
         return get_sfdps_flights_day
     if src == "bts":
@@ -131,7 +103,11 @@ def source_flights_reader(
     if src == "ground_truth":
         return get_ground_truth_flights_for_day
     if src =="opensky":
-        return lambda target_date: get_flights(target_date, algorithm="opensky")
+        from data_engineering.opensky.create_flights_from_trino_parquets import read_opensky_flights
+
+        return lambda target_date: with_flight_schema_columns(
+            read_opensky_flights(target_date)
+        )
     if src == "fr24":
         return read_fr24_flights
     if src == "eurocontrol":
@@ -147,7 +123,7 @@ def adsb_srcs_for_test_source(
     src: str,
     adsb_srcs: list[ADSBSource],
 ) -> list[ADSBSource]:
-    if src in ("algorithm", "algorithm-no-airports"):
+    if src in ("algorithm", "algorithm-nearest", "algorithm-no-airports"):
         return adsb_srcs
     return [DEFAULT_ADSB_SRC_FOR_FLIGHTS]
 
@@ -306,7 +282,7 @@ def main( # TODO: Maybe rename to run_evaluation
                         )
                     stats_adsb_src = (
                         source_adsb_src
-                        if src in ("algorithm", "algorithm-no-airports")
+                        if src in ("algorithm", "algorithm-nearest", "algorithm-no-airports")
                         else None
                     )
                     rows.append({

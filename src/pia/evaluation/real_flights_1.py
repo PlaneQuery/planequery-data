@@ -3,9 +3,9 @@ from pathlib import Path
 import sys
 
 import polars as pl
-from data_engineering.flights.flight_type import get_flights
+from flights.algorithm import get_flights_range
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
-from data_engineering.flights.flight_type import flights_df_to_flights
+from flights.flight_type import flights_df_to_flights
 from data_engineering.utils import OUTPUT_DIR
 from data_engineering.ground_control import load_ground_control_mappings
 from pia.main import run_pia_algorithm
@@ -17,7 +17,7 @@ DF_FLIGHTS_PATH = OUTPUT_DIR / "tmp" / f"real_flights_1_df_flights_{start_date}_
 if DF_FLIGHTS_PATH.exists():
     df_flights = pl.read_parquet(DF_FLIGHTS_PATH)
 else:
-    df_flights = get_flights(start_date, end_date)
+    df_flights = get_flights_range(start_date, end_date)
     df_flights.write_parquet(DF_FLIGHTS_PATH)
 
 

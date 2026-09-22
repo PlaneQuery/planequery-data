@@ -1,5 +1,6 @@
 from datetime import date
-from data_engineering.flights.flight_type import flights_df_to_flights, get_flights
+from flights.algorithm import get_flights_range
+from flights.flight_type import flights_df_to_flights
 import polars as pl
 from airports.airport_lookup import AirportLookup
 from planequery_data.utils import haversine
@@ -81,7 +82,7 @@ def get_ladd_pia_candidates(df: pl.DataFrame) -> set[str]:
 
 check_icaos = {"aa314f", "a029e0", "a81b13", "a835af"}
 if __name__ == "__main__":
-    df = get_flights(date(2025, 1, 1), end_date = date(2026, 1, 1))
+    df = get_flights_range(date(2025, 1, 1), date(2026, 1, 1))
     df = df.filter((pl.col("ladd")) & (pl.col("category") != "A7"))
     df = df.unique(subset=["icao", "takeoff_time"])
     total_count = df.get_column("icao").n_unique()

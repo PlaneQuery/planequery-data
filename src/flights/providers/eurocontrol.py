@@ -1,4 +1,5 @@
 import calendar
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -7,8 +8,8 @@ import polars as pl
 from airports.airport_lookup import AirportLookup
 from data_engineering.openairframes.read import get_openairframes_snapshot
 from data_engineering.utils import OUTPUT_DIR
-
-EUROCONTROL_FLIGHTS_VERSION = "v1"
+from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_type import with_flight_schema_columns
 
 EUROCONTROL_COLUMNS = [
     "AC Registration",
@@ -35,25 +36,11 @@ def eurocontrol_raw_flights_parquet_path(target_date: date) -> Path:
         / f"Flights_{month_start:%Y%m%d}_{month_end:%Y%m%d}.csv"
     )
 
-def eurocontrol_flights_parquet_path(target_date: date) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "flights"
-        / "eurocontrol"
-        / f"year={target_date.year}"
-        / f"month={target_date.month:02d}"
-        / f"day={target_date.day:02d}"
-        / "data.parquet"
-    )
-
 def datetime_expr(column_name: str, alias: str) -> pl.Expr:
     return pl.col(column_name).str.strptime(pl.Datetime("ms"), strict=False).alias(alias)
 
 
-def get_eurocontrol_flights(target_date: date, use_cache = False) -> pl.DataFrame:
-    if use_cache and eurocontrol_flights_parquet_path(target_date).exists():
-        return pl.read_parquet(eurocontrol_flights_parquet_path(target_date))
+def create_eurocontrol_flights(target_date: date) -> pl.DataFrame:
     df = pl.read_csv(eurocontrol_raw_flights_parquet_path(target_date))
     df = (
         df.select(EUROCONTROL_COLUMNS)
@@ -65,10 +52,6 @@ def get_eurocontrol_flights(target_date: date, use_cache = False) -> pl.DataFram
         )
     )
     df = df.filter(pl.col("takeoff_time").dt.date() == target_date)
-    df_openairframes = get_openairframes_snapshot(at_date=target_date).select(
-        "registration",
-        "icao",
-    )
     df_openairframes = (
     get_openairframes_snapshot(at_date=target_date)
     .select("registration", "icao")
@@ -116,7 +99,24 @@ def get_eurocontrol_flights(target_date: date, use_cache = False) -> pl.DataFram
         "aircraft_type",
         "owner",
     )
-    path = eurocontrol_flights_parquet_path(target_date)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(path)
-    return df
+    return with_flight_schema_columns(df)
+
+
+@dataclass(frozen=True)
+class EurocontrolFlightSource(NonADSBFlightSource):
+    name: str = "eurocontrol"
+    version: int = 1
+
+    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
+        return create_eurocontrol_flights(dt)
+
+
+def get_eurocontrol_flights(
+    target_date: date,
+    use_cache: bool = True,
+) -> pl.DataFrame:
+    return get_flights(
+        EurocontrolFlightSource(),
+        target_date,
+        use_cache=use_cache,
+    )

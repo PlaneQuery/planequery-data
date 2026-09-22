@@ -10,7 +10,8 @@ from itertools import groupby
 from datetime import date
 from airports.airport_lookup import AirportLookup
 from data_engineering.filters import pia_or_american_ladd_icao
-from data_engineering.flights.flight_type import Flight, FlightIndex, flights_df_to_flights, get_flights
+from flights.algorithm import get_flights_range
+from flights.flight_type import Flight, FlightIndex, flights_df_to_flights
 from pia.check_mappings import check_mappings
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 from datetime import datetime
@@ -310,7 +311,7 @@ def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: 
 if __name__ == "__main__":
     start_date = date(2026, 6, 1)
     end_date = date(2026, 7, 1)
-    df_flights = get_flights(start_date, end_date)
+    df_flights = get_flights_range(start_date, end_date)
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     df_flights = df_flights.filter(pia_or_american_ladd_icao())
     flights = flights_df_to_flights(df_flights)

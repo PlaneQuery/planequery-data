@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -5,7 +6,8 @@ import polars as pl
 from timezonefinder import TimezoneFinder
 
 from airports.airport_lookup import AirportLookup
-from data_engineering.flights.flight_type import with_flight_schema_columns
+from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_type import with_flight_schema_columns
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
 
@@ -237,16 +239,20 @@ def create_flights_from_bts(target_date: date) -> pl.DataFrame:
     return _remove_overlapping_flights(daily_df, target_date)
 
 
+@dataclass(frozen=True)
+class BTSFlightSource(NonADSBFlightSource):
+    name: str = "bts"
+    version: int = 4
+
+    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
+        return create_flights_from_bts(dt)
+
+
 def get_bts_flights_for_day(
     target_date: date,
     use_cache: bool = True,
 ) -> pl.DataFrame:
     """Compatibility wrapper around the canonical flight-source reader."""
-    from data_engineering.flights.flight_source import (
-        BTSFlightSource,
-        get_flights,
-    )
-
     return get_flights(
         BTSFlightSource(),
         target_date,

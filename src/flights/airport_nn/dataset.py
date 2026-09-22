@@ -5,7 +5,7 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import IterableDataset, get_worker_info
 
-from flights_airport_nn.features.features import (
+from flights.airport_nn.features import (
     ALL_FEATURE_CONFIG,
     FeatureConfig,
     create_features_for_day,

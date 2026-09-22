@@ -3,16 +3,16 @@ import os
 import torch
 from torch.utils.data import DataLoader
 
-from flights_airport_nn.dataset import (
+from flights.airport_nn.dataset import (
     AirportCandidateDataset,
     collate_airport_candidates,
 )
-from flights_airport_nn.utils import device, model_folder_path
-from flights_airport_nn.features.features import (
+from flights.airport_nn.utils import device, model_folder_path
+from flights.airport_nn.features import (
     ALL_FEATURE_CONFIG,
     FeatureConfig,
 )
-from flights_airport_nn.model import AirportGRU
+from flights.airport_nn.model import AirportGRU
 
 
 def run_train(

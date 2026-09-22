@@ -145,8 +145,8 @@ def test_flight_evaluation_matrix_meets_recorded_bounds(expected: dict[str, str]
 
 def test_algorithm_flights_recreate_meets_daily_bounds():
     dt = date(2026,3,1)
-    from flights_algorithm.main import run_main
-    run_main(target_date = dt)
+    from flights.algorithm import write_flights_for_day
+    write_flights_for_day(target_date=dt)
     results, _ = main(test_src="algorithm", gold_src="sfdps", test_dates=dt, pia_or_american_ladd_only=True)
     assert len(results) == 1
     assert_stats_meet_bounds(df_flights_comparison_stats(results[0]), DAILY_STATS_BOUNDS[dt])
@@ -154,9 +154,9 @@ def test_algorithm_flights_recreate_meets_daily_bounds():
 
 def test_algorithm_flights_recreate_with_adsbx_meets_daily_bounds():
     dt = date(2026, 3, 1)
-    from flights_algorithm.main import run_main
+    from flights.algorithm import write_flights_for_day
 
-    run_main(target_date=dt, source=ADSBSource.ADSBX)
+    write_flights_for_day(target_date=dt, adsb_src=ADSBSource.ADSBX)
     results, _ = main(
         test_src="algorithm",
         gold_src="sfdps",

@@ -2,7 +2,8 @@
 from datetime import date, datetime, timedelta
 import polars as pl
 from data_engineering.adsb.read_adsb import read_adsb, read_icaos_from_adsb
-from data_engineering.flights.flight_type import get_flights, flights_df_to_flights
+from flights.algorithm import get_flights
+from flights.flight_type import flights_df_to_flights
 from pia.simulator.main import simulate_pia_flights
 from flights.flights_match_adsb import get_matching_icaos_in_flights
 

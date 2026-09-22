@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import polars as pl
 
-from data_engineering.flights import sfdps_to_flights as sfdps
+from flights.providers import sfdps
 
 
 class FakeAirportLookup:
