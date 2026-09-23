@@ -6,6 +6,7 @@ from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation import evaluation
 from flights.flight_type import Flight, flights_to_flights_df
+from flights.sources import BTS_SOURCE
 
 
 def test_algorithm_nn_source_uses_checkpoint(
@@ -39,23 +40,43 @@ def test_algorithm_nn_source_uses_checkpoint(
 
     monkeypatch.setattr(evaluation, "get_flights", read_flights)
 
+    source = AlgorithmNNFlightSource(model_path=checkpoint)
     reader = evaluation.source_flights_reader(
-        "algorithm-nn",
+        source,
         adsb_src=ADSBSource.ADSBLOL,
-        airport_nn_model_path=checkpoint,
     )
     result = reader(day)
     assert result["takeoff_airport_ident"].to_list() == ["KAAA", None]
     assert result["landing_airport_ident"].to_list() == ["KBBB", None]
     assert result.columns == segments.columns
     assert evaluation.adsb_srcs_for_test_source(
-        "algorithm-nn", [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
+        source, [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
     ) == [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
 
 
 def test_algorithm_nn_requires_checkpoint(tmp_path):
     reader = evaluation.source_flights_reader(
-        "algorithm-nn", airport_nn_model_path=tmp_path / "missing.pt"
+        AlgorithmNNFlightSource(model_path=tmp_path / "missing.pt")
     )
     with pytest.raises(FileNotFoundError, match="--airport-nn-model"):
         reader(date(2026, 3, 1))
+
+
+def test_canonical_name_resolves_to_flight_source(monkeypatch):
+    day = date(2026, 3, 1)
+    calls = []
+
+    def read_flights(source, target_date, adsb_source):
+        calls.append((source, target_date, adsb_source))
+        return flights_to_flights_df([])
+
+    monkeypatch.setattr(evaluation, "get_flights", read_flights)
+
+    evaluation.source_flights_reader(BTS_SOURCE.name)(day)
+
+    assert calls == [(BTS_SOURCE, day, None)]
+    assert evaluation.adsb_srcs_for_test_source(
+        BTS_SOURCE,
+        [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
+    ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+    assert "fr24" not in evaluation.SOURCE_NAMES
