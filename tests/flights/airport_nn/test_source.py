@@ -37,7 +37,12 @@ def test_algorithm_nn_segments_then_replaces_airports(monkeypatch, tmp_path):
         "create_flights_for_day",
         lambda self, dt, df: segmented,
     )
-    monkeypatch.setattr(model, "load_model", lambda path: "model")
+    model_loads = []
+    monkeypatch.setattr(
+        model,
+        "load_model",
+        lambda path: model_loads.append(path) or "model",
+    )
     monkeypatch.setattr(
         inference,
         "predict_flights",
@@ -45,3 +50,5 @@ def test_algorithm_nn_segments_then_replaces_airports(monkeypatch, tmp_path):
     )
 
     assert source.create_flights_for_day(date(2026, 3, 1), adsb).equals(predicted)
+    assert source.create_flights_for_day(date(2026, 3, 1), adsb).equals(predicted)
+    assert model_loads == [tmp_path / "model.pt"]
