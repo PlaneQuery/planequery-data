@@ -34,7 +34,12 @@ def february(day):
 @lru_cache(maxsize=1)
 def catalog():
     with (OUTPUT_DIR / "data/raw/ourairports/airports.csv").open() as f:
-        return {r["ident"]: r for r in csv.DictReader(f)}
+        airports = {}
+        for row in csv.DictReader(f):
+            row["lat"] = row.pop("latitude_deg")
+            row["lon"] = row.pop("longitude_deg")
+            airports[row["ident"]] = row
+        return airports
 
 
 def fingerprint(path):
@@ -155,7 +160,7 @@ def ground_support(messages, ident, boundary):
         np.radians(points["lon"].to_numpy()),
     )
     alat, alon = np.radians(
-        [float(airport["latitude_deg"]), float(airport["longitude_deg"])]
+        [float(airport["lat"]), float(airport["lon"])]
     )
     distance = 12742 * np.arcsin(
         np.sqrt(
