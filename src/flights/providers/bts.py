@@ -117,8 +117,8 @@ def ident_to_timezone_mapping():
     ident_to_timezone = {}
     for ident, airport in airport_lookup.ident_index.items():
         tz = tf.timezone_at(
-            lng=airport.longitude_deg,
-            lat=airport.latitude_deg,
+            lng=airport.lon,
+            lat=airport.lat,
         )
         if tz:
             ident_to_timezone[ident] = tz
