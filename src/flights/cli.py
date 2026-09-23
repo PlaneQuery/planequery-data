@@ -6,6 +6,7 @@ from typing import Sequence
 
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.algorithm import AlgorithmNearestFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource
 from flights.flight_source import (
     ADSBFlightSource,
     FlightSource,
@@ -21,6 +22,7 @@ from planequery_data.utils import date_range
 
 FLIGHT_SOURCES = (
     AlgorithmNearestFlightSource(),
+    AlgorithmNNFlightSource(),
     BTSFlightSource(),
     EurocontrolFlightSource(),
     MikeFlightSource(),
@@ -57,7 +59,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=ADSBSource,
         choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
-        help="ADS-B provider used by algorithm-nearest (default: adsblol).",
+        help="ADS-B provider used by ADS-B flight sources (default: adsblol).",
+    )
+    parser.add_argument(
+        "--airport-nn-model",
+        type=Path,
+        help="Checkpoint used by algorithm-nn.",
     )
     parser.add_argument(
         "--mike-input",
@@ -73,6 +80,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.mike_input is not None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)
+    if args.airport_nn_model is not None:
+        assert isinstance(source, AlgorithmNNFlightSource)
+        source = replace(source, model_path=args.airport_nn_model)
     write_flights_range(
         args.start_date,
         args.end_date,
