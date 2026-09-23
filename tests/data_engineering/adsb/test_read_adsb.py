@@ -91,6 +91,6 @@ def test_read_adsb_applies_opensky_preprocessing_after_icao_filter(monkeypatch):
     ]
 
 
-def test_read_adsb_rejects_unknown_source():
-    with pytest.raises(ValueError, match="Unknown ADS-B source"):
+def test_read_adsb_requires_adsb_source_enum():
+    with pytest.raises(TypeError, match="source must be an ADSBSource"):
         read_adsb_module.read_adsb(date(2026, 1, 2), source="unknown")

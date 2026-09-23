@@ -7,12 +7,12 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from flights import algorithm
+from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn.features import COLUMNS
 from flights.airport_nn.inference import predict_flights
 from flights.airport_nn.model import load_model
 from flights.airport_nn.source import DEFAULT_MODEL_PATH, AlgorithmNNFlightSource
-from flights.flight_source import flight_path
+from flights.flight_source import flight_path, get_flights
 
 
 def derive_day(
@@ -25,7 +25,7 @@ def derive_day(
     source = ADSBSource(source)
     assert batch_aircraft > 0
     if flights is None:
-        flights = algorithm.get_flights(day, source)
+        flights = get_flights(AlgorithmNearestFlightSource(), day, source)
 
     aircraft = flights.get_column("icao").drop_nulls().unique().sort().to_list()
     model = load_model(Path(model_path))

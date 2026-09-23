@@ -3,8 +3,8 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from data_engineering.adsb.read_adsb import ADSBSource
+from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation import evaluation
-from flights.airport_nn import derive_day
 from flights.flight_type import Flight, flights_to_flights_df
 
 
@@ -23,21 +23,21 @@ def test_algorithm_nn_source_uses_checkpoint(
         "def456", later, later + timedelta(hours=1), "OLD_START", "OLD_END"
     )
     segments = flights_to_flights_df([original, missing])
-    def derive(target_date, source, model_path):
+
+    def read_flights(source, target_date, adsb_source):
+        assert isinstance(source, AlgorithmNNFlightSource)
         assert target_date == day
-        assert source == ADSBSource.ADSBLOL
-        assert model_path == checkpoint
+        assert adsb_source == ADSBSource.ADSBLOL
+        assert source.model_path == checkpoint
         predicted = Flight(
             "abc123", start, start + timedelta(hours=1), "KAAA", "KBBB"
         )
         unavailable = Flight(
             "def456", later, later + timedelta(hours=1), None, None
         )
-        path = tmp_path / "flights.parquet"
-        flights_to_flights_df([predicted, unavailable]).write_parquet(path)
-        return path
+        return flights_to_flights_df([predicted, unavailable])
 
-    monkeypatch.setattr(derive_day, "derive_day", derive)
+    monkeypatch.setattr(evaluation, "get_flights", read_flights)
 
     reader = evaluation.source_flights_reader(
         "algorithm-nn",

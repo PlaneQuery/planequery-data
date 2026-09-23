@@ -4,10 +4,9 @@ from pathlib import Path
 
 import polars as pl
 
-from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import OUTPUT_DIR
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.flight_source import ADSBFlightSource, get_flights
+from flights.flight_source import ADSBFlightSource
 
 
 DEFAULT_MODEL_PATH = (
@@ -41,17 +40,3 @@ class AlgorithmNNFlightSource(ADSBFlightSource):
 
         flights = AlgorithmNearestFlightSource().create_flights_for_day(dt, df_adsb)
         return predict_flights(flights, df_adsb, load_model(self.model_path))
-
-
-def get_algorithm_nn_flights(
-    target_date: date,
-    adsb_source: ADSBSource = ADSBSource.ADSBLOL,
-    model_path: Path = DEFAULT_MODEL_PATH,
-    use_cache: bool = True,
-) -> pl.DataFrame:
-    return get_flights(
-        AlgorithmNNFlightSource(model_path=model_path),
-        target_date,
-        adsb_source,
-        use_cache=use_cache,
-    )

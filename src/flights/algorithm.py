@@ -7,7 +7,11 @@ from typing import Sequence
 import polars as pl
 
 from data_engineering.adsb.read_adsb import ADSBSource
-from flights.flight_source import ADSBFlightSource, flight_path
+from flights.flight_source import (
+    ADSBFlightSource,
+    flight_path,
+    get_flights as get_source_flights,
+)
 from flights.segmentation import algorithm as segmentation
 from planequery_data.utils import date_range
 
@@ -31,16 +35,6 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
         return segmentation.create_flights_from_adsb(df_adsb, dt)
 
 
-def get_flights(
-    target_date: date,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-) -> pl.DataFrame:
-    path = flight_path(AlgorithmNearestFlightSource(), target_date, adsb_src)
-    if path.exists():
-        return pl.read_parquet(path)
-    return write_flights_for_day(target_date=target_date, adsb_src=adsb_src)
-
-
 def get_flights_range(
     start_date: date,
     end_date: date,
@@ -48,7 +42,11 @@ def get_flights_range(
 ) -> pl.DataFrame:
     assert end_date > start_date
     return pl.concat([
-        get_flights(target_date, adsb_src)
+        get_source_flights(
+            AlgorithmNearestFlightSource(),
+            target_date,
+            adsb_src,
+        )
         for target_date in date_range(start_date, end_date)
     ])
 

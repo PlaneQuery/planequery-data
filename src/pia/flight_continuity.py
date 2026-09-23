@@ -43,10 +43,10 @@ def make_flights_continuous(flights: list[Flight]):
             continue
 
         distance_km = haversine(
-            takeoff_airport.lat,
-            takeoff_airport.lon,
-            landing_airport.lat,
-            landing_airport.lon,
+            takeoff_airport.latitude_deg,
+            takeoff_airport.longitude_deg,
+            landing_airport.latitude_deg,
+            landing_airport.longitude_deg,
         )
         if distance_km > 100 and not takeoff_in_island and not landing_in_island:
             teleports.append((previous_flight, flight))

@@ -3,6 +3,7 @@ from datetime import date
 import polars as pl
 
 import flights.providers.eurocontrol as eurocontrol_read
+from flights.flight_source import get_flights
 
 
 def test_eurocontrol_processing():
@@ -12,7 +13,11 @@ def test_eurocontrol_processing():
         eurocontrol_read.datetime_expr("ACTUAL OFF BLOCK TIME", "takeoff_time")
     ).filter(pl.col("takeoff_time").dt.date() == dt)
 
-    flights = eurocontrol_read.get_eurocontrol_flights(dt, use_cache=False)
+    flights = get_flights(
+        eurocontrol_read.EurocontrolFlightSource(),
+        dt,
+        use_cache=False,
+    )
 
     assert flights.height <= raw.height
     assert flights.get_column("takeoff_time").dt.date().eq(dt).all()

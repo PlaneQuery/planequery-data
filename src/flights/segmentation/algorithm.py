@@ -520,7 +520,12 @@ def _airport_distance_to_message(
     airport,
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> float:
-    return haversine_km(message.lat, message.lon, airport.lat, airport.lon)
+    return haversine_km(
+        message.lat,
+        message.lon,
+        airport.latitude_deg,
+        airport.longitude_deg,
+    )
 
 
 def _airport_guess_for_message(
@@ -554,8 +559,8 @@ def _airport_guess_for_message(
     return AirportIdentGuess(
         ident=best_airport.ident,
         distance_km=_airport_distance_to_message(best_airport, message),
-        lat=best_airport.lat,
-        lon=best_airport.lon,
+        lat=best_airport.latitude_deg,
+        lon=best_airport.longitude_deg,
         elevation_ft=best_airport.elevation_ft,
     )
 
@@ -586,8 +591,8 @@ def _airport_guess_for_ident(
     return AirportIdentGuess(
         ident=ident,
         distance_km=_airport_distance_to_message(airport, message),
-        lat=airport.lat,
-        lon=airport.lon,
+        lat=airport.latitude_deg,
+        lon=airport.longitude_deg,
         elevation_ft=airport.elevation_ft,
     )
 
@@ -733,12 +738,13 @@ def _segment_adsb_df(
 
 
 def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
-    from flights.providers.bts import get_bts_flights_for_day
-    from flights.providers.sfdps import get_sfdps_flights_day
+    from flights.flight_source import get_flights
+    from flights.providers.bts import BTSFlightSource
+    from flights.providers.sfdps import SFDPSFlightSource
 
     source_icaos = set()
-    for flights_reader in (get_sfdps_flights_day, get_bts_flights_for_day):
-        df_flights = flights_reader(target_date)
+    for source in (SFDPSFlightSource(), BTSFlightSource()):
+        df_flights = get_flights(source, target_date)
         source_icaos.update(
             df_flights.get_column("icao").drop_nulls().cast(pl.String).unique().to_list()
         )
