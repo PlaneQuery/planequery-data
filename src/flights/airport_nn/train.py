@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from flights.airport_nn.data import CACHE, EUROPE_CACHE, TYPES, fingerprint
+from flights.airport_nn.data import CACHE, TYPES, fingerprint
 from flights.airport_nn.evaluate import (
     files_for,
     iter_parts,
@@ -23,16 +23,13 @@ from flights.airport_nn.source import DEFAULT_MODEL_PATH
 
 TRAIN_DAYS = [date(2026, 2, i) for i in range(1, 21)]
 VALIDATION_DAYS = [date(2026, 2, i) for i in range(21, 28)]
-EUROPE_VALIDATION_DAYS = [date(2024, 6, 12), date(2024, 6, 15)]
 BUFFER_DAYS = [date(2026, 2, 28)]
 TEST_DAYS = [date(2026, 3, 1), date(2024, 6, 1)]
 
 
 def selection_loss(losses):
-    """Equal regions, then equal days: high US traffic cannot swamp Europe."""
-    us = np.mean([losses[str(d)] for d in VALIDATION_DAYS])
-    europe = np.mean([losses[str(d)] for d in EUROPE_VALIDATION_DAYS])
-    loss = float((us + europe) / 2)
+    """Average daily validation loss so high-traffic days cannot dominate."""
+    loss = float(np.mean([losses[str(d)] for d in VALIDATION_DAYS]))
     if not np.isfinite(loss):
         raise ValueError("Every validation day must have usable labels and finite loss")
     return loss
@@ -44,10 +41,8 @@ def train(
     epochs=10,
     batch_size=128,
     seed=42,
-    europe_cache=EUROPE_CACHE,
     train_days=TRAIN_DAYS,
     validation_days=VALIDATION_DAYS,
-    europe_validation_days=EUROPE_VALIDATION_DAYS,
 ):
     if epochs < 1 or batch_size < 1:
         raise ValueError("Epochs and batch size must be positive")
@@ -59,29 +54,19 @@ def train(
         )
     train_days = list(train_days)
     validation_days = list(validation_days)
-    europe_validation_days = list(europe_validation_days)
     default_split = (
         train_days == TRAIN_DAYS
         and validation_days == VALIDATION_DAYS
-        and europe_validation_days == EUROPE_VALIDATION_DAYS
     )
     buffer_days = BUFFER_DAYS if default_split else []
     test_days = TEST_DAYS if default_split else []
-    splits = (
-        train_days
-        + validation_days
-        + europe_validation_days
-        + buffer_days
-        + test_days
-    )
+    splits = train_days + validation_days + buffer_days + test_days
     if len(splits) != len(set(splits)):
         raise ValueError(
             "Training, validation, buffer and final tests must be disjoint"
         )
     paths = {"train": files_for(cache, train_days)}
-    validation_paths = {str(d): files_for(cache, [d]) for d in validation_days} | {
-        str(d): files_for(europe_cache, [d]) for d in europe_validation_days
-    }
+    validation_paths = {str(d): files_for(cache, [d]) for d in validation_days}
     paths.update(validation_paths)
     # Final tests are run separately only after publishing the selected checkpoint.
     spec = {
@@ -89,17 +74,11 @@ def train(
         "label_sources": ["SFDPS", "BTS"],
         "initialization": "random (fixed nearest-distance prior)",
         "train_dates": list(map(str, train_days)),
-        "validation_dates": list(
-            map(str, validation_days + europe_validation_days)
-        ),
-        "validation_regions": {
-            "US": list(map(str, validation_days)),
-            "Europe": list(map(str, europe_validation_days)),
-        },
-        "validation_label_sources": ["SFDPS", "BTS", "EUROCONTROL"],
+        "validation_dates": list(map(str, validation_days)),
+        "validation_label_sources": ["SFDPS", "BTS"],
         "buffer_dates": list(map(str, buffer_days)),
         "test_dates": list(map(str, test_days)),
-        "selection": "0.5 * mean US daily weighted CE + 0.5 * mean Europe daily weighted CE; weights large=1 medium=2 small=4; retrieval misses retained in accuracy, excluded from CE",
+        "selection": "mean daily weighted CE; weights large=1 medium=2 small=4; retrieval misses retained in accuracy, excluded from CE",
         "test_exposure": "Both final benchmark dates were evaluated in earlier experiments; fixed benchmarks, not untouched tests",
         "seed": seed,
         "epochs": epochs,
@@ -193,17 +172,7 @@ def train(
             summary[day] = metrics(validation)
             print(f"Epoch {epoch}: validation {day} loss={losses[day]:.6f}", flush=True)
         train_loss = total / count
-        if validation_days and europe_validation_days:
-            loss = float(
-                (
-                    np.mean([losses[str(day)] for day in validation_days])
-                    + np.mean(
-                        [losses[str(day)] for day in europe_validation_days]
-                    )
-                )
-                / 2
-            )
-        elif losses:
+        if losses:
             loss = float(np.mean(list(losses.values())))
         else:
             loss = train_loss
@@ -261,7 +230,6 @@ if __name__ == "__main__":
     parser.add_argument("--cache", type=Path, default=CACHE)
     parser.add_argument("--output", type=Path, default=DEFAULT_MODEL_PATH.parent)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--europe-cache", type=Path, default=EUROPE_CACHE)
     parser.add_argument(
         "--train-dates",
         nargs="+",
@@ -274,21 +242,13 @@ if __name__ == "__main__":
         type=date.fromisoformat,
         default=VALIDATION_DAYS,
     )
-    parser.add_argument(
-        "--europe-validation-dates",
-        nargs="*",
-        type=date.fromisoformat,
-        default=EUROPE_VALIDATION_DAYS,
-    )
     args = parser.parse_args()
     print(
         train(
             args.cache,
             args.output,
             args.epochs,
-            europe_cache=args.europe_cache,
             train_days=args.train_dates,
             validation_days=args.validation_dates,
-            europe_validation_days=args.europe_validation_dates,
         )
     )
