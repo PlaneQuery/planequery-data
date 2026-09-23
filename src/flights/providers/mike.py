@@ -8,7 +8,7 @@ from flights.flight_type import (
     FLIGHT_POLARS_SCHEMA,
     with_flight_schema_columns,
 )
-from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_source import NonADSBFlightSource
 
 
 DEFAULT_INPUT = Path(
@@ -93,15 +93,3 @@ class MikeFlightSource(NonADSBFlightSource):
 
     def create_flights_for_day(self, dt: date) -> pl.DataFrame:
         return create_mike_flights(dt, self.input_csv)
-
-
-def get_mike_flights_for_day(
-    target_date: date,
-    use_cache: bool = True,
-    input_csv: str | Path | None = None,
-) -> pl.DataFrame:
-    return get_flights(
-        MikeFlightSource(input_csv=input_csv),
-        target_date,
-        use_cache=use_cache,
-    )

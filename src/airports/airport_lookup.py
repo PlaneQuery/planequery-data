@@ -86,16 +86,6 @@ class Airport:
         return haversine(self.latitude_deg, self.longitude_deg, latitude, longitude)
 
     @property
-    def lat(self) -> float:
-        """Backward-compatible alias for callers that use short coordinate names."""
-        return self.latitude_deg
-
-    @property
-    def lon(self) -> float:
-        """Backward-compatible alias for callers that use short coordinate names."""
-        return self.longitude_deg
-
-    @property
     def is_in_us_faa_airspace(self) -> bool:
         return self.iso_country in US_FAA_AIRSPACE_ISO_COUNTRIES
 
@@ -307,7 +297,7 @@ class AirportLookup:
         airport = self.get_Airport_from_airport_ident(airport_ident)
         if airport is None:
             return None
-        return (airport.lat, airport.lon)
+        return (airport.latitude_deg, airport.longitude_deg)
 
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_ident(airport_ident)

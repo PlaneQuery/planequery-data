@@ -16,15 +16,6 @@ class ADSBSource(StrEnum):
     ADSBLOL = "adsblol"
     ADSBX = "adsbx"
     OPENSKY = "opensky"
-
-
-def _as_adsb_source(source: ADSBSource | str) -> ADSBSource:
-    try:
-        return ADSBSource(source)
-    except ValueError as exc:
-        raise ValueError(f"Unknown ADS-B source: {source!r}") from exc
-
-
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
 ICAO_BUCKET_COUNT = 8
@@ -344,7 +335,8 @@ def ensure_adsb_source_data(
     source: ADSBSource = ADSBSource.ADSBLOL,
     pia_or_american_ladd_only: bool = False,
 ) -> list[date]:
-    source = _as_adsb_source(source)
+    if not isinstance(source, ADSBSource):
+        raise TypeError(f"source must be an ADSBSource, got {type(source).__name__}")
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -422,12 +414,12 @@ def read_adsb(
     `start`/`end` to read a `[start, end)` range spanning one or more days
     (e.g. a context window around a target day).
 
-    `source` selects the data provider with `ADSBSource`. Legacy string values
-    are normalized at the API boundary. Set `lazy=True` to return a
-    `polars.LazyFrame`; by default the result is collected and returned as a
-    `polars.DataFrame`.
+    `source` selects the data provider with `ADSBSource`. Set `lazy=True` to
+    return a `polars.LazyFrame`; by default the result is collected and returned
+    as a `polars.DataFrame`.
     """
-    source = _as_adsb_source(source)
+    if not isinstance(source, ADSBSource):
+        raise TypeError(f"source must be an ADSBSource, got {type(source).__name__}")
     if isinstance(start, datetime):
         start_dt = start
         end_dt = end if end is not None else start_dt + timedelta(days=1)
@@ -484,7 +476,8 @@ def get_icaos_in_adsb(
     List of distinct ICAOs seen on `current_day` for the given `source`.
     Invalid ICAOs are filtered out for the adsb.lol source.
     '''
-    source = _as_adsb_source(source)
+    if not isinstance(source, ADSBSource):
+        raise TypeError(f"source must be an ADSBSource, got {type(source).__name__}")
     if source is ADSBSource.OPENSKY:
         from data_engineering.opensky.read_opensky_trino_states import get_icaos_in_opensky
         return get_icaos_in_opensky(current_day)

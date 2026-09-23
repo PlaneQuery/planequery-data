@@ -51,8 +51,6 @@ def test_airport_contains_all_csv_fields(airport_lookup):
         "https://en.wikipedia.org/wiki/John_F._Kennedy_International_Airport"
     )
     assert airport.keywords == "Manhattan, New York City, NYC, Idlewild, IDL, KIDL"
-    assert airport.lat == airport.latitude_deg
-    assert airport.lon == airport.longitude_deg
 
 
 def test_blank_airport_csv_fields_are_none(airport_lookup):

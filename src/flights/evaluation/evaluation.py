@@ -4,12 +4,15 @@ from functools import lru_cache
 from pathlib import Path
 import polars as pl
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from flights.providers.bts import get_bts_flights_for_day
 from data_engineering.filters import pia_or_american_ladd
 
-from flights.algorithm import get_flights as get_algorithm_flights
+from flights.algorithm import AlgorithmNearestFlightSource
+from flights.airport_nn.source import (
+    DEFAULT_MODEL_PATH as DEFAULT_AIRPORT_NN_MODEL,
+    AlgorithmNNFlightSource,
+)
+from flights.flight_source import get_flights
 from flights.flight_type import with_flight_schema_columns
-from flights.providers.eurocontrol import get_eurocontrol_flights
 from data_engineering.opdi.read import get_opdi_flights
 from data_engineering.openairframes.read import add_latest_icao_info
 from flights.evaluation.consecutive_airports import (
@@ -22,10 +25,11 @@ from flights.ground_truth.bts_and_sfdps_to_gold import (
     get_ground_truth_flights_for_day,
 )
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
-from flights.airport_nn.source import DEFAULT_MODEL_PATH as DEFAULT_AIRPORT_NN_MODEL
 from planequery_data.utils import current_commit_hash
-from flights.providers.sfdps import get_sfdps_flights_day
-from flights.providers.mike import get_mike_flights_for_day
+from flights.providers.bts import BTSFlightSource
+from flights.providers.eurocontrol import EurocontrolFlightSource
+from flights.providers.mike import MikeFlightSource
+from flights.providers.sfdps import SFDPSFlightSource
 from data_engineering.utils import OUTPUT_DIR
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
@@ -77,35 +81,6 @@ def read_fr24_flights(target_date: date) -> pl.DataFrame:
         pl.read_parquet(fr24_flights_parquet_path(target_date))
     )
 
-def get_algorithm_flights_for_adsb_src(
-    target_date: date,
-    adsb_src: ADSBSource,
-) -> pl.DataFrame:
-    return get_algorithm_flights(target_date, adsb_src)
-
-
-def get_algorithm_nn_flights(
-    target_date: date,
-    adsb_src: ADSBSource,
-    model_path: Path = DEFAULT_AIRPORT_NN_MODEL,
-) -> pl.DataFrame:
-    """Assign airports to algorithm-nearest segments with the selected model."""
-    adsb_src = ADSBSource(adsb_src)
-    if adsb_src not in ALGORITHM_ADSB_SOURCES:
-        raise ValueError(f"algorithm-nn does not support adsb_src={adsb_src!r}")
-    model_path = Path(model_path)
-    if not model_path.is_file():
-        raise FileNotFoundError(
-            f"Airport NN checkpoint not found: {model_path}. "
-            "Pass --airport-nn-model with an existing checkpoint."
-        )
-    from flights.airport_nn.derive_day import derive_day
-
-    return pl.read_parquet(
-        derive_day(target_date, source=adsb_src, model_path=model_path)
-    )
-
-
 def source_flights_reader(
     src: str,
     adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
@@ -119,22 +94,35 @@ def source_flights_reader(
         )
     if src in ("algorithm", "algorithm-nearest", "algorithm-no-airports"):
         if adsb_src in ALGORITHM_ADSB_SOURCES:
-            return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src)
+            return lambda target_date: get_flights(
+                AlgorithmNearestFlightSource(),
+                target_date,
+                adsb_src,
+            )
         raise ValueError(f"algorithm-nearest does not support adsb_src={adsb_src!r}")
     if src == "algorithm-nn":
         if adsb_src in ALGORITHM_ADSB_SOURCES:
+            model_path = Path(airport_nn_model_path)
+
             @lru_cache(maxsize=2)
             def read_nn(target_date):
-                return get_algorithm_nn_flights(
-                    target_date, adsb_src, airport_nn_model_path
+                if not model_path.is_file():
+                    raise FileNotFoundError(
+                        f"Airport NN checkpoint not found: {model_path}. "
+                        "Pass --airport-nn-model with an existing checkpoint."
+                    )
+                return get_flights(
+                    AlgorithmNNFlightSource(model_path=model_path),
+                    target_date,
+                    adsb_src,
                 )
 
             return read_nn
         raise ValueError(f"algorithm-nn does not support adsb_src={adsb_src!r}")
     if src == "sfdps":
-        return get_sfdps_flights_day
+        return lambda target_date: get_flights(SFDPSFlightSource(), target_date)
     if src == "bts":
-        return get_bts_flights_for_day
+        return lambda target_date: get_flights(BTSFlightSource(), target_date)
     if src == "ground_truth":
         return get_ground_truth_flights_for_day
     if src =="opensky":
@@ -146,11 +134,14 @@ def source_flights_reader(
     if src == "fr24":
         return read_fr24_flights
     if src == "eurocontrol":
-        return get_eurocontrol_flights
+        return lambda target_date: get_flights(
+            EurocontrolFlightSource(),
+            target_date,
+        )
     if src == "opdi":
         return get_opdi_flights
     if src == "mike":
-        return get_mike_flights_for_day
+        return lambda target_date: get_flights(MikeFlightSource(), target_date)
 
     raise ValueError(f"Unknown flight source: {src}")
 

@@ -390,10 +390,6 @@ class SFDPSFlightSource(NonADSBFlightSource):
         return create_sfdps_flights_day(dt)
 
 
-def get_sfdps_flights_day(target_date: date, use_cache: bool = True) -> pl.DataFrame:
-    return get_flights(SFDPSFlightSource(), target_date, use_cache=use_cache)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build/load SFDPS flights for one UTC day."
@@ -407,7 +403,11 @@ def main() -> None:
     args = parser.parse_args()
 
     target_day = date.fromisoformat(args.date)
-    df_flights = get_sfdps_flights_day(target_day, use_cache=not args.no_cache)
+    df_flights = get_flights(
+        SFDPSFlightSource(),
+        target_day,
+        use_cache=not args.no_cache,
+    )
     print(df_flights)
 
 
