@@ -79,4 +79,3 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
     ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
-    assert "fr24" not in evaluation.SOURCE_NAMES

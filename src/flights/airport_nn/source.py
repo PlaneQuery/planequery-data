@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import cached_property
 from pathlib import Path
 
 import polars as pl
@@ -21,6 +22,9 @@ class AlgorithmNNFlightSource(ADSBFlightSource):
     version: int = 1
     model_path: Path = DEFAULT_MODEL_PATH
 
+    def adsb_icao_batch_size(self) -> int:
+        return 256
+
     def adsb_columns(self):
         from flights.airport_nn.features import COLUMNS
         from flights.segmentation.algorithm import ADSB_ALGORITHM_COLUMNS
@@ -30,13 +34,18 @@ class AlgorithmNNFlightSource(ADSBFlightSource):
     def adsb_read_interval(self, dt: date) -> tuple[datetime, datetime]:
         return AlgorithmNearestFlightSource().adsb_read_interval(dt)
 
+    @cached_property
+    def model(self):
+        from flights.airport_nn.model import load_model
+
+        return load_model(self.model_path)
+
     def create_flights_for_day(
         self,
         dt: date,
         df_adsb: pl.DataFrame,
     ) -> pl.DataFrame:
         from flights.airport_nn.inference import predict_flights
-        from flights.airport_nn.model import load_model
 
         flights = AlgorithmNearestFlightSource().create_flights_for_day(dt, df_adsb)
-        return predict_flights(flights, df_adsb, load_model(self.model_path))
+        return predict_flights(flights, df_adsb, self.model)

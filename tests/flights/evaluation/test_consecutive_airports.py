@@ -187,6 +187,7 @@ def test_evaluation_main_returns_consecutive_airport_detail_columns(
     tmp_path,
 ):
     import flights.evaluation.evaluation as evaluation
+    from flights.sources import BTS_SOURCE, SFDPS_SOURCE
 
     df_flights = pl.DataFrame(
         [
@@ -195,15 +196,15 @@ def test_evaluation_main_returns_consecutive_airport_detail_columns(
         ]
     )
     source_frames = {
-        "test": df_flights,
-        "gold": df_flights,
+        BTS_SOURCE.name: df_flights,
+        SFDPS_SOURCE.name: df_flights,
     }
 
     monkeypatch.setattr(
         evaluation,
         "source_flights_reader",
-        lambda src, adsb_src="adsblol": (
-            lambda _: source_frames[src].clone()
+        lambda source, adsb_src=None: (
+            lambda _: source_frames[source.name].clone()
         ),
     )
     monkeypatch.setattr(
@@ -213,8 +214,8 @@ def test_evaluation_main_returns_consecutive_airport_detail_columns(
     )
 
     results, df_stats = evaluation.main(
-        test_src="test",
-        gold_src="gold",
+        test_src=BTS_SOURCE,
+        gold_src=SFDPS_SOURCE,
         test_dates=date(2026, 1, 1),
         use_all_icaos=True,
         include_consecutive_airport_metrics=True,
