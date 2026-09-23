@@ -13,7 +13,6 @@ from flights.airport_nn.inference import predict_flights
 from flights.airport_nn.model import AirportRanker
 from flights.airport_nn.train import (
     BUFFER_DAYS,
-    EUROPE_VALIDATION_DAYS,
     TEST_DAYS,
     TRAIN_DAYS,
     VALIDATION_DAYS,
@@ -153,13 +152,10 @@ def test_temporal_matching_rejects_ambiguity():
 
 
 def test_split_is_disjoint_and_february_only():
-    all_days = (
-        TRAIN_DAYS + VALIDATION_DAYS + EUROPE_VALIDATION_DAYS + BUFFER_DAYS + TEST_DAYS
-    )
-    assert len(all_days) == len(set(all_days)) == 32
+    all_days = TRAIN_DAYS + VALIDATION_DAYS + BUFFER_DAYS + TEST_DAYS
+    assert len(all_days) == len(set(all_days)) == 30
     assert TRAIN_DAYS == [date(2026, 2, d) for d in range(1, 21)]
     assert VALIDATION_DAYS == [date(2026, 2, d) for d in range(21, 28)]
-    assert EUROPE_VALIDATION_DAYS == [date(2024, 6, 12), date(2024, 6, 15)]
     assert BUFFER_DAYS == [date(2026, 2, 28)]
     assert TEST_DAYS == [date(2026, 3, 1), date(2024, 6, 1)]
     assert all(data.february(d) == d for d in TRAIN_DAYS)
@@ -168,14 +164,13 @@ def test_split_is_disjoint_and_february_only():
             data.february(day)
 
 
-def test_selection_weights_regions_equally_and_requires_every_day():
-    losses = {str(d): 0.1 for d in VALIDATION_DAYS}
-    losses.update({str(d): 0.9 for d in EUROPE_VALIDATION_DAYS})
-    assert selection_loss(losses) == pytest.approx(0.5)
-    losses[str(EUROPE_VALIDATION_DAYS[0])] = float("inf")
+def test_selection_weights_days_equally_and_requires_every_day():
+    losses = {str(d): i / 10 for i, d in enumerate(VALIDATION_DAYS, 1)}
+    assert selection_loss(losses) == pytest.approx(0.4)
+    losses[str(VALIDATION_DAYS[0])] = float("inf")
     with pytest.raises(ValueError, match="Every validation day"):
         selection_loss(losses)
-    del losses[str(EUROPE_VALIDATION_DAYS[0])]
+    del losses[str(VALIDATION_DAYS[0])]
     with pytest.raises(KeyError):
         selection_loss(losses)
 
@@ -231,7 +226,6 @@ def test_train_accepts_one_day_without_validation(tmp_path):
         batch_size=2,
         train_days=[day],
         validation_days=[],
-        europe_validation_days=[],
     )
 
     assert model_path == tmp_path / "model/model.pt"
