@@ -18,7 +18,7 @@ from flights.airport_nn.evaluate import (
     write_report,
 )
 from flights.airport_nn.features import ALTITUDE, ELAPSED, GAP, VERSION
-from flights.airport_nn.model import AirportRanker, load_model
+from flights.airport_nn.model import AirportRanker, default_device, load_model
 from flights.airport_nn.source import DEFAULT_MODEL_PATH
 
 TRAIN_DAYS = [date(2026, 2, i) for i in range(1, 21)]
@@ -104,7 +104,7 @@ def train(
     torch.manual_seed(seed)
     torch.set_num_threads(4)
     rng = np.random.default_rng(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = default_device()
     model = AirportRanker().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

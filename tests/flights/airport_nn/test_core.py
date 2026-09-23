@@ -10,7 +10,7 @@ from flights.airport_nn import data, features
 from flights.airport_nn import derive_day as daily
 from flights.airport_nn.evaluate import metrics
 from flights.airport_nn.inference import predict, predict_flights
-from flights.airport_nn.model import AirportRanker
+from flights.airport_nn.model import AirportRanker, default_device
 from flights.airport_nn.train import (
     BUFFER_DAYS,
     TEST_DAYS,
@@ -153,6 +153,26 @@ def test_ranker_padding_and_candidate_permutation():
     torch.testing.assert_close(model(padded, padded_mask), expected)
     order = [2, 0, 1]
     torch.testing.assert_close(model(x[:, order], mask[:, order]), expected[:, order])
+
+
+@pytest.mark.parametrize(
+    ("cuda_available", "mps_available", "expected"),
+    [
+        (True, True, "cuda"),
+        (False, True, "mps"),
+        (False, False, "cpu"),
+    ],
+)
+def test_default_device_priority(
+    monkeypatch,
+    cuda_available,
+    mps_available,
+    expected,
+):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps_available)
+
+    assert default_device() == torch.device(expected)
 
 
 def test_temporal_matching_rejects_ambiguity():

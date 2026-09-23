@@ -160,7 +160,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     torch.set_num_threads(4)
     paths = files_for(args.cache, args.dates)
-    data, _ = score(
-        load_model(args.model, "cuda" if torch.cuda.is_available() else "cpu"), paths
-    )
+    data, _ = score(load_model(args.model), paths)
     print(json.dumps(write_report(data, args.output), indent=2))
