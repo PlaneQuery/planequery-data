@@ -27,10 +27,10 @@ def potential_pia_flight_count(group):
                 landing_airport = airport_lookup.get_Airport_from_airport_ident(previous_flight.landing_airport_ident)
                 takeoff_airport = airport_lookup.get_Airport_from_airport_ident(flight.takeoff_airport_ident)
                 distance = haversine(
-                    landing_airport.latitude_deg,
-                    landing_airport.longitude_deg,
-                    takeoff_airport.latitude_deg,
-                    takeoff_airport.longitude_deg,
+                    landing_airport.lat,
+                    landing_airport.lon,
+                    takeoff_airport.lat,
+                    takeoff_airport.lon,
                 )
                 if distance > 600: # cranking the distance is good.
                     count+=1

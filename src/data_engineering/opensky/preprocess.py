@@ -25,7 +25,7 @@ SPEED_ERROR_ALLOWANCE_KT = 200.0
 MISSING_SPEED_ALLOWANCE_KT = 600.0
 ISOLATED_ALTITUDE_SPIKE_FT = 5_000.0
 NEIGHBOR_ALTITUDE_AGREEMENT_FT = 2_000.0
-KM_PER_DEGREE_LATITUDE = 111.195
+KM_PER_DEGREE_LAT = 111.195
 KM_PER_NAUTICAL_MILE = 1.852
 
 _PREFIX = "_opensky_preprocess_"
@@ -56,12 +56,12 @@ def _distance_km(
     lon_1: pl.Expr,
 ) -> pl.Expr:
     """Fast local-distance approximation with antimeridian handling."""
-    delta_lat_km = (lat_1 - lat_0) * KM_PER_DEGREE_LATITUDE
+    delta_lat_km = (lat_1 - lat_0) * KM_PER_DEGREE_LAT
     delta_lon_deg = ((lon_1 - lon_0 + 180.0) % 360.0) - 180.0
     mean_lat_rad = ((lat_0 + lat_1) / 2.0) * (math.pi / 180.0)
     delta_lon_km = (
         delta_lon_deg
-        * KM_PER_DEGREE_LATITUDE
+        * KM_PER_DEGREE_LAT
         * mean_lat_rad.cos()
     )
     return (delta_lat_km.pow(2) + delta_lon_km.pow(2)).sqrt()
