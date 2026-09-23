@@ -9,6 +9,10 @@ from typing import Literal, overload
 import polars as pl
 
 from data_engineering.filters import pia_or_american_ladd_icao
+from data_engineering.adsb.partitions import (
+    icao_bucket as _icao_bucket,
+    query_icao_buckets as _query_buckets,
+)
 from data_engineering.utils import OUTPUT_DIR
 
 
@@ -18,8 +22,6 @@ class ADSBSource(StrEnum):
     OPENSKY = "opensky"
 ADSBLOL_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
 ADSBX_PARQUET_ROOT = OUTPUT_DIR / "data/raw/adsb-exchange/traces_parquet"
-ICAO_BUCKET_COUNT = 8
-ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
 EMPTY_COLUMN_DTYPES = {
     "time": pl.Datetime("ms"),
     "icao": pl.String,
@@ -30,6 +32,7 @@ EMPTY_COLUMN_DTYPES = {
     "lon": pl.Float64,
     "baro_altitude_ft": pl.Int32,
     "geom_altitude_ft": pl.Int32,
+    "baro_rate_fpm": pl.Int32,
     "ground_speed_kt": pl.Float32,
     "track_deg": pl.Float32,
     "on_ground": pl.Boolean,
@@ -119,13 +122,6 @@ def create_adsbx_parquet_for_day(current_day: date):
     )
 
 
-def _icao_bucket(icao: str) -> int:
-    if icao.startswith("~"):
-        return ICAO_BUCKET_COUNT - 1
-    icao_int = int(icao.lower(), 16)
-    return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
-
-
 def _parquet_read_paths(
     current_day: date,
     icao_buckets: Sequence[int] | None = None,
@@ -141,19 +137,6 @@ def _parquet_read_paths(
         return [str(path) for path in paths if path.exists()]
 
     return []
-
-
-def _query_buckets(
-    *,
-    icaos: Sequence[str] | None = None,
-) -> list[int] | None:
-    if icaos is not None:
-        try:
-            return sorted({_icao_bucket(icao) for icao in icaos})
-        except (AttributeError, TypeError, ValueError):
-            # Preserve malformed/nonstandard identifiers by scanning all buckets.
-            return None
-    return None
 
 
 def _column_list(
@@ -319,7 +302,11 @@ def _scan_opensky_days(
 
     lf = pl.concat(
         [
-            scan_cached_opensky_state_vectors_for_day(day, columns=cached_columns)
+            scan_cached_opensky_state_vectors_for_day(
+                day,
+                columns=cached_columns,
+                icaos=icaos,
+            )
             for day in days
         ]
     )
@@ -443,6 +430,10 @@ def read_adsb(
     requested_columns = _column_list(columns, additional_columns)
     scan_columns = _column_list(requested_columns, ["time"])
     days = _date_range_for_interval(start_dt, end_dt)
+
+    if icaos is not None and not icaos:
+        empty = _empty_scan(requested_columns)
+        return empty if lazy else empty.collect()
 
     if source is ADSBSource.OPENSKY:
         lf = _scan_opensky_days(

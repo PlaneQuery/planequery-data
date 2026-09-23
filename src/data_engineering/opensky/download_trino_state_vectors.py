@@ -12,18 +12,14 @@ import pyarrow.parquet as pq
 from trino.auth import OAuth2Authentication
 from trino.dbapi import Connection, connect
 
-from data_engineering.utils import OUTPUT_DIR
+from data_engineering.opensky.paths import (
+    OPENSKY_RAW_STATE_VECTORS_ROOT,
+    raw_state_vectors_hour_path,
+)
 
 
 BATCH_SIZE = 100_000
-DEFAULT_OUTPUT_DIR = (
-    OUTPUT_DIR
-    / "data"
-    / "raw"
-    / "opensky"
-    / "trino-downloads"
-    / "state_vectors_data4"
-)
+DEFAULT_OUTPUT_DIR = OPENSKY_RAW_STATE_VECTORS_ROOT
 DEFAULT_TRINO_USER = os.environ.get("OPENSKY_TRINO_USER", "goodejonah")
 
 
@@ -58,14 +54,7 @@ def create_connection(user: str) -> Connection:
 
 def state_vectors_output_path(start: datetime, output_dir: Path) -> Path:
     """Return the parquet path for a UTC hour."""
-    return (
-        output_dir
-        / f"year={start.year}"
-        / f"month={start.month:02d}"
-        / f"day={start.day:02d}"
-        / f"hour={start.hour:02d}"
-        / "data.parquet"
-    )
+    return raw_state_vectors_hour_path(start, root=output_dir)
 
 
 def download_hour(
