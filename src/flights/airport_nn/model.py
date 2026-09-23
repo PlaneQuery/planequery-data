@@ -6,6 +6,15 @@ from torch import nn
 from flights.airport_nn.features import DISTANCE, INPUT_SIZE, VERSION
 
 
+def default_device() -> torch.device:
+    """Prefer CUDA, then Apple MPS, and otherwise use the CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 class AirportRanker(nn.Module):
     def __init__(self, hidden_size=64):
         super().__init__()
@@ -40,11 +49,12 @@ class AirportRanker(nn.Module):
         return score.reshape(b, c).masked_fill(~mask.any(-1), -1e4)
 
 
-def load_model(path, device="cpu"):
-    checkpoint = torch.load(path, map_location=device, weights_only=True)
+def load_model(path, device: str | torch.device | None = None):
+    device = default_device() if device is None else torch.device(device)
+    print(f"Loading airport NN on {device}", flush=True)
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     if checkpoint["feature_version"] != VERSION:
         raise ValueError("Incompatible checkpoint; train a new airport model")
-    model = AirportRanker(checkpoint["hidden_size"]).to(device)
+    model = AirportRanker(checkpoint["hidden_size"])
     model.load_state_dict(checkpoint["weights"])
-    model.eval()
-    return model
+    return model.to(device).eval()

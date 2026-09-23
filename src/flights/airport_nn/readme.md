@@ -3,6 +3,8 @@
 A 38,082-parameter GRU ranks nearby airports from each end of a segmented ADS-B
 flight. Inputs are airport-relative position, altitude, motion and airport
 characteristics. Aircraft/airport identities and reference labels are not inputs.
+Training, evaluation and inference automatically prefer CUDA, then Apple MPS,
+and fall back to the CPU.
 
 ## Training
 
