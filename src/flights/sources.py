@@ -1,5 +1,6 @@
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn import AlgorithmNNFlightSource
+from flights.ground_truth.source import GroundTruthFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
@@ -10,6 +11,7 @@ ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
 ALGORITHM_NN_SOURCE = AlgorithmNNFlightSource()
 BTS_SOURCE = BTSFlightSource()
 EUROCONTROL_SOURCE = EurocontrolFlightSource()
+GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
 MIKE_SOURCE = MikeFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
 
@@ -18,6 +20,7 @@ FLIGHT_SOURCES = (
     ALGORITHM_NN_SOURCE,
     BTS_SOURCE,
     EUROCONTROL_SOURCE,
+    GROUND_TRUTH_SOURCE,
     MIKE_SOURCE,
     SFDPS_SOURCE,
 )

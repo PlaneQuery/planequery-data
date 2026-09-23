@@ -30,6 +30,12 @@ class DummyADSBFlightSource(ADSBFlightSource):
 
 
 @dataclass(frozen=True)
+class DummySelectedADSBFlightSource(DummyADSBFlightSource):
+    def adsb_icaos(self, dt):
+        return ["abc123", "def456"]
+
+
+@dataclass(frozen=True)
 class DummyNonADSBFlightSource(NonADSBFlightSource):
     name: str = "dummy-non-adsb"
 
@@ -103,6 +109,27 @@ def test_get_flights_dispatches_adsb_source_and_interval(monkeypatch, tmp_path):
         )
     ]
     assert result.get_column("icao").to_list() == ["abc123"]
+
+
+def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    calls = []
+
+    def read_adsb(start, end, *, source, icaos):
+        calls.append(icaos)
+        return pl.DataFrame({"icao": icaos})
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+
+    result = get_flights(
+        DummySelectedADSBFlightSource(),
+        date(2026, 3, 1),
+        ADSBSource.ADSBX,
+        use_cache=False,
+    )
+
+    assert calls == [["abc123", "def456"]]
+    assert result.get_column("icao").to_list() == ["abc123", "def456"]
 
 
 def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):
