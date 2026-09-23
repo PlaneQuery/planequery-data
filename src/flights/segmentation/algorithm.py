@@ -523,8 +523,8 @@ def _airport_distance_to_message(
     return haversine_km(
         message.lat,
         message.lon,
-        airport.latitude_deg,
-        airport.longitude_deg,
+        airport.lat,
+        airport.lon,
     )
 
 
@@ -559,8 +559,8 @@ def _airport_guess_for_message(
     return AirportIdentGuess(
         ident=best_airport.ident,
         distance_km=_airport_distance_to_message(best_airport, message),
-        lat=best_airport.latitude_deg,
-        lon=best_airport.longitude_deg,
+        lat=best_airport.lat,
+        lon=best_airport.lon,
         elevation_ft=best_airport.elevation_ft,
     )
 
@@ -591,8 +591,8 @@ def _airport_guess_for_ident(
     return AirportIdentGuess(
         ident=ident,
         distance_km=_airport_distance_to_message(airport, message),
-        lat=airport.latitude_deg,
-        lon=airport.longitude_deg,
+        lat=airport.lat,
+        lon=airport.lon,
         elevation_ft=airport.elevation_ft,
     )
 

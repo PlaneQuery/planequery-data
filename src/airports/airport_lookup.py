@@ -56,8 +56,8 @@ class Airport:
     ident: str
     type: Airport_Types
     name: str | None
-    latitude_deg: float
-    longitude_deg: float
+    lat: float
+    lon: float
     elevation_ft: int | None = None
     continent: str | None = None
     iso_country: str | None = None
@@ -81,9 +81,9 @@ class Airport:
     def __hash__(self) -> int:
         return hash(self.ident)
 
-    def distance_to(self, latitude: float, longitude: float) -> float:
+    def distance_to(self, lat: float, lon: float) -> float:
         """Return the great-circle distance to a point in kilometers."""
-        return haversine(self.latitude_deg, self.longitude_deg, latitude, longitude)
+        return haversine(self.lat, self.lon, lat, lon)
 
     @property
     def is_in_us_faa_airspace(self) -> bool:
@@ -128,9 +128,9 @@ class AirportLookup:
             airport_csv_reader = csv.DictReader(filter(lambda row: row[0] != '#', airport_csv))
             for airport in airport_csv_reader:
                 if airport['type'] in Airport_Types:
-                    latitude_deg = float(airport['latitude_deg'])
-                    longitude_deg = float(airport['longitude_deg'])
-                    airport_coord_deg = (latitude_deg, longitude_deg)
+                    lat = float(airport['latitude_deg'])
+                    lon = float(airport['longitude_deg'])
+                    airport_coord_deg = (lat, lon)
                     airport_coord_rad = np.radians(airport_coord_deg)
                     ident: str = airport['ident']
                     elevation_ft = self._optional_int(airport.get("elevation_ft"))
@@ -142,8 +142,8 @@ class AirportLookup:
                         ident=ident,
                         type=Airport_Types(airport['type']),
                         name=self._optional_string(airport.get("name")),
-                        latitude_deg=latitude_deg,
-                        longitude_deg=longitude_deg,
+                        lat=lat,
+                        lon=lon,
                         elevation_ft=elevation_ft,
                         continent=self._optional_string(airport.get("continent")),
                         iso_country=self._optional_string(airport.get("iso_country")),
@@ -264,18 +264,23 @@ class AirportLookup:
             f"{candidate_idents}"
         )
 
-    def getClosestAirport(self, latitude, longitude) -> Airport:
-        query_point_rad = np.radians((latitude, longitude))
+    def getClosestAirport(self, lat: float, lon: float) -> Airport:
+        query_point_rad = np.radians((lat, lon))
         distance, index = self._ball_tree.query([query_point_rad], k=1)
         airport = self._airports[index[0][0]]
         distance_in_km = distance[0][0]  * 6371.0 # Earth's radius in kilometers
         airport.distance_from_plane_point_in_km = float(distance_in_km)
         return airport
 
-    def getAirportsWithinRadius(self, latitude: float, longitude: float, radius_km: float = 15.0) -> list[Airport]:
+    def getAirportsWithinRadius(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float = 15.0,
+    ) -> list[Airport]:
         if not getattr(self, "_ball_tree", None):
             return []
-        query_point_rad = np.radians((latitude, longitude))
+        query_point_rad = np.radians((lat, lon))
         radius_rad = radius_km / 6371.0
         indices, distances = self._ball_tree.query_radius(
             [query_point_rad],
@@ -297,7 +302,7 @@ class AirportLookup:
         airport = self.get_Airport_from_airport_ident(airport_ident)
         if airport is None:
             return None
-        return (airport.latitude_deg, airport.longitude_deg)
+        return (airport.lat, airport.lon)
 
     def airport_ident_is_in_us_faa_airspace(self, airport_ident: str) -> bool:
         airport = self.get_Airport_from_airport_ident(airport_ident)
@@ -332,8 +337,8 @@ def flight_time_makes_sense(lat1, lon1, lat2, lon2, takeoff_time, landing_time):
     Determine if the flight time between two locations makes sense for a private jet.
     
     Parameters:
-    - lat1, lon1: Latitude and longitude of the departure airport.
-    - lat2, lon2: Latitude and longitude of the arrival airport.
+    - lat1, lon1: Coordinates of the departure airport.
+    - lat2, lon2: Coordinates of the arrival airport.
     - takeoff_time: Takeoff time in seconds.
     - landing_time: Landing time in seconds.
     

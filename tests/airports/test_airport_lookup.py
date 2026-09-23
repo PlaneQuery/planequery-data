@@ -34,8 +34,8 @@ def test_airport_contains_all_csv_fields(airport_lookup):
     assert airport.ident == "KJFK"
     assert airport.type == "large_airport"
     assert airport.name == "John F. Kennedy International Airport"
-    assert airport.latitude_deg == pytest.approx(40.639447)
-    assert airport.longitude_deg == pytest.approx(-73.779317)
+    assert airport.lat == pytest.approx(40.639447)
+    assert airport.lon == pytest.approx(-73.779317)
     assert airport.elevation_ft == 13
     assert airport.continent == "NA"
     assert airport.iso_country == "US"
@@ -71,7 +71,7 @@ def test_airport_equality_and_hash_use_ident(airport_lookup):
     same_ident_with_different_data = replace(
         airport,
         name="Different name",
-        latitude_deg=0.0,
+        lat=0.0,
         distance_from_plane_point_in_km=100.0,
     )
     other_airport = airport_lookup.get_Airport_from_airport_ident("KLAX")
@@ -86,7 +86,7 @@ def test_airport_distance_to_returns_kilometers(airport_lookup):
     airport = airport_lookup.get_Airport_from_airport_ident("KJFK")
 
     assert airport is not None
-    assert airport.distance_to(airport.latitude_deg, airport.longitude_deg) == pytest.approx(0.0)
+    assert airport.distance_to(airport.lat, airport.lon) == pytest.approx(0.0)
     assert airport.distance_to(33.9425, -118.408056) == pytest.approx(3974, abs=10)
 
 
@@ -118,8 +118,8 @@ def test_get_airport_from_code_uses_coordinates_as_final_tiebreaker(airport_look
     assert expected is not None
     airport = airport_lookup.get_airport_from_code(
         "IA32",
-        lat=expected.latitude_deg,
-        lon=expected.longitude_deg,
+        lat=expected.lat,
+        lon=expected.lon,
         code_priority=(),
     )
     assert airport == expected

@@ -117,8 +117,8 @@ def relative_features(points, airports, boundary, landing):
     if not airports:
         return np.empty((0, len(points), INPUT_SIZE), np.float32)
     lat, lon = np.radians(points[:, 1:3]).T
-    alat = np.radians([a.latitude_deg for a in airports])[:, None]
-    alon = np.radians([a.longitude_deg for a in airports])[:, None]
+    alat = np.radians([a.lat for a in airports])[:, None]
+    alon = np.radians([a.lon for a in airports])[:, None]
     dlon = (lon - alon + np.pi) % (2 * np.pi) - np.pi
     h = (
         np.sin((lat - alat) / 2) ** 2
