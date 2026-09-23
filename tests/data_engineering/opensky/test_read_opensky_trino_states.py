@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import polars as pl
 import pytest
 
+from data_engineering.opensky import read_opensky_trino_states as opensky_reader
 from data_engineering.opensky.read_opensky_trino_states import (
     MAX_STATE_VECTOR_AGE_SECONDS,
     normalize_opensky_state_vectors,
@@ -15,12 +17,14 @@ def _raw_state_vectors() -> pl.LazyFrame:
         {
             "time": [101, 102, 110, 110, 110, 110],
             "icao24": ["abc123"] * 5 + ["def456"],
-            "lastContact": [100.9, 101.9, 100.0, 109.0, None, 111.5],
-            "lastPosUpdate": [100.5, 100.5, 109.0, 100.0, 109.0, 109.0],
+            "lastcontact": [100.9, 101.9, 100.0, 109.0, None, 111.5],
+            "lastposupdate": [100.5, 100.5, 109.0, 100.0, 109.0, 109.0],
             "velocity": [10.0, 10.0, 20.0, 20.0, 20.0, 30.0],
             "heading": [90.0] * 6,
-            "onGround": [False] * 6,
-            "baroAltitude": [1_000.0] * 6,
+            "vertrate": [1.0] * 6,
+            "onground": [False] * 6,
+            "baroaltitude": [1_000.0] * 6,
+            "geoaltitude": [1_100.0] * 6,
             "lat": [40.0] * 6,
             "lon": [-75.0] * 6,
             "callsign": ["TEST"] * 6,
@@ -46,12 +50,14 @@ def test_normalize_keeps_freshness_boundary_and_rejects_older_snapshot():
         {
             "time": [110, 110],
             "icao24": ["abc123", "def456"],
-            "lastContact": [110 - max_age, 110 - max_age - 0.001],
-            "lastPosUpdate": [110 - max_age, 110 - max_age - 0.001],
+            "lastcontact": [110 - max_age, 110 - max_age - 0.001],
+            "lastposupdate": [110 - max_age, 110 - max_age - 0.001],
             "velocity": [10.0, 10.0],
             "heading": [90.0, 90.0],
-            "onGround": [False, False],
-            "baroAltitude": [1_000.0, 1_000.0],
+            "vertrate": [1.0, 1.0],
+            "onground": [False, False],
+            "baroaltitude": [1_000.0, 1_000.0],
+            "geoaltitude": [1_100.0, 1_100.0],
             "lat": [40.0, 40.0],
             "lon": [-75.0, -75.0],
             "callsign": ["FRESH", "STALE"],
@@ -73,12 +79,81 @@ def test_normalize_requires_freshness_columns():
 
     with pytest.raises(
         ValueError,
-        match="lastContact, lastPosUpdate",
+        match="lastcontact, lastposupdate",
     ):
         normalize_opensky_state_vectors(raw)
 
 
-def test_processed_cache_uses_v2_path():
+def test_processed_cache_uses_v3_partition_path():
     path = opensky_processed_state_vectors_path("2026-03-01")
 
-    assert "data/processed/opensky/v2" in path.as_posix()
+    assert path.as_posix().endswith(
+        "data/processed/opensky/v3/year=2026/month=03/day=01"
+    )
+
+
+def _write_raw_hour(path: Path, start: datetime) -> None:
+    timestamp = int(start.timestamp())
+    pl.DataFrame(
+        {
+            "time": [timestamp, timestamp],
+            "icao24": ["010000", "f10000"],
+            "lat": [40.0, 41.0],
+            "lon": [-75.0, -76.0],
+            "velocity": [100.0, 110.0],
+            "heading": [90.0, 180.0],
+            "vertrate": [0.0, 1.0],
+            "callsign": ["ONE", "TWO"],
+            "onground": [False, False],
+            "alert": [False, False],
+            "spi": [False, False],
+            "squawk": ["1200", "1200"],
+            "baroaltitude": [1_000.0, 2_000.0],
+            "geoaltitude": [1_100.0, 2_100.0],
+            "lastposupdate": [float(timestamp), float(timestamp)],
+            "lastcontact": [float(timestamp), float(timestamp)],
+            "serials": [[1], [2]],
+            "hour": [timestamp, timestamp],
+        }
+    ).write_parquet(path, mkdir=True)
+
+
+def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
+    monkeypatch,
+    tmp_path,
+):
+    raw_day = tmp_path / "raw"
+    processed_day = tmp_path / "processed"
+    monkeypatch.setattr(
+        opensky_reader,
+        "raw_state_vectors_day_dir",
+        lambda day: raw_day,
+    )
+    monkeypatch.setattr(
+        opensky_reader,
+        "processed_state_vectors_day_dir",
+        lambda day: processed_day,
+    )
+
+    start = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    for hour in range(24):
+        _write_raw_hour(
+            raw_day / f"hour={hour:02d}" / "data.parquet",
+            start + timedelta(hours=hour),
+        )
+
+    result = opensky_reader.scan_cached_opensky_state_vectors_for_day(
+        date(2024, 6, 1),
+        columns=["time", "icao", "geom_altitude_ft", "baro_rate_fpm"],
+        icaos=["010000"],
+    ).collect()
+
+    assert result.height == 24
+    assert result.get_column("icao").unique().to_list() == ["010000"]
+    assert result.get_column("geom_altitude_ft").item(0) == 3_608
+    assert result.get_column("baro_rate_fpm").item(0) == 0
+    assert (processed_day / "_SUCCESS").exists()
+    assert sorted(path.name for path in processed_day.glob("icao_bucket=*")) == [
+        "icao_bucket=0",
+        "icao_bucket=7",
+    ]
