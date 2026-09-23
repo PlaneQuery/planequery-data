@@ -30,6 +30,12 @@ class DummyADSBFlightSource(ADSBFlightSource):
 
 
 @dataclass(frozen=True)
+class DummyBatchedADSBFlightSource(DummyADSBFlightSource):
+    def adsb_icao_batch_size(self):
+        return 2
+
+
+@dataclass(frozen=True)
 class DummySelectedADSBFlightSource(DummyADSBFlightSource):
     def adsb_icaos(self, dt):
         return ["abc123", "def456"]
@@ -111,6 +117,46 @@ def test_get_flights_dispatches_adsb_source_and_interval(monkeypatch, tmp_path):
     assert result.get_column("icao").to_list() == ["abc123"]
 
 
+def test_get_flights_reads_bounded_complete_aircraft_batches(monkeypatch, tmp_path):
+    target_date = date(2026, 3, 1)
+    batches = []
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+
+    def read_adsb(start, end, *, source, columns=None, lazy=False, icaos=None):
+        if lazy:
+            assert columns == ["icao"]
+            assert icaos is None
+            return pl.DataFrame(
+                {"icao": ["eee555", "aaa111", None, "ccc333", "bbb222", "ddd444"]}
+            ).lazy()
+        assert icaos is not None
+        assert 0 < len(icaos) <= 2
+        batches.append(icaos)
+        return pl.DataFrame({"icao": icaos})
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+
+    result = get_flights(
+        DummyBatchedADSBFlightSource(),
+        target_date,
+        ADSBSource.ADSBX,
+        use_cache=False,
+    )
+
+    assert batches == [
+        ["aaa111", "bbb222"],
+        ["ccc333", "ddd444"],
+        ["eee555"],
+    ]
+    assert result.get_column("icao").to_list() == [
+        "aaa111",
+        "bbb222",
+        "ccc333",
+        "ddd444",
+        "eee555",
+    ]
+
+
 def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
     monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
     calls = []
@@ -130,6 +176,29 @@ def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
 
     assert calls == [["abc123", "def456"]]
     assert result.get_column("icao").to_list() == ["abc123", "def456"]
+
+
+def test_get_flights_handles_empty_batched_adsb_day(monkeypatch, tmp_path):
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+
+    def read_adsb(start, end, *, source, columns=None, lazy=False, icaos=None):
+        frame = pl.DataFrame(schema={"icao": pl.String})
+        if lazy:
+            return frame.lazy()
+        assert icaos == []
+        return frame
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+
+    result = get_flights(
+        DummyBatchedADSBFlightSource(),
+        date(2026, 3, 1),
+        ADSBSource.ADSBX,
+        use_cache=False,
+    )
+
+    assert result.schema == {"icao": pl.String}
+    assert result.is_empty()
 
 
 def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):

@@ -21,6 +21,9 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
     version: int = 3
 
+    def adsb_icao_batch_size(self) -> int:
+        return 500
+
     def adsb_columns(self):
         return segmentation.ADSB_ALGORITHM_COLUMNS
 

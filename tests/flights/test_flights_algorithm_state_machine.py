@@ -1,5 +1,9 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 
+import polars as pl
+
+from flights.segmentation import algorithm
 from flights.segmentation.algorithm import (
     AdsbPositionMessage,
     _segments_to_flights_df,
@@ -68,6 +72,60 @@ def two_flight_trace() -> list[AdsbPositionMessage]:
         message(index, altitude, on_ground=altitude == 0)
         for index, altitude in enumerate(altitudes)
     ]
+
+
+def test_processes_each_aircraft_group_before_requesting_the_next(monkeypatch):
+    processed = []
+
+    class Groups:
+        def __iter__(self):
+            yield ("aaa111",), "first"
+            assert processed == ["first"]
+            yield ("bbb222",), "second"
+
+    class Frame:
+        def filter(self, expression):
+            return self
+
+        def sort(self, columns):
+            return self
+
+        def group_by(self, column, maintain_order):
+            return Groups()
+
+    monkeypatch.setattr(
+        algorithm,
+        "_rows_to_position_messages",
+        lambda frame: [frame],
+    )
+    monkeypatch.setattr(
+        algorithm,
+        "identify_flight_segments",
+        lambda messages: processed.append(messages[0]) or [],
+    )
+
+    assert algorithm._segment_adsb_df(Frame()) == []
+    assert processed == ["first", "second"]
+
+
+def test_complete_aircraft_batches_match_one_shot_segmentation(monkeypatch):
+    monkeypatch.setattr(algorithm, "_get_airport_lookup", lambda: None)
+    messages = two_flight_trace()
+    messages += [replace(message, icao="def456") for message in two_flight_trace()]
+    frame = pl.from_dicts([message.__dict__ for message in messages])
+
+    expected = algorithm.create_flights_from_adsb(frame, START.date())
+    actual = pl.concat(
+        [
+            algorithm.create_flights_from_adsb(
+                frame.filter(pl.col("icao") == icao),
+                START.date(),
+            )
+            for icao in (ICAO, "def456")
+        ]
+    )
+
+    assert actual.equals(expected)
 
 
 def test_marks_new_leg_during_ground_interval_between_descent_and_climb():

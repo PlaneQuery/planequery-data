@@ -148,7 +148,11 @@ def _query_buckets(
     icaos: Sequence[str] | None = None,
 ) -> list[int] | None:
     if icaos is not None:
-        return sorted({_icao_bucket(icao) for icao in icaos})
+        try:
+            return sorted({_icao_bucket(icao) for icao in icaos})
+        except (AttributeError, TypeError, ValueError):
+            # Preserve malformed/nonstandard identifiers by scanning all buckets.
+            return None
     return None
 
 
@@ -252,11 +256,20 @@ def _scan_adsbx_days(
     scan_columns = list(dict.fromkeys(list(columns) + ["time", "icao", *filter_columns]))
     for day in days:
         create_adsbx_parquet_for_day(day)
-    paths = [
-        _adsbx_parquet_path(day)
-        for day in days
-        if _parquet_partition_has_data(_adsbx_parquet_day_dir(day))
-    ]
+    buckets = _query_buckets(icaos=icaos)
+    paths = []
+    for day in days:
+        day_dir = _adsbx_parquet_day_dir(day)
+        if not _parquet_partition_has_data(day_dir):
+            continue
+        if buckets is None:
+            paths.append(_adsbx_parquet_path(day))
+        else:
+            paths.extend(
+                str(path)
+                for bucket in buckets
+                if (path := day_dir / f"icao_bucket={bucket}" / "data.parquet").exists()
+            )
     if not paths:
         return _empty_scan(columns)
 

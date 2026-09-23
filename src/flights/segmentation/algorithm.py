@@ -725,13 +725,8 @@ def _segment_adsb_df(
         .sort(["icao", "time"])
     )
 
-    icao_dfs = [
-        df_icao
-        for _, df_icao in df_adsb.group_by("icao", maintain_order=True)
-    ]
-
     segments = []
-    for df_icao in icao_dfs:
+    for _, df_icao in df_adsb.group_by("icao", maintain_order=True):
         segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
 
     return segments
