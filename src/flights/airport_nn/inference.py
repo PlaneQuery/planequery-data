@@ -1,5 +1,7 @@
 """Assign airports without changing flight boundaries, metadata or schema."""
 
+from itertools import islice
+
 import numpy as np
 import polars as pl
 import torch
@@ -9,12 +11,15 @@ from flights.flight_type import with_flight_schema_columns
 
 
 def predict(endpoints, model, batch_size=64):
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
     device = next(model.parameters()).device
     result = []
     model.eval()
+    endpoints = iter(endpoints)
     with torch.inference_mode():
-        for start in range(0, len(endpoints), batch_size):
-            group = endpoints[start : start + batch_size]
+        while group := list(islice(endpoints, batch_size)):
             x, mask = pack(group)
             scores = (
                 model(torch.from_numpy(x).to(device), torch.from_numpy(mask).to(device))
@@ -44,7 +49,7 @@ def predict(endpoints, model, batch_size=64):
 
 def predict_flights(flights, messages, model):
     flights = with_flight_schema_columns(flights)
-    predictions = predict(list(trajectories(flights, messages)), model)
+    predictions = predict(trajectories(flights, messages), model)
     airports = {name: [None] * flights.height for name in ("takeoff", "landing")}
     for row in predictions:
         airports[row["endpoint"]][row["row"]] = row["nn"]

@@ -9,7 +9,7 @@ from airports.airport_lookup import Airport, Airport_Types
 from flights.airport_nn import data, features
 from flights.airport_nn import derive_day as daily
 from flights.airport_nn.evaluate import metrics
-from flights.airport_nn.inference import predict_flights
+from flights.airport_nn.inference import predict, predict_flights
 from flights.airport_nn.model import AirportRanker
 from flights.airport_nn.train import (
     BUFFER_DAYS,
@@ -79,6 +79,35 @@ def test_missing_observations_clear_labels_and_preserve_schema(observation):
     assert missing.drop(labels).equals(flights.drop(labels))
     assert predicted.select(labels).row(0) == ("TEST", "TEST")
     assert missing.select(labels).row(0) == (None, None)
+
+
+def test_prediction_streams_endpoint_batches():
+    model = AirportRanker(8)
+    original_forward = model.forward
+    forward_calls = 0
+
+    def tracked_forward(values, mask):
+        nonlocal forward_calls
+        forward_calls += 1
+        return original_forward(values, mask)
+
+    model.forward = tracked_forward
+
+    def endpoint_stream():
+        for row in range(5):
+            if row == 2:
+                assert forward_calls == 1
+            yield features.Endpoint(
+                row=row,
+                endpoint="takeoff",
+                airports=["TEST"],
+                values=np.zeros((1, 1, features.INPUT_SIZE), dtype=np.float32),
+            )
+
+    predictions = predict(endpoint_stream(), model, batch_size=2)
+
+    assert len(predictions) == 5
+    assert forward_calls == 3
 
 
 def test_derive_day_writes_predicted_flights(observation, monkeypatch, tmp_path):
