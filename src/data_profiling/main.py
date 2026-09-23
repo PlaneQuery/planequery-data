@@ -4,15 +4,15 @@ import polars as pl
 from airports.polars_exprs import airport_size_expr
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_profiling.metrics.flights import FlightCohort
-from flights.algorithm import AlgorithmNearestFlightSource
 from flights.evaluation.evaluation import main as run_evaluation
 from flights.flight_source import get_flights
+from flights.sources import ALGORITHM_NEAREST_SOURCE, SFDPS_SOURCE
 
 TARGET_DATE = date(2026, 3, 1)
 
 results, stats = run_evaluation(
-    test_src="algorithm-nearest",
-    gold_src="sfdps",
+    test_src=ALGORITHM_NEAREST_SOURCE,
+    gold_src=SFDPS_SOURCE,
     test_dates=TARGET_DATE,
     adsb_src=ADSBSource.ADSBLOL,
     write_outputs=False
@@ -36,7 +36,7 @@ evaluation_annotations = (
 )
 
 df_test = get_flights(
-    AlgorithmNearestFlightSource(),
+    ALGORITHM_NEAREST_SOURCE,
     TARGET_DATE,
     ADSBSource.ADSBLOL,
 )
