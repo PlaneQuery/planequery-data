@@ -63,7 +63,7 @@ null identifiers. Daily results use the canonical FlightSource layout under
 `data/flights/source=algorithm-nn/adsb_source=…/version=1/`. The model is not yet
 part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
-`data/models/flights_airport_nn/february-2026/model.pt`.
+`data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.
 
 To score a prepared validation cache:
 
