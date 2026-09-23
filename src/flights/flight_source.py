@@ -18,6 +18,9 @@ class FlightSource(ABC):
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    def adsb_icaos(self, dt: date) -> Sequence[str] | None:
+        return None
+
     def adsb_columns(self) -> Sequence[str] | None:
         return None
 
@@ -82,10 +85,13 @@ def get_flights(
         assert adsb_src is not None, f"{source.name} requires an ADS-B source"
         start, end = source.adsb_read_interval(dt)
         columns = source.adsb_columns()
-        if columns is None:
-            df_adsb = read_adsb(start, end, source=adsb_src)
-        else:
-            df_adsb = read_adsb(start, end, source=adsb_src, columns=columns)
+        icaos = source.adsb_icaos(dt)
+        kwargs = {"source": adsb_src}
+        if columns is not None:
+            kwargs["columns"] = columns
+        if icaos is not None:
+            kwargs["icaos"] = icaos
+        df_adsb = read_adsb(start, end, **kwargs)
         return source.create_flights_for_day(dt, df_adsb)
     if isinstance(source, NonADSBFlightSource):
         return source.create_flights_for_day(dt)

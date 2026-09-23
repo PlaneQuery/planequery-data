@@ -53,7 +53,7 @@ accuracy denominators but cannot contribute to training cross entropy.
 python -m flights.airport_nn.derive_day 2026-03-01 --source adsblol \
   --model /path/to/new-model/model.pt
 python src/flights/evaluation/evaluation.py \
-  --test-src algorithm-nn --gold-src ground_truth \
+  --test-src algorithm-nn --gold-src ground-truth \
   --test-dates 2026-03-01 --airport-nn-model /path/to/new-model/model.pt
 ```
 
