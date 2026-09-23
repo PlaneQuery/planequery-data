@@ -762,9 +762,7 @@ def _limit_icaos_to_sfdps_or_bts(
 
 
 def _ground_truth_icaos() -> list[str]:
-    from flights.ground_truth.bts_and_sfdps_to_gold import (
-        get_ground_truth_flights_for_day,
-    )
+    from flights.ground_truth.source import get_ground_truth_flights_for_day
 
     ground_truth_flights = get_ground_truth_flights_for_day(GROUND_TRUTH_ICAOS_DATE)
     return sorted(
