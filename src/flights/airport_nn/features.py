@@ -59,9 +59,8 @@ def trajectories(flights, messages, loss_seconds=0):
         raise ValueError("Reception loss must be nonnegative")
     lookup = AirportLookup()
     tracks = {}
-    for (icao,), frame in (
-        clean_messages(messages).partition_by("icao", as_dict=True).items()
-    ):
+    cleaned = clean_messages(messages.select(COLUMNS))
+    for (icao,), frame in cleaned.group_by("icao", maintain_order=True):
         tracks[icao] = frame.select(
             pl.col("time").dt.epoch("ms"),
             *[pl.col(c).cast(pl.Float64) for c in COLUMNS[2:]],

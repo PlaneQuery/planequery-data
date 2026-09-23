@@ -94,3 +94,7 @@ def test_read_adsb_applies_opensky_preprocessing_after_icao_filter(monkeypatch):
 def test_read_adsb_requires_adsb_source_enum():
     with pytest.raises(TypeError, match="source must be an ADSBSource"):
         read_adsb_module.read_adsb(date(2026, 1, 2), source="unknown")
+
+
+def test_malformed_icao_falls_back_to_scanning_all_buckets():
+    assert read_adsb_module._query_buckets(icaos=["abc123", "not-an-icao"]) is None

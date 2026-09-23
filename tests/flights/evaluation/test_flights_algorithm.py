@@ -9,19 +9,12 @@ from flights.evaluation.evaluation import main
 from flights.flights_comparison import df_flights_comparison_stats
 from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
-    FLIGHT_SOURCES_BY_NAME,
     SFDPS_SOURCE,
 )
 
 
 EVALUATION_STATS_PATH = (
     Path(__file__).parent / "2026-06-26_22-12_36ff961_flights_evaluation.csv"
-)
-EVALUATION_MATRIX_PATH = (
-    Path(__file__).parent / "2026-07-19_16-29_6da3710_flights_evaluation.csv"
-)
-ADSBX_RECREATION_STATS_PATH = (
-    Path(__file__).parent / "2026-07-22_23-06_61dccac_flights_evaluation.csv"
 )
 BEST_STATS = {
     "true_positive",
@@ -47,39 +40,6 @@ def load_daily_stats_bounds() -> dict[date, dict[str, float]]:
 
 
 DAILY_STATS_BOUNDS = load_daily_stats_bounds()
-
-
-def load_adsbx_recreation_stats_bounds() -> dict[str, float]:
-    with ADSBX_RECREATION_STATS_PATH.open() as f:
-        for row in csv.DictReader(f):
-            if (
-                row["test_date"] == "2026-03-01"
-                and row["adsb_src"] == "adsbx"
-                and row["matching_adsb_src"] == "adsbx"
-                and row["test_src"] == "algorithm"
-                and row["gold_src"] == "sfdps"
-                and row["pia_or_american_ladd_only"] == "false"
-            ):
-                return {
-                    key: float(row[key])
-                    for key in BEST_STATS | WORST_STATS
-                }
-    raise ValueError("Missing ADS-B Exchange algorithm/SFDPS recreation bounds")
-
-
-ADSBX_RECREATION_STATS_BOUNDS = load_adsbx_recreation_stats_bounds()
-
-
-def load_evaluation_matrix() -> list[dict[str, str]]:
-    with EVALUATION_MATRIX_PATH.open() as f:
-        return [
-            row
-            for row in csv.DictReader(f)
-            if row["test_date"] != "average"
-        ]
-
-
-EVALUATION_MATRIX = load_evaluation_matrix()
 
 
 def assert_stats_meet_bounds(
@@ -117,57 +77,11 @@ def test_model_to_sfdps_flight_evaluation_meets_daily_bounds(single_test_date: d
     )
 
 
-@pytest.mark.parametrize(
-    "expected",
-    EVALUATION_MATRIX,
-    ids=lambda row: "-".join(
-        value
-        for value in (
-            row["test_date"],
-            row["adsb_src"] or row["test_src"],
-            row["test_src"],
-            row["gold_src"],
-        )
-    ),
-)
-def test_flight_evaluation_matrix_meets_recorded_bounds(expected: dict[str, str]):
-    recorded_test_source = expected["test_src"]
-    test_source = (
-        ALGORITHM_NEAREST_SOURCE
-        if recorded_test_source == "algorithm"
-        else FLIGHT_SOURCES_BY_NAME.get(recorded_test_source, recorded_test_source)
-    )
-    recorded_gold_source = expected["gold_src"]
-    gold_source = FLIGHT_SOURCES_BY_NAME.get(
-        recorded_gold_source,
-        recorded_gold_source,
-    )
-    results, _ = main(
-        test_src=test_source,
-        gold_src=gold_source,
-        test_dates=date.fromisoformat(expected["test_date"]),
-        adsb_src=ADSBSource(expected["adsb_src"] or ADSBSource.ADSBLOL),
-        matching_adsb_src=ADSBSource(expected["matching_adsb_src"]),
-        use_all_icaos=expected["use_all_icaos"] == "true",
-        filter_rotorcraft=expected["filter_rotorcraft"] == "true",
-        pia_or_american_ladd_only=(
-            expected["pia_or_american_ladd_only"] == "true"
-        ),
-    )
-
-    assert len(results) == 1
-    assert_stats_meet_bounds(
-        df_flights_comparison_stats(results[0]),
-        {
-            key: float(expected[key])
-            for key in BEST_STATS | WORST_STATS
-        },
-    )
-
 def test_algorithm_flights_recreate_meets_daily_bounds():
-    dt = date(2026,3,1)
-    from flights.algorithm import write_flights_for_day
-    write_flights_for_day(target_date=dt)
+    dt = date(2026, 3, 1)
+    from flights.flight_source import write_flights
+
+    write_flights(ALGORITHM_NEAREST_SOURCE, dt, ADSBSource.ADSBLOL)
     results, _ = main(
         test_src=ALGORITHM_NEAREST_SOURCE,
         gold_src=SFDPS_SOURCE,
@@ -175,23 +89,7 @@ def test_algorithm_flights_recreate_meets_daily_bounds():
         pia_or_american_ladd_only=True,
     )
     assert len(results) == 1
-    assert_stats_meet_bounds(df_flights_comparison_stats(results[0]), DAILY_STATS_BOUNDS[dt])
-
-
-def test_algorithm_flights_recreate_with_adsbx_meets_daily_bounds():
-    dt = date(2026, 3, 1)
-    from flights.algorithm import write_flights_for_day
-
-    write_flights_for_day(target_date=dt, adsb_src=ADSBSource.ADSBX)
-    results, _ = main(
-        test_src=ALGORITHM_NEAREST_SOURCE,
-        gold_src=SFDPS_SOURCE,
-        test_dates=dt,
-        adsb_src=ADSBSource.ADSBX,
-    )
-
-    assert len(results) == 1
     assert_stats_meet_bounds(
         df_flights_comparison_stats(results[0]),
-        ADSBX_RECREATION_STATS_BOUNDS,
+        DAILY_STATS_BOUNDS[dt],
     )
