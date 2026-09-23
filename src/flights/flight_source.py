@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -17,6 +18,9 @@ class FlightSource(ABC):
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    def adsb_columns(self) -> Sequence[str] | None:
+        return None
+
     def adsb_read_interval(
         self,
         dt: date,
@@ -77,7 +81,11 @@ def get_flights(
     if isinstance(source, ADSBFlightSource):
         assert adsb_src is not None, f"{source.name} requires an ADS-B source"
         start, end = source.adsb_read_interval(dt)
-        df_adsb = read_adsb(start, end, source=adsb_src)
+        columns = source.adsb_columns()
+        if columns is None:
+            df_adsb = read_adsb(start, end, source=adsb_src)
+        else:
+            df_adsb = read_adsb(start, end, source=adsb_src, columns=columns)
         return source.create_flights_for_day(dt, df_adsb)
     if isinstance(source, NonADSBFlightSource):
         return source.create_flights_for_day(dt)

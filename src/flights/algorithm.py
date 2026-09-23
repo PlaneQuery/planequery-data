@@ -17,6 +17,9 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
     version: int = 3
 
+    def adsb_columns(self):
+        return segmentation.ADSB_ALGORITHM_COLUMNS
+
     def adsb_read_interval(self, dt: date) -> tuple[datetime, datetime]:
         return segmentation._day_bounds(dt)
 
