@@ -100,6 +100,30 @@ def test_main_passes_flight_source_object(monkeypatch):
     assert kwargs == {"adsb_source": ADSBSource.ADSBLOL}
 
 
+@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+def test_algorithm_sources_accept_opensky(monkeypatch, source_name):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "write_flights_range",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    cli.main(
+        [
+            "2026-03-01",
+            "2026-03-02",
+            source_name,
+            "--adsb-source",
+            "opensky",
+        ]
+    )
+
+    args, kwargs = calls[0]
+    assert args[2] is cli.FLIGHT_SOURCES_BY_NAME[source_name]
+    assert kwargs == {"adsb_source": ADSBSource.OPENSKY}
+
+
 def test_source_names_come_from_flight_source_objects():
     assert list(cli.FLIGHT_SOURCES_BY_NAME) == [
         source.name for source in cli.FLIGHT_SOURCES
