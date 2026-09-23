@@ -7,6 +7,11 @@ import pytest
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.evaluation.evaluation import main
 from flights.flights_comparison import df_flights_comparison_stats
+from flights.sources import (
+    ALGORITHM_NEAREST_SOURCE,
+    FLIGHT_SOURCES_BY_NAME,
+    SFDPS_SOURCE,
+)
 
 
 EVALUATION_STATS_PATH = (
@@ -98,7 +103,12 @@ def assert_stats_meet_bounds(
     ids=lambda test_date: test_date.isoformat(),
 )
 def test_model_to_sfdps_flight_evaluation_meets_daily_bounds(single_test_date: date):
-    results, _ = main(test_src="algorithm", gold_src="sfdps", test_dates=single_test_date, pia_or_american_ladd_only=True)
+    results, _ = main(
+        test_src=ALGORITHM_NEAREST_SOURCE,
+        gold_src=SFDPS_SOURCE,
+        test_dates=single_test_date,
+        pia_or_american_ladd_only=True,
+    )
 
     assert len(results) == 1
     assert_stats_meet_bounds(
@@ -121,9 +131,20 @@ def test_model_to_sfdps_flight_evaluation_meets_daily_bounds(single_test_date: d
     ),
 )
 def test_flight_evaluation_matrix_meets_recorded_bounds(expected: dict[str, str]):
+    recorded_test_source = expected["test_src"]
+    test_source = (
+        ALGORITHM_NEAREST_SOURCE
+        if recorded_test_source == "algorithm"
+        else FLIGHT_SOURCES_BY_NAME.get(recorded_test_source, recorded_test_source)
+    )
+    recorded_gold_source = expected["gold_src"]
+    gold_source = FLIGHT_SOURCES_BY_NAME.get(
+        recorded_gold_source,
+        recorded_gold_source,
+    )
     results, _ = main(
-        test_src=expected["test_src"],
-        gold_src=expected["gold_src"],
+        test_src=test_source,
+        gold_src=gold_source,
         test_dates=date.fromisoformat(expected["test_date"]),
         adsb_src=ADSBSource(expected["adsb_src"] or ADSBSource.ADSBLOL),
         matching_adsb_src=ADSBSource(expected["matching_adsb_src"]),
@@ -147,7 +168,12 @@ def test_algorithm_flights_recreate_meets_daily_bounds():
     dt = date(2026,3,1)
     from flights.algorithm import write_flights_for_day
     write_flights_for_day(target_date=dt)
-    results, _ = main(test_src="algorithm", gold_src="sfdps", test_dates=dt, pia_or_american_ladd_only=True)
+    results, _ = main(
+        test_src=ALGORITHM_NEAREST_SOURCE,
+        gold_src=SFDPS_SOURCE,
+        test_dates=dt,
+        pia_or_american_ladd_only=True,
+    )
     assert len(results) == 1
     assert_stats_meet_bounds(df_flights_comparison_stats(results[0]), DAILY_STATS_BOUNDS[dt])
 
@@ -158,8 +184,8 @@ def test_algorithm_flights_recreate_with_adsbx_meets_daily_bounds():
 
     write_flights_for_day(target_date=dt, adsb_src=ADSBSource.ADSBX)
     results, _ = main(
-        test_src="algorithm",
-        gold_src="sfdps",
+        test_src=ALGORITHM_NEAREST_SOURCE,
+        gold_src=SFDPS_SOURCE,
         test_dates=dt,
         adsb_src=ADSBSource.ADSBX,
     )

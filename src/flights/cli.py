@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Sequence
 
 from data_engineering.adsb.read_adsb import ADSBSource
-from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn import AlgorithmNNFlightSource
 from flights.flight_source import (
     ADSBFlightSource,
@@ -13,23 +12,14 @@ from flights.flight_source import (
     flight_path,
     write_flights,
 )
-from flights.providers.bts import BTSFlightSource
-from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
-from flights.providers.sfdps import SFDPSFlightSource
+from flights.sources import (
+    ALGORITHM_NN_SOURCE,
+    FLIGHT_SOURCES,
+    FLIGHT_SOURCES_BY_NAME,
+)
 from planequery_data.utils import date_range
 
-
-FLIGHT_SOURCES = (
-    AlgorithmNearestFlightSource(),
-    AlgorithmNNFlightSource(),
-    BTSFlightSource(),
-    EurocontrolFlightSource(),
-    MikeFlightSource(),
-    SFDPSFlightSource(),
-)
-FLIGHT_SOURCES_BY_NAME = {source.name: source for source in FLIGHT_SOURCES}
-assert len(FLIGHT_SOURCES_BY_NAME) == len(FLIGHT_SOURCES)
 
 def write_flights_range(
     start_date: date,
@@ -64,7 +54,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--airport-nn-model",
         type=Path,
-        help="Checkpoint used by algorithm-nn.",
+        help=f"Checkpoint used by {ALGORITHM_NN_SOURCE.name}.",
     )
     parser.add_argument(
         "--mike-input",
