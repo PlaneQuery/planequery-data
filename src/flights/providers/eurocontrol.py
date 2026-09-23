@@ -8,7 +8,7 @@ import polars as pl
 from airports.airport_lookup import AirportLookup
 from data_engineering.openairframes.read import get_openairframes_snapshot
 from data_engineering.utils import OUTPUT_DIR
-from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
 
 EUROCONTROL_COLUMNS = [
@@ -109,14 +109,3 @@ class EurocontrolFlightSource(NonADSBFlightSource):
 
     def create_flights_for_day(self, dt: date) -> pl.DataFrame:
         return create_eurocontrol_flights(dt)
-
-
-def get_eurocontrol_flights(
-    target_date: date,
-    use_cache: bool = True,
-) -> pl.DataFrame:
-    return get_flights(
-        EurocontrolFlightSource(),
-        target_date,
-        use_cache=use_cache,
-    )

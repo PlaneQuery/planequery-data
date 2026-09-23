@@ -6,7 +6,7 @@ import polars as pl
 from timezonefinder import TimezoneFinder
 
 from airports.airport_lookup import AirportLookup
-from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
@@ -116,7 +116,10 @@ def ident_to_timezone_mapping():
     airport_lookup.ident_index
     ident_to_timezone = {}
     for ident, airport in airport_lookup.ident_index.items():
-        tz = tf.timezone_at(lng=airport.lon, lat=airport.lat)
+        tz = tf.timezone_at(
+            lng=airport.longitude_deg,
+            lat=airport.latitude_deg,
+        )
         if tz:
             ident_to_timezone[ident] = tz
     lookup = pl.DataFrame({"ident": list(ident_to_timezone.keys()), "timezone": list(ident_to_timezone.values())})
@@ -246,18 +249,6 @@ class BTSFlightSource(NonADSBFlightSource):
 
     def create_flights_for_day(self, dt: date) -> pl.DataFrame:
         return create_flights_from_bts(dt)
-
-
-def get_bts_flights_for_day(
-    target_date: date,
-    use_cache: bool = True,
-) -> pl.DataFrame:
-    """Compatibility wrapper around the canonical flight-source reader."""
-    return get_flights(
-        BTSFlightSource(),
-        target_date,
-        use_cache=use_cache,
-    )
 
 
 if __name__ == "__main__":

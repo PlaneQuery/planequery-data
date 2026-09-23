@@ -3,12 +3,13 @@ from pathlib import Path
 import polars as pl
 
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-from flights.providers.bts import get_bts_flights_for_day
-from flights.providers.sfdps import get_sfdps_flights_day
 from data_engineering.utils import OUTPUT_DIR
 from flights.evaluation.american_evals import continental_usa_to_continental_usa
+from flights.flight_source import get_flights
 from flights.flights_comparison import df_flights_comparison
 from flights.flights_match_adsb import get_matching_icaos_in_flights
+from flights.providers.bts import BTSFlightSource
+from flights.providers.sfdps import SFDPSFlightSource
 
 
 def ground_truth_flights_output_path(target_date: date, adsb_src: ADSBSource) -> Path:
@@ -35,8 +36,8 @@ def get_ground_truth_flights_for_day(
     if use_cache and output_path.exists():
         return pl.read_parquet(output_path)
 
-    df_bts_flights = get_bts_flights_for_day(target_date)
-    df_sfdps_flights = get_sfdps_flights_day(target_date)
+    df_bts_flights = get_flights(BTSFlightSource(), target_date)
+    df_sfdps_flights = get_flights(SFDPSFlightSource(), target_date)
     shared_icaos = set(df_bts_flights["icao"].unique()) & (set(df_sfdps_flights["icao"].unique()))
     df_bts_flights = df_bts_flights.filter(pl.col("icao").is_in(shared_icaos))
     df_sfdps_flights = df_sfdps_flights.filter(pl.col("icao").is_in(shared_icaos))

@@ -20,8 +20,10 @@ def test_ground_truth_cache_reads_existing_parquet(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         ground_truth,
-        "get_bts_flights_for_day",
-        lambda _: (_ for _ in ()).throw(AssertionError("cache was not used")),
+        "get_flights",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cache was not used")
+        ),
     )
 
     result = ground_truth.get_ground_truth_flights_for_day(TARGET_DATE)
@@ -48,13 +50,8 @@ def test_ground_truth_generation_writes_daily_cache(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         ground_truth,
-        "get_bts_flights_for_day",
-        lambda _: flights.clone(),
-    )
-    monkeypatch.setattr(
-        ground_truth,
-        "get_sfdps_flights_day",
-        lambda _: flights.clone(),
+        "get_flights",
+        lambda *_args, **_kwargs: flights.clone(),
     )
     monkeypatch.setattr(
         ground_truth,
