@@ -11,8 +11,7 @@ Install PyTorch with `pip install -e '.[airport-nn]'`.
 The fixed split is:
 
 - Optimizer: February 1–20, 2026, ADSB.lol with BTS/SFDPS labels.
-- Validation: February 21–27, 2026, plus June 12 and 15, 2024, ADSB.lol with
-  EUROCONTROL labels.
+- Validation: February 21–27, 2026.
 - Unused buffer: February 28, 2026.
 - Benchmarks: March 1, 2026 and June 1, 2024. These have been examined previously
   and are not untouched tests.
@@ -24,34 +23,24 @@ flights under the configured storage root:
 python -m flights.airport_nn.data --workers 4 --output /path/to/february-cache
 ```
 
-Prepare each European validation day from an ADSB.lol Parquet root containing
-`year=2024/month=06/day=…/icao_bucket=…/` partitions. EUROCONTROL reference flights
-are read from the configured storage root. Use the same output directory for
-both dates; observations may come from different roots.
+Train from the prepared cache:
 
 ```bash
-python -m flights.airport_nn.data --europe --dates 2024-06-12 \
-  --parquet-root /path/to/adsblol --output /path/to/europe-cache
-python -m flights.airport_nn.data --europe --dates 2024-06-15 \
-  --parquet-root /path/to/adsblol --output /path/to/europe-cache
 python -m flights.airport_nn.train \
-  --cache /path/to/february-cache --europe-cache /path/to/europe-cache \
-  --output /path/to/new-model
+  --cache /path/to/february-cache --output /path/to/new-model
 ```
 
 Training starts from random weights and refuses to overwrite a model directory.
 It saves `model.pt`, input provenance, epoch history and validation predictions.
-Checkpoint selection averages daily weighted cross entropy, giving the US and
-Europe equal weight. Large/medium/small airports have loss weights 1/2/4.
+Checkpoint selection averages daily weighted cross entropy. Large/medium/small
+airports have loss weights 1/2/4.
 Early stopping follows three epochs without improvement.
 
 Preparation independently segments observations before matching references by
-aircraft and time. US matching allows 15 minutes at each end. European departure
-matching allows -5/+60 minutes from off-block, with arrival within 15 minutes.
-Ambiguous matches, overlapping references and cross-UTC-day flights are excluded.
-BTS labels are accepted directly; SFDPS-only labels require three ground/low
-observations within 2 km over at least ten seconds. European labels require no
-ground support. This supervision is imperfect and favors some traffic and
+aircraft and time, allowing 15 minutes at each end. Ambiguous matches, overlapping
+references and cross-UTC-day flights are excluded. BTS labels are accepted
+directly; SFDPS-only labels require three ground/low observations within 2 km over
+at least ten seconds. This supervision is imperfect and favors some traffic and
 reception conditions; measured agreement is not accuracy on all flights.
 
 Caches contain feature arrays, endpoint labels and a source manifest. Changed
@@ -74,13 +63,13 @@ null identifiers. Daily results use the canonical FlightSource layout under
 `data/flights/source=algorithm-nn/adsb_source=…/version=1/`. The model is not yet
 part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
-`data/models/flights_airport_nn/february-2026-europe-validation/model.pt`.
+`data/models/flights_airport_nn/february-2026/model.pt`.
 
 To score a prepared validation cache:
 
 ```bash
 python -m flights.airport_nn.evaluate --model /path/to/new-model/model.pt \
-  --cache /path/to/europe-cache --dates 2024-06-12 2024-06-15 \
+  --cache /path/to/february-cache --dates 2026-02-21 2026-02-22 \
   --output /path/to/scores
 ```
 
@@ -91,14 +80,14 @@ python -m flights.airport_nn.data --dates 2026-03-01 --workers 1 \
   --output /tmp/airport-nn-cache
 python -m flights.airport_nn.train --cache /tmp/airport-nn-cache \
   --output /tmp/airport-nn-model --epochs 1 --train-dates 2026-03-01 \
-  --validation-dates --europe-validation-dates
+  --validation-dates
 ```
 
 ## Code
 
 - `features.py`: candidate search and trajectory features shared by training/inference.
 - `model.py`: ranker and checkpoint loading.
-- `data.py`, `europe.py`: reference labels, matching and feature preparation.
+- `data.py`: reference labels, matching and feature preparation.
 - `train.py`, `evaluate.py`: optimization, checkpoint selection and scoring.
 - `inference.py`, `derive_day.py`: airport assignment and cached daily Flight output.
 

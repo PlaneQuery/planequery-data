@@ -1,4 +1,4 @@
-"""Prepare ADS-B airport-model training and European validation data."""
+"""Prepare ADS-B airport-model training and validation data."""
 
 import argparse
 import csv
@@ -21,7 +21,6 @@ from flights.providers.sfdps import SFDPSFlightSource
 from flights.segmentation.algorithm import _segment_adsb_df
 
 CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
-EUROPE_CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/europe-validation"
 TYPES = ("large_airport", "medium_airport", "small_airport")
 
 
@@ -182,7 +181,7 @@ def ground_support(messages, ident, boundary):
     return bool(len(times) >= 3 and times[-1] - times[0] >= 10_000)
 
 
-def prepare_part(day, refs, path, parquet_root=None, europe=False):
+def prepare_part(day, refs, path, parquet_root=None):
     start = datetime.combine(day, time())
     columns = COLUMNS + ["geom_altitude_ft", "callsign"]
     aircraft = refs["icao"].unique().to_list()
@@ -224,24 +223,11 @@ def prepare_part(day, refs, path, parquet_root=None, europe=False):
             "landing_time": pl.Datetime("ms"),
         },
     ).with_row_index("segment")
-    if europe:
-        from flights.airport_nn.europe import match_eurocontrol
-
-        matches = match_eurocontrol(segments, refs)
-    else:
-        matches = match_references(segments, refs)
+    matches = match_references(segments, refs)
     selected = segments.filter(pl.col("segment").is_in(matches["segment"].implode()))
     chosen = {k[0]: g for k, g in matches.partition_by("segment", as_dict=True).items()}
     tracks = messages.partition_by("icao", as_dict=True)
     endpoints = list(trajectories(selected, messages))
-    if europe:
-        # Preserve reference order used by European validation batches.
-        by_key = {(selected[e.row, "segment"], e.endpoint): e for e in endpoints}
-        endpoints = [
-            by_key[segment, end]
-            for segment in matches["segment"]
-            for end in ("takeoff", "landing")
-        ]
     rows = []
     for endpoint in endpoints:
         flight = selected.row(endpoint.row, named=True)
@@ -261,7 +247,7 @@ def prepare_part(day, refs, path, parquet_root=None, europe=False):
             ground_support(
                 tracks[(flight["icao"],)], truth, flight[f"{endpoint.endpoint}_time"]
             )
-            if truth and not europe
+            if truth
             else False
         )
         rows.append(
@@ -277,9 +263,7 @@ def prepare_part(day, refs, path, parquet_root=None, europe=False):
                 "source": "+".join(sorted(set(labels["source"]))),
                 "ground_supported": grounded,
                 "label_conflict": conflict,
-                "eligible": bool(
-                    truth and (europe or bts or grounded) and not conflict
-                ),
+                "eligible": bool(truth and (bts or grounded) and not conflict),
                 "nearest": endpoint.nearest,
                 "candidates": endpoint.airports,
                 "target": endpoint.airports.index(truth)
@@ -326,22 +310,14 @@ def prepare_part(day, refs, path, parquet_root=None, europe=False):
     }
 
 
-def prepare(
-    days, output=CACHE, workers=4, batch_aircraft=256, parquet_root=None, europe=False
-):
+def prepare(days, output=CACHE, workers=4, batch_aircraft=256, parquet_root=None):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     if workers < 1 or batch_aircraft < 1:
         raise ValueError("Workers and aircraft batch size must be positive")
     tasks = []
     for day in days:
-        if europe:
-            from flights.airport_nn.europe import references as european_references
-
-            refs, ref_path = european_references(day)
-            paths = [ref_path, Path(__file__).with_name("europe.py")]
-        else:
-            refs, paths = references(day)
+        refs, paths = references(day)
         raw_day = (
             _parquet_day_dir(day)
             if parquet_root is None
@@ -373,9 +349,7 @@ def prepare(
             "batch_aircraft": batch_aircraft,
             "parts": (len(aircraft) + batch_aircraft - 1) // batch_aircraft,
             "inputs": [fingerprint(p) for p in files],
-            "labels": "EUROCONTROL European endpoints"
-            if europe
-            else "BTS or ground-supported SFDPS; conflicts excluded",
+            "labels": "BTS or ground-supported SFDPS; conflicts excluded",
             "segmentation": "Fresh native segments from this UTC day only; no cached airport guesses",
         }
         dest = folder / "manifest.json"
@@ -395,7 +369,6 @@ def prepare(
                         ),
                         path,
                         parquet_root,
-                        europe,
                     )
                 )
     print(f"Preparing {len(tasks)} aircraft batches", flush=True)
@@ -422,11 +395,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dates", nargs="+", type=date.fromisoformat)
     parser.add_argument(
-        "--europe",
-        action="store_true",
-        help="Prepare EUROCONTROL validation, never optimizer data",
-    )
-    parser.add_argument(
         "--parquet-root",
         type=Path,
         help="ADSB.lol observations root containing year=/month=/day= partitions",
@@ -434,10 +402,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path)
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
-    if args.europe and not args.dates:
-        parser.error("European validation requires explicit --dates")
     days = args.dates or [date(2026, 2, d) for d in range(1, 28)]
-    output = args.output or (EUROPE_CACHE if args.europe else CACHE)
-    prepare(
-        days, output, args.workers, parquet_root=args.parquet_root, europe=args.europe
-    )
+    output = args.output or CACHE
+    prepare(days, output, args.workers, parquet_root=args.parquet_root)

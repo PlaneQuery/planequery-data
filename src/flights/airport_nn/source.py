@@ -11,7 +11,7 @@ from flights.flight_source import ADSBFlightSource
 
 DEFAULT_MODEL_PATH = (
     OUTPUT_DIR
-    / "data/models/flights_airport_nn/february-2026-europe-validation/model.pt"
+    / "data/models/flights_airport_nn/february-2026/model.pt"
 )
 
 
