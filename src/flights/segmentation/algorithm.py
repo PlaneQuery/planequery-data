@@ -36,7 +36,6 @@ AIRPORT_SIZE_RANK = {
     "large_airport": 2,
 }
 MAX_AIRPORT_CATALOG_WORKERS = 8
-MAX_SHORT_SAME_AIRPORT_DURATION = timedelta(minutes=25)
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
 MIN_AIRBORNE_RUN_MESSAGES = 2
@@ -131,12 +130,9 @@ class FlightSegment:
 
 @dataclass(frozen=True)
 class AirportGuess:
-    id: int | None
-    ident: str | None
-    distance_km: float | None
-    lat: float | None
-    lon: float | None
-    elevation_ft: int | None
+    id: int
+    ident: str
+    distance_km: float
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -542,50 +538,23 @@ def _airport_guess_for_message(
         id=best_match.id,
         ident=best_match.ident,
         distance_km=best_match.distance_km,
-        lat=best_match.airport.lat,
-        lon=best_match.airport.lon,
-        elevation_ft=best_match.airport.elevation_ft,
     )
 
 
 def _airport_guess_for_id(
     airport_catalog: AirportCatalogView,
-    airport_id: int | None,
+    airport_id: int,
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> AirportGuess:
-    if airport_id is None:
-        return AirportGuess(
-            id=None,
-            ident=None,
-            distance_km=None,
-            lat=None,
-            lon=None,
-            elevation_ft=None,
-        )
-
-    airport = airport_catalog.get_airport_by_id(airport_id)
-    if airport is None:
-        return AirportGuess(
-            id=None,
-            ident=None,
-            distance_km=None,
-            lat=None,
-            lon=None,
-            elevation_ft=None,
-        )
+    airport = airport_catalog.id_index[airport_id]
     return AirportGuess(
         id=airport.id,
         ident=airport.ident,
         distance_km=_airport_distance_to_message(airport, message),
-        lat=airport.lat,
-        lon=airport.lon,
-        elevation_ft=airport.elevation_ft,
     )
 
 
 def _airport_guess_is_confident(guess: AirportGuess) -> bool:
-    if guess.ident is None or guess.distance_km is None:
-        return False
     return guess.distance_km <= MAX_AIRPORT_IDENT_DISTANCE_KM
 
 
@@ -676,18 +645,6 @@ def _segments_to_flights_df(
         .select(list(FLIGHT_POLARS_SCHEMA.keys()))
         .cast(FLIGHT_POLARS_SCHEMA)
     )
-
-
-def _filter_short_same_airport_flights(flights_df: pl.DataFrame) -> pl.DataFrame:
-    same_airport = (
-        pl.col("takeoff_airport_id").is_not_null()
-        & pl.col("landing_airport_id").is_not_null()
-        & (pl.col("takeoff_airport_id") == pl.col("landing_airport_id"))
-    )
-    short_flight = (
-        pl.col("landing_time") - pl.col("takeoff_time")
-    ) <= MAX_SHORT_SAME_AIRPORT_DURATION
-    return flights_df.filter(~(same_airport & short_flight))
 
 
 def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
@@ -791,9 +748,7 @@ def create_flights_from_adsb(
         for segment in segments
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
-    return _filter_short_same_airport_flights(
-        _segments_to_flights_df(segments, airport_catalog)
-    )
+    return _segments_to_flights_df(segments, airport_catalog)
 
 
 def process_icaos(
