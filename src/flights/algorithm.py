@@ -24,7 +24,7 @@ from planequery_data.utils import date_range
 @dataclass(frozen=True)
 class AlgorithmNearestFlightSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
-    version: int = 5
+    version: int = 6
 
     def adsb_icao_batch_size(self) -> int:
         return 500
