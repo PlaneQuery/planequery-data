@@ -125,7 +125,7 @@ def test_create_mike_flights_rejects_unknown_non_null_airport_code(tmp_path):
         )
 
 
-def test_mike_input_contents_change_flight_path(monkeypatch, tmp_path):
+def test_mike_input_does_not_change_flight_path(monkeypatch, tmp_path):
     first_csv = tmp_path / "first" / "mike.csv"
     second_csv = tmp_path / "second" / "mike.csv"
     first_csv.parent.mkdir()
@@ -143,7 +143,7 @@ def test_mike_input_contents_change_flight_path(monkeypatch, tmp_path):
         date(2026, 3, 1),
     )
 
-    assert first_path != second_path
+    assert first_path == second_path
 
 
 def test_write_mike_flights_uses_canonical_daily_path(monkeypatch, tmp_path):
