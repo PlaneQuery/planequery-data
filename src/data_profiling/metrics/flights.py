@@ -12,6 +12,7 @@ from airports.polars_exprs import (
     airport_has_icao_code_expr,
     airport_size_expr,
 )
+from airports.runtime import airport_catalog_for_date
 
 
 AircraftCategoryKey: TypeAlias = AircraftAdsbCategory | Literal["unknown"]
@@ -87,13 +88,20 @@ class FlightsMetrics():
         self.generate_airport_statistics(df)
 
     def generate_airport_statistics(self, df: pl.DataFrame) -> None:
+        airport_catalog = airport_catalog_for_date(self.day)
         df = df.with_columns(
             expr
             for prefix in ("takeoff", "landing")
             for expr in (
-                airport_size_expr(f"{prefix}_airport_ident"),
-                airport_has_icao_code_expr(f"{prefix}_airport_ident"),
-                airport_has_iata_code_expr(f"{prefix}_airport_ident"),
+                airport_size_expr(airport_catalog, f"{prefix}_airport_id"),
+                airport_has_icao_code_expr(
+                    airport_catalog,
+                    f"{prefix}_airport_id",
+                ),
+                airport_has_iata_code_expr(
+                    airport_catalog,
+                    f"{prefix}_airport_id",
+                ),
             )
         )
         self.airport_statistics: dict[str, AirportDistribution] = {}

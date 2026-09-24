@@ -1,2 +1,2 @@
-test_date,test_src,gold_src,use_all_icaos,filter_rotorcraft,pia_or_american_ladd_only,true_positive,false_positive,false_negative,precision,recall,f1,airport_ident_match_pct
+test_date,test_src,gold_src,use_all_icaos,filter_rotorcraft,pia_or_american_ladd_only,true_positive,false_positive,false_negative,precision,recall,f1,airport_id_match_pct
 2026-03-01,algorithm,sfdps,false,false,true,792.0,14.0,30.0,0.9826302729528535,0.9635036496350365,0.9729729729729729,0.9313434343434344

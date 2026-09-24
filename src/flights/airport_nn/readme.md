@@ -45,9 +45,11 @@ directly; SFDPS-only labels require three ground/low observations within 2 km ov
 at least ten seconds. This supervision is imperfect and favors some traffic and
 reception conditions; measured agreement is not accuracy on all flights.
 
-Caches contain feature arrays, endpoint labels and a source manifest. Changed
-preparation inputs require a new cache directory. Candidate misses remain in
-accuracy denominators but cannot contribute to training cross entropy.
+Caches contain feature arrays, endpoint labels and a source manifest. Labels,
+candidate membership, conflicts, targets and evaluation correctness all use the
+persistent OurAirports `id`; airport identifiers are retained only for display.
+Changed preparation inputs require a new cache directory. Candidate misses remain
+in accuracy denominators but cannot contribute to training cross entropy.
 
 ## Inference
 
@@ -60,9 +62,10 @@ python src/flights/evaluation/evaluation.py \
 ```
 
 Inference supports `adsblol` and `adsbx`. It preserves the standard Flight schema
-and all fields except the two airport identifiers. Missing observations produce
-null identifiers. Daily results use the canonical FlightSource layout under
-`data/flights/source=algorithm-nn/adsb_source=…/version=1/`. The model is not yet
+and all fields except the two airport references (stable IDs and identifiers).
+Missing observations produce null airport references. Daily results use the
+canonical FlightSource layout under
+`data/flights/source=algorithm-nn/adsb_source=…/version=3/`. The model is not yet
 part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
 `data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.

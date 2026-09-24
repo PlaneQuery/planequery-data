@@ -32,6 +32,6 @@ python -m flights.cli 2025-08-01 2025-09-01 eurocontrol
 
 The Eurocontrol source extracts only the required `Flights_*.csv.gz` member to
 a temporary directory, creates `data/intermediate/eurocontrol/YYYYMM.parquet`,
-and writes daily files under `data/flights/source=eurocontrol/version=1/`.
+and writes daily files under `data/flights/source=eurocontrol/version=3/`.
 Temporary gzip/CSV files are removed automatically. Existing legacy extracted
 inputs remain supported as fallbacks.

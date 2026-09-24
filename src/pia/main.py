@@ -50,6 +50,10 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
         .with_row_index("_route_fix_row_nr")
         .sort(["icao", "takeoff_time"])
         .with_columns(
+            pl.col("takeoff_airport_id")
+            .shift(-1)
+            .over("icao")
+            .alias("_next_takeoff_airport_id"),
             pl.col("takeoff_airport_ident")
             .shift(-1)
             .over("icao")
@@ -57,15 +61,26 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
         )
         .with_columns(
             pl.when(
-                pl.col("_next_takeoff_airport_ident").is_not_null()
-                & (pl.col("landing_airport_ident") != pl.col("_next_takeoff_airport_ident"))
+                pl.col("_next_takeoff_airport_id").is_not_null()
+                & (pl.col("landing_airport_id") != pl.col("_next_takeoff_airport_id"))
+            )
+            .then(pl.col("_next_takeoff_airport_id"))
+            .otherwise(pl.col("landing_airport_id"))
+            .alias("landing_airport_id"),
+            pl.when(
+                pl.col("_next_takeoff_airport_id").is_not_null()
+                & (pl.col("landing_airport_id") != pl.col("_next_takeoff_airport_id"))
             )
             .then(pl.col("_next_takeoff_airport_ident"))
             .otherwise(pl.col("landing_airport_ident"))
             .alias("landing_airport_ident")
         )
         .sort("_route_fix_row_nr")
-        .drop(["_route_fix_row_nr", "_next_takeoff_airport_ident"])
+        .drop([
+            "_route_fix_row_nr",
+            "_next_takeoff_airport_id",
+            "_next_takeoff_airport_ident",
+        ])
     )
 
 def main(start_date, end_date):

@@ -1,7 +1,12 @@
 
 from datetime import timedelta
 from enum import Enum, unique
-from flights.flight_type import Flight, add_lat_lon_to_airport_ident_columns, flights_df_to_flights
+from airports.catalog import AirportCatalogView
+from flights.flight_type import (
+    Flight,
+    add_lat_lon_to_airport_columns,
+    flights_df_to_flights,
+)
 import polars as pl
 from itertools import zip_longest
 from planequery_data.utils import haversine
@@ -59,7 +64,12 @@ def compare_flight(f0: Flight, f1: Flight, compare_airports = True):
     if abs(f0.takeoff_time - f1.takeoff_time) > MAX_TIME_DIFF or abs(f0.landing_time - f1.landing_time) > MAX_TIME_DIFF:
         return False
     if compare_airports:
-        if f0.takeoff_airport_ident != f1.takeoff_airport_ident or f0.landing_airport_ident != f1.landing_airport_ident:
+        if (
+            f0.takeoff_airport_id is None
+            or f0.landing_airport_id is None
+            or f0.takeoff_airport_id != f1.takeoff_airport_id
+            or f0.landing_airport_id != f1.landing_airport_id
+        ):
             return False
     return True
 
@@ -98,7 +108,15 @@ def flights_comparison(flights_0: list[Flight], flights_1: list[Flight], start_d
     return (f0_series, f1_series)
 
 # we return the maps of what they map to and then.... we create both, df0, df1. in the dataframe I'll keep the original order those rows will just haven null for i.e the df1 columns
-def df_flights_comparison(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_dt, grace_period = timedelta(minutes=30), compare_airports= True): # TODO: do something about start_dt, end_dt, what are their types? and Can they have default vlaues and/or not use them? 
+def df_flights_comparison(
+    df_0: pl.DataFrame,
+    df_1: pl.DataFrame,
+    start_dt,
+    end_dt,
+    airport_catalog: AirportCatalogView,
+    grace_period=timedelta(minutes=30),
+    compare_airports=True,
+):
     # TODO: check if discrad logic is still being done? Dosen't seem to show up in most places...
     df_0 = _with_comparison_endpoint_columns(df_0)
     df_1 = _with_comparison_endpoint_columns(df_1)
@@ -131,7 +149,7 @@ def df_flights_comparison(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_
             )
             .filter(~pl.col("discard"))
         )
-        df1 = add_lat_lon_to_airport_ident_columns(df1)
+        df1 = add_lat_lon_to_airport_columns(df1, airport_catalog)
         df = df0.join(
             df1,
             left_on="idx",
@@ -157,29 +175,31 @@ def df_flights_comparison(df_0: pl.DataFrame, df_1: pl.DataFrame, start_dt, end_
     df = df.with_columns(
     pl.when(
         (pl.col("match_status") == "both")
-        & (pl.col("takeoff_airport_ident") == pl.col("takeoff_airport_ident_df1"))
+        & pl.col("takeoff_airport_id").is_not_null()
+        & (pl.col("takeoff_airport_id") == pl.col("takeoff_airport_id_df1"))
     )
     .then(True)
     .otherwise(False)
-    .alias("same_takeoff_airport_ident")
+    .alias("same_takeoff_airport_id")
     )
     df = df.with_columns(
     pl.when(
         (pl.col("match_status") == "both")
-        & (pl.col("landing_airport_ident") == pl.col("landing_airport_ident_df1"))
+        & pl.col("landing_airport_id").is_not_null()
+        & (pl.col("landing_airport_id") == pl.col("landing_airport_id_df1"))
     )
     .then(True)
     .otherwise(False)
-    .alias("same_landing_airport_ident")
+    .alias("same_landing_airport_id")
     )
     df = df.with_columns(
     pl.when(
         (pl.col("match_status") == "both")
-        & (pl.col("same_takeoff_airport_ident") & pl.col("same_landing_airport_ident"))
+        & (pl.col("same_takeoff_airport_id") & pl.col("same_landing_airport_id"))
     )
     .then(True)
     .otherwise(False)
-    .alias("same_airport_ident")
+    .alias("same_airport_id")
     )
 
         # last/first message diffrence and takeoff/landing airport ident distance from last/first lat/lon from df1 (gold) 
@@ -234,12 +254,12 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
     recall = true_positive / recall_denominator if recall_denominator else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
-    takeoff_airport_ident_match = df.filter(pl.col("same_takeoff_airport_ident")).height
-    landing_airport_ident_match = df.filter(pl.col("same_landing_airport_ident")).height
-    airport_ident_match = df.filter(pl.col("same_airport_ident")).height
-    takeoff_airport_ident_match_pct = takeoff_airport_ident_match / true_positive if true_positive else 0.0
-    landing_airport_ident_match_pct = landing_airport_ident_match / true_positive if true_positive else 0.0
-    airport_ident_match_pct = airport_ident_match / true_positive if true_positive else 0.0
+    takeoff_airport_id_match = df.filter(pl.col("same_takeoff_airport_id")).height
+    landing_airport_id_match = df.filter(pl.col("same_landing_airport_id")).height
+    airport_id_match = df.filter(pl.col("same_airport_id")).height
+    takeoff_airport_id_match_pct = takeoff_airport_id_match / true_positive if true_positive else 0.0
+    landing_airport_id_match_pct = landing_airport_id_match / true_positive if true_positive else 0.0
+    airport_id_match_pct = airport_id_match / true_positive if true_positive else 0.0
     return {
         "true_positive": true_positive,
         "false_positive": false_positive,
@@ -249,22 +269,22 @@ def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
         "f1": f1,
         # Keep the underlying counts alongside the rates so evaluation output
         # shows how many matched flights had the correct airport assignment.
-        "takeoff_airport_ident_total_count": true_positive,
-        "takeoff_airport_ident_match_count": takeoff_airport_ident_match,
-        "takeoff_airport_ident_incorrect_match_count": (
-            true_positive - takeoff_airport_ident_match
+        "takeoff_airport_id_total_count": true_positive,
+        "takeoff_airport_id_match_count": takeoff_airport_id_match,
+        "takeoff_airport_id_incorrect_match_count": (
+            true_positive - takeoff_airport_id_match
         ),
-        "takeoff_airport_ident_match_pct": takeoff_airport_ident_match_pct,
-        "landing_airport_ident_total_count": true_positive,
-        "landing_airport_ident_match_count": landing_airport_ident_match,
-        "landing_airport_ident_incorrect_match_count": (
-            true_positive - landing_airport_ident_match
+        "takeoff_airport_id_match_pct": takeoff_airport_id_match_pct,
+        "landing_airport_id_total_count": true_positive,
+        "landing_airport_id_match_count": landing_airport_id_match,
+        "landing_airport_id_incorrect_match_count": (
+            true_positive - landing_airport_id_match
         ),
-        "landing_airport_ident_match_pct": landing_airport_ident_match_pct,
-        "airport_ident_total_count": true_positive,
-        "airport_ident_match_count": airport_ident_match,
-        "airport_ident_incorrect_match_count": (
-            true_positive - airport_ident_match
+        "landing_airport_id_match_pct": landing_airport_id_match_pct,
+        "airport_id_total_count": true_positive,
+        "airport_id_match_count": airport_id_match,
+        "airport_id_incorrect_match_count": (
+            true_positive - airport_id_match
         ),
-        "airport_ident_match_pct": airport_ident_match_pct,
+        "airport_id_match_pct": airport_id_match_pct,
     }

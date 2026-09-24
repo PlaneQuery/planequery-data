@@ -5,9 +5,10 @@ from pathlib import Path
 
 import polars as pl
 
+from airports.catalog import AirportCatalogView
 from data_engineering.utils import OUTPUT_DIR
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.flight_source import ADSBFlightSource
+from flights.flight_source import ADSBFlightSource, file_artifact_cache_key
 
 
 DEFAULT_MODEL_PATH = (
@@ -19,11 +20,14 @@ DEFAULT_MODEL_PATH = (
 @dataclass(frozen=True)
 class AlgorithmNNFlightSource(ADSBFlightSource):
     name: str = "algorithm-nn"
-    version: int = 1
+    version: int = 3
     model_path: Path = DEFAULT_MODEL_PATH
 
     def adsb_icao_batch_size(self) -> int:
         return 256
+
+    def artifact_cache_key(self) -> str:
+        return file_artifact_cache_key("model", self.model_path)
 
     def adsb_columns(self):
         from flights.airport_nn.features import COLUMNS
@@ -44,8 +48,18 @@ class AlgorithmNNFlightSource(ADSBFlightSource):
         self,
         dt: date,
         df_adsb: pl.DataFrame,
+        airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
         from flights.airport_nn.inference import predict_flights
 
-        flights = AlgorithmNearestFlightSource().create_flights_for_day(dt, df_adsb)
-        return predict_flights(flights, df_adsb, self.model)
+        flights = AlgorithmNearestFlightSource().create_flights_for_day(
+            dt,
+            df_adsb,
+            airport_catalog,
+        )
+        return predict_flights(
+            flights,
+            df_adsb,
+            self.model,
+            airport_catalog,
+        )

@@ -5,13 +5,12 @@ from zoneinfo import ZoneInfo
 import polars as pl
 from timezonefinder import TimezoneFinder
 
-from airports.airport_lookup import AirportLookup
+from airports.catalog import AirportCatalogView
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
 
-airport_lookup = AirportLookup()
 tf = TimezoneFinder()
 
 COLUMNS = set([
@@ -112,22 +111,42 @@ def _compute_bts_timestamps(row: dict) -> dict:
     return {"time_takeoff": takeoff_utc, "time_landing": landing_utc}
 
 
-def ident_to_timezone_mapping():
-    airport_lookup.ident_index
-    ident_to_timezone = {}
-    for ident, airport in airport_lookup.ident_index.items():
+def airport_timezone_mapping(airport_catalog: AirportCatalogView) -> pl.DataFrame:
+    rows = []
+    for airport in airport_catalog.airports:
         tz = tf.timezone_at(
             lng=airport.lon,
             lat=airport.lat,
         )
         if tz:
-            ident_to_timezone[ident] = tz
-    lookup = pl.DataFrame({"ident": list(ident_to_timezone.keys()), "timezone": list(ident_to_timezone.values())})
-    return lookup
-def iata_to_ident_mapping():
-    airport_lookup.iata_to_ident_index
-    lookup = pl.DataFrame({"iata": list(airport_lookup.iata_to_ident_index.keys()), "ident": list(airport_lookup.iata_to_ident_index.values())})
-    return lookup
+            rows.append({"airport_id": airport.id, "timezone": tz})
+    return pl.DataFrame(
+        rows,
+        schema={"airport_id": pl.Int64, "timezone": pl.String},
+    )
+
+
+def iata_airport_mapping(
+    airport_catalog: AirportCatalogView,
+    codes: list[str],
+) -> pl.DataFrame:
+    resolved = []
+    for code in sorted(set(codes)):
+        airport = airport_catalog.resolve_code(
+            code,
+            code_priority=("iata_code",),
+        )
+        if airport is None:
+            raise ValueError(f"Unknown BTS IATA airport code {code!r}")
+        resolved.append((code, airport))
+    return pl.DataFrame(
+        {
+            "iata": [code for code, _ in resolved],
+            "airport_id": [airport.id for _, airport in resolved],
+            "ident": [airport.ident for _, airport in resolved],
+        },
+        schema={"iata": pl.String, "airport_id": pl.Int64, "ident": pl.String},
+    )
 def get_registration_to_icao() -> pl.DataFrame:
     return (
         scan_latest_faa_registration_icao_for_join(real_icao_column="icao")
@@ -155,7 +174,11 @@ def _remove_overlapping_flights(
     return df.sort(["icao", "takeoff_time"])
 
 
-def _create_flights_from_bts_month(year: int, month: int) -> pl.DataFrame:
+def _create_flights_from_bts_month(
+    year: int,
+    month: int,
+    airport_catalog: AirportCatalogView,
+) -> pl.DataFrame:
     '''
     On 2025, 10 for example some flights from UTC day 2025-11-01 and 2025-09-30 are included
     '''
@@ -178,12 +201,35 @@ def _create_flights_from_bts_month(year: int, month: int) -> pl.DataFrame:
     df = df.rename({"tail_num": "registration"})
     mapping = get_registration_to_icao()
     df = df.join(mapping, on="registration", how="inner")
-    mapping = iata_to_ident_mapping()
-    df = df.join(mapping, left_on="origin", right_on="iata", how="inner").rename({"ident": "takeoff_airport_ident"})
-    df = df.join(mapping, left_on="dest", right_on="iata", how="inner").rename({"ident": "landing_airport_ident"})
-    mapping = ident_to_timezone_mapping()
-    df = df.join(mapping, left_on="takeoff_airport_ident", right_on="ident", how="inner").rename({"timezone": "origin_timezone"})
-    df = df.join(mapping, left_on="landing_airport_ident", right_on="ident", how="inner").rename({"timezone": "dest_timezone"})
+    airport_codes = pl.concat(
+        [df.get_column("origin"), df.get_column("dest")]
+    ).drop_nulls().unique().to_list()
+    mapping = iata_airport_mapping(airport_catalog, airport_codes)
+    df = df.join(mapping, left_on="origin", right_on="iata", how="inner").rename(
+        {
+            "airport_id": "takeoff_airport_id",
+            "ident": "takeoff_airport_ident",
+        }
+    )
+    df = df.join(mapping, left_on="dest", right_on="iata", how="inner").rename(
+        {
+            "airport_id": "landing_airport_id",
+            "ident": "landing_airport_ident",
+        }
+    )
+    mapping = airport_timezone_mapping(airport_catalog)
+    df = df.join(
+        mapping,
+        left_on="takeoff_airport_id",
+        right_on="airport_id",
+        how="inner",
+    ).rename({"timezone": "origin_timezone"})
+    df = df.join(
+        mapping,
+        left_on="landing_airport_id",
+        right_on="airport_id",
+        how="inner",
+    ).rename({"timezone": "dest_timezone"})
     df = df.with_columns(
         pl.col("fl_date")
         .str.to_datetime(format="%m/%d/%Y %I:%M:%S %p", strict=False)
@@ -230,11 +276,15 @@ def _create_flights_from_bts_month(year: int, month: int) -> pl.DataFrame:
     return df.with_columns(pl.col("icao").str.to_lowercase())
 
 
-def create_flights_from_bts(target_date: date) -> pl.DataFrame:
+def create_flights_from_bts(
+    target_date: date,
+    airport_catalog: AirportCatalogView,
+) -> pl.DataFrame:
     """Create the finalized BTS flights dataframe for one UTC takeoff day."""
     monthly_df = _create_flights_from_bts_month(
         target_date.year,
         target_date.month,
+        airport_catalog,
     )
     daily_df = monthly_df.filter(
         pl.col("takeoff_time").dt.date() == target_date
@@ -245,12 +295,22 @@ def create_flights_from_bts(target_date: date) -> pl.DataFrame:
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 4
+    version: int = 6
 
-    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
-        return create_flights_from_bts(dt)
+    def create_flights_for_day(
+        self,
+        dt: date,
+        airport_catalog: AirportCatalogView,
+    ) -> pl.DataFrame:
+        return create_flights_from_bts(dt, airport_catalog)
 
 
 if __name__ == "__main__":
-    df = create_flights_from_bts(date(2026, 3, 1))
+    from airports.runtime import airport_catalog_for_date
+
+    target_date = date(2026, 3, 1)
+    df = create_flights_from_bts(
+        target_date,
+        airport_catalog_for_date(target_date),
+    )
     print(df)
