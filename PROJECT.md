@@ -23,7 +23,7 @@ Tasks that directly advance the current milestone.
 
 - [ x ] Hookup 8TB harddrive
 - [ x ] Figure out Ourairports.com changes over time
-- [ ] Change flights run to no logner delete ADS-B files downloaded. 
+- [ x ] Change flights run to no logner delete ADS-B files downloaded. 
 - [ ] Start 1 year flights run.
 - [ ] Figure out how to deal with any missing ADS-B days
 - [ ] Determine which days have less flights because of missing ADS-B data
