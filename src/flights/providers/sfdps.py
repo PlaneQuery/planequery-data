@@ -1,4 +1,5 @@
 import argparse
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -10,6 +11,9 @@ from flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.swim.utils import MISSING_SFDPS_DAYS
 from flights.flight_source import NonADSBFlightSource, get_flights
+
+
+logger = logging.getLogger(__name__)
 
 
 ADSB_ICAO_INFO_COLUMNS = [
@@ -55,29 +59,49 @@ def resolve_sfdps_airports(
     df_flights: pl.DataFrame,
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
-    """Replace SFDPS point codes with stable IDs and date-correct identifiers."""
+    """Resolve SFDPS point codes, mapping non-airport codes to null."""
+    airport_codes = pl.concat(
+        df_flights.select(pl.col(column).alias("code"))
+        for column in SFDPS_AIRPORT_IDENT_COLUMNS
+    ).drop_nulls()
     codes = (
-        pl.concat(
-            df_flights.select(pl.col(column).alias("code"))
-            for column in SFDPS_AIRPORT_IDENT_COLUMNS
-        )
+        airport_codes
         .get_column("code")
-        .drop_nulls()
         .unique()
+        .sort()
         .to_list()
     )
 
     code_to_id: dict[str, int] = {}
     code_to_ident: dict[str, str] = {}
+    unresolved_codes: list[str] = []
     for code in codes:
         airport = airport_catalog.resolve_code(
             code,
             code_priority=SFDPS_AIRPORT_CODE_PRIORITY,
         )
         if airport is None:
-            raise ValueError(f"Unknown SFDPS airport code {code!r}")
+            unresolved_codes.append(code)
+            continue
         code_to_id[code] = airport.id
         code_to_ident[code] = airport.ident
+
+    if unresolved_codes:
+        unresolved_counts = (
+            airport_codes.filter(pl.col("code").is_in(unresolved_codes))
+            .group_by("code")
+            .len()
+            .sort("code")
+            .rows()
+        )
+        details = ", ".join(
+            f"{code!r} ({count} occurrence{'s' if count != 1 else ''})"
+            for code, count in unresolved_counts
+        )
+        logger.warning(
+            "SFDPS unresolved airport/point codes mapped to null: %s",
+            details,
+        )
 
     return df_flights.with_columns(
         *[
@@ -411,7 +435,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 3
+    version: int = 4
 
     def create_flights_for_day(
         self,
