@@ -21,8 +21,8 @@ Publish flights from 2024-01-01 -> 2026-09-24
 
 Tasks that directly advance the current milestone.
 
-- [ ] Hookup 8TB harddrive
-- [ ] Figure out Ourairports.com changes over time
+- [ x ] Hookup 8TB harddrive
+- [ x ] Figure out Ourairports.com changes over time
 - [ ] Change flights run to no logner delete ADS-B files downloaded. 
 - [ ] Start 1 year flights run.
 - [ ] Figure out how to deal with any missing ADS-B days
