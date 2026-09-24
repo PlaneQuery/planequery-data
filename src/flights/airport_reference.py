@@ -8,10 +8,12 @@ from airports.models import Airport
 
 def airport_from_reference(
     airport_catalog: AirportCatalogView,
-    airport_id: int,
-) -> Airport:
-    """Resolve a flight endpoint from its stable OurAirports ID."""
-    return airport_catalog.id_index[airport_id]
+    airport_id: int | None,
+) -> Airport | None:
+    """Resolve a flight endpoint, returning ``None`` when it is unavailable."""
+    if airport_id is None:
+        return None
+    return airport_catalog.id_index.get(airport_id)
 
 
 def resolve_flight_airport_codes(
