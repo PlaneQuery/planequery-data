@@ -1,12 +1,17 @@
 import argparse
-import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Sequence
 
 import polars as pl
 
+from airports.catalog import AirportCatalogView
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
+from flights.airport_catalog_manifest import (
+    AirportCatalogManifest,
+    airport_catalog_manifest_path,
+)
 from flights.flight_source import (
     ADSBFlightSource,
     flight_path,
@@ -19,7 +24,7 @@ from planequery_data.utils import date_range
 @dataclass(frozen=True)
 class AlgorithmNearestFlightSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
-    version: int = 3
+    version: int = 5
 
     def adsb_icao_batch_size(self) -> int:
         return 500
@@ -34,8 +39,13 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
         self,
         dt: date,
         df_adsb: pl.DataFrame,
+        airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
-        return segmentation.create_flights_from_adsb(df_adsb, dt)
+        return segmentation.create_flights_from_adsb(
+            df_adsb,
+            dt,
+            airport_catalog,
+        )
 
 
 def get_flights_range(
@@ -56,6 +66,7 @@ def get_flights_range(
 
 def create_flights_for_day(
     target_date: date,
+    airport_catalog: AirportCatalogView,
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
@@ -73,7 +84,12 @@ def create_flights_for_day(
         ground_truth_only=ground_truth_only,
         source=adsb_src,
         max_workers=max_workers,
+        airport_catalog=airport_catalog,
     )
+
+
+def default_max_workers() -> int:
+    return segmentation._number_of_workers_default()
 
 
 def write_flights_for_day(
@@ -86,8 +102,10 @@ def write_flights_for_day(
     max_workers: int | None = None,
 ) -> pl.DataFrame:
     adsb_src = ADSBSource(adsb_src)
+    airport_catalog = airport_catalog_for_date(target_date)
     flights_df = create_flights_for_day(
         target_date=target_date,
+        airport_catalog=airport_catalog,
         icaos=icaos,
         pia_or_american_ladd_only=pia_or_american_ladd_only,
         sfdps_or_bts_only=sfdps_or_bts_only,
@@ -98,7 +116,11 @@ def write_flights_for_day(
     output_path = flight_path(AlgorithmNearestFlightSource(), target_date, adsb_src)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
+    AirportCatalogManifest.from_provenance(
+        airport_catalog.provenance
+    ).write(airport_catalog_manifest_path(output_path))
     return flights_df
+
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
@@ -113,7 +135,7 @@ def cli() -> None:
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=max(1, (os.cpu_count() or 1) // 2),
+        default=default_max_workers(),
     )
     parser.add_argument("--pia-or-american-ladd-only", action="store_true")
     parser.add_argument("--sfdps-or-bts-only", action="store_true")

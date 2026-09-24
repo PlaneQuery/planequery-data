@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import polars as pl
 
-from airports.airport_lookup import AirportLookup
+from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import scan_adsb
 from flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
@@ -35,6 +35,12 @@ SFDPS_AIRPORT_IDENT_COLUMNS = (
     "takeoff_airport_ident",
     "landing_airport_ident",
 )
+SFDPS_AIRPORT_CODE_PRIORITY = (
+    "icao_code",
+    "ident",
+    "gps_code",
+    "local_code",
+)
 
 
 def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
@@ -45,12 +51,11 @@ def _missing_sfdps_days() -> set[date]:
     return set(MISSING_SFDPS_DAYS)
 
 
-def resolve_sfdps_airport_idents(
+def resolve_sfdps_airports(
     df_flights: pl.DataFrame,
-    airport_lookup: AirportLookup | None = None,
+    airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
-    """Replace SFDPS point codes with canonical OurAirports identifiers."""
-    airport_lookup = airport_lookup or AirportLookup()
+    """Replace SFDPS point codes with stable IDs and date-correct identifiers."""
     codes = (
         pl.concat(
             df_flights.select(pl.col(column).alias("code"))
@@ -62,21 +67,37 @@ def resolve_sfdps_airport_idents(
         .to_list()
     )
 
-    code_to_ident: dict[str, str | None] = {}
+    code_to_id: dict[str, int] = {}
+    code_to_ident: dict[str, str] = {}
     for code in codes:
-        try:
-            airport = airport_lookup.get_airport_from_code(code)
-        except ValueError:
-            airport = None
-        code_to_ident[code] = airport.ident if airport is not None else None
+        airport = airport_catalog.resolve_code(
+            code,
+            code_priority=SFDPS_AIRPORT_CODE_PRIORITY,
+        )
+        if airport is None:
+            raise ValueError(f"Unknown SFDPS airport code {code!r}")
+        code_to_id[code] = airport.id
+        code_to_ident[code] = airport.ident
 
     return df_flights.with_columns(
-        pl.col(column).replace_strict(
-            code_to_ident,
-            default=None,
-            return_dtype=pl.String,
-        )
-        for column in SFDPS_AIRPORT_IDENT_COLUMNS
+        *[
+            expression
+            for column in SFDPS_AIRPORT_IDENT_COLUMNS
+            for expression in (
+                pl.col(column)
+                .replace_strict(
+                    code_to_id,
+                    default=None,
+                    return_dtype=pl.Int64,
+                )
+                .alias(column.removesuffix("_ident") + "_id"),
+                pl.col(column).replace_strict(
+                    code_to_ident,
+                    default=None,
+                    return_dtype=pl.String,
+                ),
+            )
+        ]
     )
 
 
@@ -369,14 +390,20 @@ def sfdps_flights_derive_icao(df_sfdps_flights: pl.DataFrame, current_day: datet
     return add_adsb_icao_info(df_flights, current_day)
 
 
-def create_sfdps_flights_day(target_date: date) -> pl.DataFrame:
+def create_sfdps_flights_day(
+    target_date: date,
+    airport_catalog: AirportCatalogView,
+) -> pl.DataFrame:
     assert target_date not in _missing_sfdps_days()
     assert target_date >= date(2026, 1, 1)
     day_dt = datetime(target_date.year, target_date.month, target_date.day)
     df_flights = sfdps_to_flights(day_dt)
     df_flights = filter_sfdps_flights(df_flights, day_dt)
     df_flights = sfdps_flights_derive_icao(df_flights, day_dt)
-    df_flights = resolve_sfdps_airport_idents(df_flights)
+    df_flights = resolve_sfdps_airports(
+        df_flights,
+        airport_catalog,
+    )
     df_flights = df_flights.sort(["icao", "takeoff_time"])
     return df_flights
 
@@ -384,10 +411,14 @@ def create_sfdps_flights_day(target_date: date) -> pl.DataFrame:
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 1
+    version: int = 3
 
-    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
-        return create_sfdps_flights_day(dt)
+    def create_flights_for_day(
+        self,
+        dt: date,
+        airport_catalog: AirportCatalogView,
+    ) -> pl.DataFrame:
+        return create_sfdps_flights_day(dt, airport_catalog)
 
 
 def main() -> None:

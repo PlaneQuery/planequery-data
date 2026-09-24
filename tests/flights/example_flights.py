@@ -8,6 +8,16 @@ A0205C_DATE = date(2026, 4, 1)
 A0205C_ICAO = "a0205c"
 A008C9_DATE = date(2026, 3, 1)
 A008C9_ICAO = "a008c9"
+AIRPORT_IDS = {
+    "KCHS": 3450,
+    "KCLT": 3457,
+    "KIAH": 3604,
+    "KMEM": 3675,
+    "KMSP": 3709,
+    "KORD": 3754,
+    "KRDU": 3844,
+    "MMOX": 4736,
+}
 
 
 
@@ -27,8 +37,10 @@ def _a0205c_flight(
         aircraft_description="EMBRAER ERJ-170-200 (long wing)",
         owner="SKYWEST AIRLINES INC",
         takeoff_time=takeoff_time,
+        takeoff_airport_id=AIRPORT_IDS[takeoff_airport_ident],
         takeoff_airport_ident=takeoff_airport_ident,
         landing_time=landing_time,
+        landing_airport_id=AIRPORT_IDS[landing_airport_ident],
         landing_airport_ident=landing_airport_ident,
         military=False,
         interesting=False,
@@ -92,8 +104,10 @@ A008C9_FLIGHTS = [
         callsign="",
         registration="",
         takeoff_time=datetime(2026, 3, 1, 0, 1, 21, 820000),
+        takeoff_airport_id=AIRPORT_IDS["KRDU"],
         takeoff_airport_ident="KRDU",
         landing_time=datetime(2026, 3, 1, 2, 32, 54, 110000),
+        landing_airport_id=AIRPORT_IDS["KMSP"],
         landing_airport_ident="KMSP",
         first_message_time=datetime(2026, 3, 1, 0, 0, 4, 280000),
         first_lat=35.892368,
@@ -115,8 +129,10 @@ A008C9_FLIGHTS = [
         callsign="",
         registration="",
         takeoff_time=datetime(2026, 3, 1, 16, 44, 31, 300000),
+        takeoff_airport_id=AIRPORT_IDS["KMSP"],
         takeoff_airport_ident="KMSP",
         landing_time=datetime(2026, 3, 1, 18, 50, 4, 310000),
+        landing_airport_id=AIRPORT_IDS["KCHS"],
         landing_airport_ident="KCHS",
         first_message_time=datetime(2026, 3, 1, 2, 34, 55, 250000),
         first_lat=44.885822,
@@ -139,8 +155,10 @@ A008C9_FLIGHTS = [
         callsign="",
         registration="",
         takeoff_time=datetime(2026, 3, 1, 20, 5, 43, 730000),
+        takeoff_airport_id=AIRPORT_IDS["KCHS"],
         takeoff_airport_ident="KCHS",
         landing_time=datetime(2026, 3, 1, 22, 56, 28, 320000),
+        landing_airport_id=AIRPORT_IDS["KMSP"],
         landing_airport_ident="KMSP",
         first_message_time=datetime(2026, 3, 1, 20, 5, 40, 940000),
         first_lat=32.887247,

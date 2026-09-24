@@ -7,13 +7,21 @@ from src.flights.evaluation.flights_test_package import FlightsTestPackage
 # A reduced a0205c itinerary from the flight-data export. The final flight
 # crosses midnight, so this package reads through the following day.
 A0205C_ICAO = "a0205c"
+A0205C_AIRPORT_IDS = {
+    "KCLT": 3457,
+    "KIAH": 3604,
+    "KMEM": 3675,
+    "KORD": 3754,
+}
 A0205C_FLIGHTS = [ # WHY IS THIS NOT PASSING THE FLIGHTS_MATCH_ADSB now ??? 
     Flight(
         icao=A0205C_ICAO,
         registration="N107SY",
         takeoff_time=datetime(2026, 4, 1, 0, 16),
+        takeoff_airport_id=A0205C_AIRPORT_IDS["KORD"],
         takeoff_airport_ident="KORD",
         landing_time=datetime(2026, 4, 1, 1, 40),
+        landing_airport_id=A0205C_AIRPORT_IDS["KMEM"],
         landing_airport_ident="KMEM",
         category="A3",
     ),
@@ -21,8 +29,10 @@ A0205C_FLIGHTS = [ # WHY IS THIS NOT PASSING THE FLIGHTS_MATCH_ADSB now ???
         icao=A0205C_ICAO,
         registration="N107SY",
         takeoff_time=datetime(2026, 4, 1, 2, 57),
+        takeoff_airport_id=A0205C_AIRPORT_IDS["KMEM"],
         takeoff_airport_ident="KMEM",
         landing_time=datetime(2026, 4, 1, 4, 13),
+        landing_airport_id=A0205C_AIRPORT_IDS["KIAH"],
         landing_airport_ident="KIAH",
         category="A3",
     ),
@@ -30,8 +40,10 @@ A0205C_FLIGHTS = [ # WHY IS THIS NOT PASSING THE FLIGHTS_MATCH_ADSB now ???
         icao=A0205C_ICAO,
         registration="N107SY",
         takeoff_time=datetime(2026, 4, 1, 20, 11),
+        takeoff_airport_id=A0205C_AIRPORT_IDS["KIAH"],
         takeoff_airport_ident="KIAH",
         landing_time=datetime(2026, 4, 1, 22, 20),
+        landing_airport_id=A0205C_AIRPORT_IDS["KCLT"],
         landing_airport_ident="KCLT",
         category="A3",
     ),

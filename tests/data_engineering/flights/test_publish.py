@@ -1,12 +1,23 @@
+from dataclasses import dataclass
 from datetime import date
 
 import polars as pl
 import pytest
 
+from airports.models import AirportCatalogProvenance
 import data_engineering.spark as spark_module
 from data_engineering.flights import publish
+from flights.airport_catalog_manifest import (
+    AirportCatalogManifest,
+    airport_catalog_manifest_path,
+)
 from flights import flight_source
 from flights.flight_type import FLIGHT_POLARS_SCHEMA
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    provenance: AirportCatalogProvenance
 
 
 class FakeSpark:
@@ -26,6 +37,7 @@ class FakeSpark:
 
     def parquet(self, path):
         self.parquet_path = path
+        self.parquet_schema = pl.read_parquet(path).schema
         return self
 
     def select(self, *columns):
@@ -54,20 +66,37 @@ class FakeSpark:
 
 def test_publish_flights_parquet_uses_canonical_path(monkeypatch, tmp_path):
     monkeypatch.setattr(flight_source, "OUTPUT_DIR", tmp_path)
+    airport_catalog = FakeAirportCatalog(
+        AirportCatalogProvenance(
+            flight_date=date(2026, 3, 1),
+            observed_commit_sha="observed-commit",
+            knowledge_cutoff_date=date(2026, 4, 1),
+            knowledge_commit_sha="knowledge-commit",
+            catalog_available_date=date(2026, 4, 1),
+            policy_version="test",
+        )
+    )
     flights = pl.DataFrame({"icao": ["abc123"]})
 
     path = publish.publish_flights_parquet(
         flights,
         date(2026, 3, 1),
         publish.ADSBSource.ADSBLOL,
+        airport_catalog,
     )
 
     assert path == (
         tmp_path
-        / "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=3"
+        / "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=5"
         / "year=2026/month=03/day=01/data.parquet"
     )
     assert pl.read_parquet(path).schema == FLIGHT_POLARS_SCHEMA
+    assert pl.read_parquet(path).select(
+        "takeoff_airport_id", "landing_airport_id"
+    ).row(0) == (None, None)
+    assert AirportCatalogManifest.read(
+        airport_catalog_manifest_path(path)
+    ) == AirportCatalogManifest.from_provenance(airport_catalog.provenance)
 
 
 def test_ingest_flights_to_iceberg(monkeypatch):
@@ -77,6 +106,14 @@ def test_ingest_flights_to_iceberg(monkeypatch):
     publish.ingest_flights_to_iceberg(
         pl.DataFrame({"icao": ["abc123"]}),
         date(2026, 3, 1),
+        AirportCatalogManifest(
+            flight_date=date(2026, 3, 1),
+            observed_commit_sha="observed-commit",
+            knowledge_cutoff_date=date(2026, 4, 1),
+            knowledge_commit_sha="knowledge-commit",
+            catalog_available_date=date(2026, 4, 1),
+            policy_version="test",
+        ),
         prod=True,
     )
 
@@ -86,6 +123,11 @@ def test_ingest_flights_to_iceberg(monkeypatch):
     assert spark.partitions == 2
     assert spark.appended
     assert spark.stopped
+    assert spark.parquet_schema["airport_catalog_observed_commit_sha"] == pl.String
+    assert spark.parquet_schema["airport_catalog_knowledge_cutoff_date"] == pl.Date
+    assert spark.parquet_schema["airport_catalog_knowledge_commit_sha"] == pl.String
+    assert spark.parquet_schema["airport_catalog_available_date"] == pl.Date
+    assert spark.parquet_schema["airport_catalog_policy_version"] == pl.String
 
 
 def test_ingest_flights_to_iceberg_rejects_existing_day(monkeypatch):
@@ -96,6 +138,14 @@ def test_ingest_flights_to_iceberg_rejects_existing_day(monkeypatch):
         publish.ingest_flights_to_iceberg(
             pl.DataFrame({"icao": ["abc123"]}),
             date(2026, 3, 1),
+            AirportCatalogManifest(
+                flight_date=date(2026, 3, 1),
+                observed_commit_sha="observed-commit",
+                knowledge_cutoff_date=date(2026, 4, 1),
+                knowledge_commit_sha="knowledge-commit",
+                catalog_available_date=date(2026, 4, 1),
+                policy_version="test",
+            ),
             prod=False,
         )
 

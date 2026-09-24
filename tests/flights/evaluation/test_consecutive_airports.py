@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -11,19 +12,34 @@ from flights.evaluation.consecutive_airports import (
 from planequery_data.utils import haversine
 
 
-class CoordinatesLookup:
-    coordinates = {
-        "A": (0.0, 0.0),
-        "B": (0.0, 0.1),
-        "C": (0.0, 1.0),
-        "D": (0.0, 2.0),
-    }
+AIRPORT_IDS = {
+    "A": 1,
+    "B": 2,
+    "C": 3,
+    "D": 4,
+    "UNKNOWN": 99,
+    "KJFK": 10,
+    "KLGA": 11,
+}
 
-    def get_airport_coordinates(
-        self,
-        airport_ident: str,
-    ) -> tuple[float, float] | None:
-        return self.coordinates.get(airport_ident)
+
+class AirportCatalog:
+    id_index = {
+        AIRPORT_IDS[ident]: SimpleNamespace(
+            id=AIRPORT_IDS[ident],
+            lat=lat,
+            lon=lon,
+        )
+        for ident, (lat, lon) in {
+            "A": (0.0, 0.0),
+            "B": (0.0, 0.1),
+            "C": (0.0, 1.0),
+            "D": (0.0, 2.0),
+            "KJFK": (40.6413, -73.7781),
+            "KLGA": (40.7769, -73.8740),
+        }.items()
+    }
+    airports = tuple(id_index.values())
 
 
 def flight(
@@ -37,7 +53,17 @@ def flight(
         "icao": icao,
         "takeoff_time": takeoff_time,
         "landing_time": takeoff_time + timedelta(minutes=30),
+        "takeoff_airport_id": (
+            AIRPORT_IDS[takeoff_airport_ident]
+            if takeoff_airport_ident is not None
+            else None
+        ),
         "takeoff_airport_ident": takeoff_airport_ident,
+        "landing_airport_id": (
+            AIRPORT_IDS[landing_airport_ident]
+            if landing_airport_ident is not None
+            else None
+        ),
         "landing_airport_ident": landing_airport_ident,
     }
 
@@ -55,15 +81,15 @@ def test_consecutive_airport_stats_are_per_icao_and_time_ordered():
 
     mismatches = consecutive_airport_mismatches(
         df_flights,
-        airport_lookup=CoordinatesLookup(),
+        airport_catalog=AirportCatalog(),
     )
     details = consecutive_airport_details(
         df_flights,
-        airport_lookup=CoordinatesLookup(),
+        airport_catalog=AirportCatalog(),
     )
     stats = consecutive_airport_stats(
         df_flights,
-        airport_lookup=CoordinatesLookup(),
+        airport_catalog=AirportCatalog(),
     )
 
     assert mismatches.select(
@@ -123,7 +149,7 @@ def test_consecutive_airport_stats_are_per_icao_and_time_ordered():
     ] == pytest.approx(1 / 2)
 
 
-def test_unknown_airport_coordinates_still_count_as_a_mismatch():
+def test_missing_airport_id_in_catalog_fails():
     df_flights = pl.DataFrame(
         [
             flight("abc123", 1, "A", "UNKNOWN"),
@@ -131,18 +157,11 @@ def test_unknown_airport_coordinates_still_count_as_a_mismatch():
         ]
     )
 
-    stats = consecutive_airport_stats(
-        df_flights,
-        airport_lookup=CoordinatesLookup(),
-    )
-
-    assert stats["consecutive_airport_comparison_count"] == 1
-    assert stats["consecutive_airport_mismatch_count"] == 1
-    assert stats["consecutive_airport_mismatch_rate"] == 1.0
-    assert stats["consecutive_airport_displacement_km_p50"] is None
-    assert stats["consecutive_airport_displacement_km_max"] is None
-    assert stats["consecutive_airport_displacement_over_50km_count"] == 0
-    assert stats["consecutive_airport_displacement_over_50km_rate"] == 0.0
+    with pytest.raises(KeyError, match="99"):
+        consecutive_airport_stats(
+            df_flights,
+            airport_catalog=AirportCatalog(),
+        )
 
 
 def test_missing_airport_idents_are_not_comparable():
@@ -155,7 +174,7 @@ def test_missing_airport_idents_are_not_comparable():
 
     stats = consecutive_airport_stats(
         df_flights,
-        airport_lookup=CoordinatesLookup(),
+        airport_catalog=AirportCatalog(),
     )
 
     assert stats["consecutive_airport_comparison_count"] == 0
@@ -175,7 +194,7 @@ def test_custom_displacement_threshold_changes_metric_names():
     stats = consecutive_airport_stats(
         df_flights,
         displacement_threshold_km=10,
-        airport_lookup=CoordinatesLookup(),
+        airport_catalog=AirportCatalog(),
     )
 
     assert stats["consecutive_airport_displacement_over_10km_count"] == 1
@@ -211,6 +230,11 @@ def test_evaluation_main_returns_consecutive_airport_detail_columns(
         evaluation,
         "default_stats_path",
         lambda: tmp_path / "stats.csv",
+    )
+    monkeypatch.setattr(
+        evaluation,
+        "airport_catalog_for_date",
+        lambda _: AirportCatalog(),
     )
 
     results, df_stats = evaluation.main(
