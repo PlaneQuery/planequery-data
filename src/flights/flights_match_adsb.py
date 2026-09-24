@@ -62,10 +62,12 @@ def allowed_airport_distance_km(row_time: datetime, target_times: list[datetime]
 
 def adsb_row_matches_airport(
     row: _AdsbRow,
-    airport: Airport,
+    airport: Airport | None,
     target_times: list[datetime],
     use_time_grace: bool = True,
 ) -> bool:
+    if airport is None:
+        return False
     distance_km = haversine(row.lat, row.lon, airport.lat, airport.lon)
     allowed_distance_km = (
         allowed_airport_distance_km(row.time, target_times)
@@ -76,7 +78,7 @@ def adsb_row_matches_airport(
 
 def adsb_rows_match_airport(
     adsb_rows: list[_AdsbRow],
-    airport: Airport,
+    airport: Airport | None,
     target_times: list[datetime],
     use_time_grace: bool = True,
 ) -> bool:
@@ -85,7 +87,12 @@ def adsb_rows_match_airport(
         for row in adsb_rows
     )
 
-def adsb_row_is_dwelling_at_airport(row: _AdsbRow, airport: Airport) -> bool:
+def adsb_row_is_dwelling_at_airport(
+    row: _AdsbRow,
+    airport: Airport | None,
+) -> bool:
+    if airport is None:
+        return False
     if haversine(row.lat, row.lon, airport.lat, airport.lon) > MAX_AIRPORT_DISTANCE_KM:
         return False
     if row.ground_speed_kt is not None and row.ground_speed_kt > MAX_DWELL_GROUND_SPEED_KT:
@@ -96,7 +103,7 @@ def adsb_row_is_dwelling_at_airport(row: _AdsbRow, airport: Airport) -> bool:
 
 def adsb_rows_dwell_at_airport(
     adsb_rows: list[_AdsbRow],
-    airport: Airport,
+    airport: Airport | None,
     start_time: datetime,
     end_time: datetime | None = None,
 ) -> bool:
@@ -151,7 +158,10 @@ def flights_match_adsb(
                 airport_catalog,
                 previous_flight.landing_airport_id,
             )
-            if previous_landing_airport.id != takeoff_airport.id:
+            if (
+                previous_flight.landing_airport_id
+                != flight.takeoff_airport_id
+            ):
                 return False
             landing_row_idx = closest_time_row_idx(adsb_rows, previous_flight.landing_time, True)
             if landing_row_idx is None:

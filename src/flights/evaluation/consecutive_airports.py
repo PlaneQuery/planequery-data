@@ -108,13 +108,17 @@ def _add_displacement(
             )
         )
 
-    def displacement_km(row: dict[str, int | bool]) -> float:
+    def displacement_km(row: dict[str, int | bool]) -> float | None:
         if not row["consecutive_airport_mismatch"]:
             return 0.0
-        previous_airport = airport_catalog.id_index[
+        previous_airport = airport_catalog.id_index.get(
             row["previous_landing_airport_id"]
-        ]
-        takeoff_airport = airport_catalog.id_index[row["takeoff_airport_id"]]
+        )
+        takeoff_airport = airport_catalog.id_index.get(
+            row["takeoff_airport_id"]
+        )
+        if previous_airport is None or takeoff_airport is None:
+            return None
         return haversine(
             previous_airport.lat,
             previous_airport.lon,

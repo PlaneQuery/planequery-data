@@ -4,7 +4,6 @@ from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
@@ -64,7 +63,7 @@ def test_resolve_sfdps_airports_replaces_raw_codes_with_stable_ids():
     ]
 
 
-def test_resolve_sfdps_airports_maps_unknown_non_null_code_to_null(caplog):
+def test_resolve_sfdps_airports_maps_unknown_non_null_code_to_null():
     source = pl.DataFrame(
         {
             "takeoff_airport_ident": ["UNKNOWN", "UNKNOWN"],
@@ -92,13 +91,9 @@ def test_resolve_sfdps_airports_maps_unknown_non_null_code_to_null(caplog):
             "landing_airport_id": None,
         },
     ]
-    assert (
-        "SFDPS unresolved airport/point codes mapped to null: "
-        "'UNKNOWN' (2 occurrences)" in caplog.text
-    )
 
 
-def test_resolve_sfdps_airports_does_not_hide_ambiguous_codes():
+def test_resolve_sfdps_airports_maps_ambiguous_code_to_null():
     source = pl.DataFrame(
         {
             "takeoff_airport_ident": ["AMBIGUOUS"],
@@ -110,8 +105,16 @@ def test_resolve_sfdps_airports_does_not_hide_ambiguous_codes():
         },
     )
 
-    with pytest.raises(ValueError, match="ambiguous airport code"):
-        sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+    result = sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+
+    assert result.to_dicts() == [
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": None,
+            "takeoff_airport_id": None,
+            "landing_airport_id": None,
+        }
+    ]
 
 
 def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
@@ -141,7 +144,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 4
+    assert sfdps.SFDPSFlightSource().version == 5
 
 
 def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(

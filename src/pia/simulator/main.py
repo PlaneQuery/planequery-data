@@ -26,7 +26,9 @@ def flight_is_in_united_states_airspace(flight) -> bool:
         flight.landing_airport_id,
     )
     return (
-        takeoff_airport.is_in_us_faa_airspace
+        takeoff_airport is not None
+        and landing_airport is not None
+        and takeoff_airport.is_in_us_faa_airspace
         and landing_airport.is_in_us_faa_airspace
     )
 

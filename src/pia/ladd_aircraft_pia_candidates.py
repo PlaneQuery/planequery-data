@@ -25,7 +25,9 @@ def potential_pia_flight_count(group):
                 flight.takeoff_airport_id,
             )
             if (
-                landing_airport.is_in_us_faa_airspace
+                landing_airport is not None
+                and takeoff_airport is not None
+                and landing_airport.is_in_us_faa_airspace
                 and takeoff_airport.is_in_us_faa_airspace
             ):
                 distance = haversine(
