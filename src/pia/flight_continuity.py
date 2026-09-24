@@ -36,6 +36,9 @@ def make_flights_continuous(flights: list[Flight]):
             airport_catalog_for_date(flight.takeoff_time.date()),
             flight.takeoff_airport_id,
         )
+        if landing_airport is None or takeoff_airport is None:
+            previous_flight = flight
+            continue
         takeoff_in_island = takeoff_airport.is_in_us_faa_island_airspace
         landing_in_island = landing_airport.is_in_us_faa_island_airspace
         if (
