@@ -18,7 +18,6 @@ from data_engineering.adsb.read_adsb import (
     ensure_adsb_source_data,
     get_icaos_in_adsb,
     read_adsb,
-    remove_adsb_parquet_days,
 )
 from flights.segmentation.readsb_legs import mark_leg_indexes
 
@@ -853,6 +852,4 @@ def create_flights_for_day(
         ]
     flights_dfs = [future.result() for future in futures]
     flights_df = pl.concat(flights_dfs)
-    if source == ADSBSource.ADSBLOL:
-        remove_adsb_parquet_days(created_parquet_days)
     return flights_df
