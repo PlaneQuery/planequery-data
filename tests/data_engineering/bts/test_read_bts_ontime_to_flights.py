@@ -22,14 +22,33 @@ class FakeAirportCatalog:
     name: str = "test-catalog"
 
 
-def test_iata_airport_mapping_rejects_unknown_non_null_code():
+def test_iata_airport_mapping_omits_unknown_non_null_code(caplog):
     class UnknownAirportCatalog:
         def resolve_code(self, code, *, code_priority):
             assert code_priority == ("iata_code",)
             return None
 
-    with pytest.raises(ValueError, match="Unknown BTS IATA airport code 'ZZZ'"):
-        iata_airport_mapping(UnknownAirportCatalog(), ["ZZZ"])
+    result = iata_airport_mapping(UnknownAirportCatalog(), ["ZZZ", "ZZZ"])
+
+    assert result.is_empty()
+    assert result.schema == {
+        "iata": pl.String,
+        "airport_id": pl.Int64,
+        "ident": pl.String,
+    }
+    assert (
+        "BTS flights with unresolved IATA airport codes will be excluded: "
+        "'ZZZ' (2 occurrences)" in caplog.text
+    )
+
+
+def test_iata_airport_mapping_does_not_hide_ambiguous_codes():
+    class AmbiguousAirportCatalog:
+        def resolve_code(self, code, *, code_priority):
+            raise ValueError(f"ambiguous airport code: {code}")
+
+    with pytest.raises(ValueError, match="ambiguous airport code: AAA"):
+        iata_airport_mapping(AmbiguousAirportCatalog(), ["AAA"])
 
 
 def test_compute_bts_timestamps_does_not_roll_one_minute_early_departure_to_next_day():
@@ -139,4 +158,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 6
+    assert bts_module.BTSFlightSource().version == 7

@@ -64,11 +64,11 @@ def test_resolve_sfdps_airports_replaces_raw_codes_with_stable_ids():
     ]
 
 
-def test_resolve_sfdps_airports_rejects_unknown_non_null_code():
+def test_resolve_sfdps_airports_maps_unknown_non_null_code_to_null(caplog):
     source = pl.DataFrame(
         {
-            "takeoff_airport_ident": ["UNKNOWN"],
-            "landing_airport_ident": [None],
+            "takeoff_airport_ident": ["UNKNOWN", "UNKNOWN"],
+            "landing_airport_ident": ["IA8", None],
         },
         schema={
             "takeoff_airport_ident": pl.String,
@@ -76,8 +76,26 @@ def test_resolve_sfdps_airports_rejects_unknown_non_null_code():
         },
     )
 
-    with pytest.raises(ValueError, match="Unknown SFDPS airport code 'UNKNOWN'"):
-        sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+    result = sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+
+    assert result.to_dicts() == [
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": "IA8",
+            "takeoff_airport_id": None,
+            "landing_airport_id": 202,
+        },
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": None,
+            "takeoff_airport_id": None,
+            "landing_airport_id": None,
+        },
+    ]
+    assert (
+        "SFDPS unresolved airport/point codes mapped to null: "
+        "'UNKNOWN' (2 occurrences)" in caplog.text
+    )
 
 
 def test_resolve_sfdps_airports_does_not_hide_ambiguous_codes():
@@ -123,7 +141,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 3
+    assert sfdps.SFDPSFlightSource().version == 4
 
 
 def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
