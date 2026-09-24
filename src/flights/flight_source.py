@@ -1,9 +1,7 @@
-import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from functools import lru_cache
 from pathlib import Path
 
 import polars as pl
@@ -27,27 +25,6 @@ class FlightSource(ABC):
     name: str
     version: int = 1
     # TODO: Can have missing days range
-
-    def artifact_cache_key(self) -> str | None:
-        """Return the immutable source-input identity used in cache paths."""
-        return None
-
-
-@lru_cache(maxsize=None)
-def _file_sha256(path: str, size: int, mtime_ns: int) -> str:
-    del size, mtime_ns
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def file_artifact_cache_key(label: str, path: str | Path) -> str:
-    path = Path(path).resolve()
-    stat = path.stat()
-    digest = _file_sha256(str(path), stat.st_size, stat.st_mtime_ns)
-    return f"{label}-sha256-{digest}"
 
 
 @dataclass(frozen=True)
@@ -104,10 +81,6 @@ def flight_path(
 
     if adsb_src is not None:
         path /= f"adsb_source={adsb_src.value}"
-
-    artifact_cache_key = source.artifact_cache_key()
-    if artifact_cache_key is not None:
-        path /= f"artifact={artifact_cache_key}"
 
     return (
         path

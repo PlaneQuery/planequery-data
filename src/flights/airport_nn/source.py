@@ -8,7 +8,7 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from data_engineering.utils import OUTPUT_DIR
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.flight_source import ADSBFlightSource, file_artifact_cache_key
+from flights.flight_source import ADSBFlightSource
 
 
 DEFAULT_MODEL_PATH = (
@@ -25,9 +25,6 @@ class AlgorithmNNFlightSource(ADSBFlightSource):
 
     def adsb_icao_batch_size(self) -> int:
         return 256
-
-    def artifact_cache_key(self) -> str:
-        return file_artifact_cache_key("model", self.model_path)
 
     def adsb_columns(self):
         from flights.airport_nn.features import COLUMNS
