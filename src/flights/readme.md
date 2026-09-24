@@ -15,3 +15,23 @@ python -m flights.cli 2026-03-01 2026-03-08 algorithm-nn \
 
 The start date is inclusive and the end date is exclusive. Run
 `python -m flights.cli --help` to list sources and options.
+
+## Eurocontrol
+
+Place each raw monthly archive at:
+
+```text
+$OUTPUT_DIR/data/raw/eurocontrol/YYYYMM.zip
+```
+
+Then create every daily partition in that month with an exclusive end date:
+
+```bash
+python -m flights.cli 2025-08-01 2025-09-01 eurocontrol
+```
+
+The Eurocontrol source extracts only the required `Flights_*.csv.gz` member to
+a temporary directory, creates `data/intermediate/eurocontrol/YYYYMM.parquet`,
+and writes daily files under `data/flights/source=eurocontrol/version=1/`.
+Temporary gzip/CSV files are removed automatically. Existing legacy extracted
+inputs remain supported as fallbacks.
