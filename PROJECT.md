@@ -11,6 +11,7 @@ Publish flights from 2024-01-01 -> 2026-09-24
 - [ ] Nearest Airport Method flights release
 - [ ] OpenSky Discord Post
 - [ ] Github readme
+- [ ] Github planequery-data repo
 #### after inital
 - [ ] GroundControl Discord Post
 - [ ] r/ADSB post
