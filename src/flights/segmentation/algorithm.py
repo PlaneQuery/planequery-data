@@ -9,6 +9,9 @@ from concurrent.futures import ProcessPoolExecutor
 
 import polars as pl
 
+from airports.catalog import AirportCatalogView
+from airports.models import Airport, AirportCatalogProvenance
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.adsb.read_adsb import (
     ADSBSource,
@@ -32,6 +35,7 @@ AIRPORT_SIZE_RANK = {
     "medium_airport": 1,
     "large_airport": 2,
 }
+MAX_AIRPORT_CATALOG_WORKERS = 8
 MAX_SHORT_SAME_AIRPORT_DURATION = timedelta(minutes=25)
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
@@ -126,7 +130,8 @@ class FlightSegment:
 
 
 @dataclass(frozen=True)
-class AirportIdentGuess:
+class AirportGuess:
+    id: int | None
     ident: str | None
     distance_km: float | None
     lat: float | None
@@ -498,26 +503,12 @@ def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
     ]
 
 
-def _get_airport_lookup():
-    from airports.airport_lookup import AirportLookup
-    try:
-        airport_lookup = AirportLookup()
-    except (FileNotFoundError, KeyError):
-        AirportLookup._instance = None
-        return None
-    if not getattr(airport_lookup, "_ball_tree", None):
-        AirportLookup._instance = None
-        return None
-    return airport_lookup
-
-
-
-def _airport_rank(airport) -> int:
+def _airport_rank(airport: Airport) -> int:
     return AIRPORT_SIZE_RANK.get(str(airport.type), 0)
 
 
 def _airport_distance_to_message(
-    airport,
+    airport: Airport,
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> float:
     return haversine_km(
@@ -529,49 +520,42 @@ def _airport_distance_to_message(
 
 
 def _airport_guess_for_message(
-    airport_lookup,
+    airport_catalog: AirportCatalogView,
     message: AdsbMessageRow | AdsbPositionMessage,
-) -> AirportIdentGuess:
-    if airport_lookup is None:
-        return AirportIdentGuess(
-            ident=None,
-            distance_km=None,
-            lat=None,
-            lon=None,
-            elevation_ft=None,
-        )
-
-    airports = airport_lookup.getAirportsWithinRadius(
+) -> AirportGuess:
+    matches = airport_catalog.matcher.within_radius(
         message.lat,
         message.lon,
         AIRPORT_CANDIDATE_RADIUS_KM,
     )
-    if not airports:
-        airports = [airport_lookup.getClosestAirport(message.lat, message.lon)]
+    if not matches:
+        matches = (airport_catalog.matcher.nearest(message.lat, message.lon),)
 
-    best_airport = min(
-        airports,
-        key=lambda airport: (
-            _airport_distance_to_message(airport, message)
-            - AIRPORT_SIZE_BONUS_KM * _airport_rank(airport)
+    best_match = min(
+        matches,
+        key=lambda match: (
+            match.distance_km
+            - AIRPORT_SIZE_BONUS_KM * _airport_rank(match.airport)
         ),
     )
-    return AirportIdentGuess(
-        ident=best_airport.ident,
-        distance_km=_airport_distance_to_message(best_airport, message),
-        lat=best_airport.lat,
-        lon=best_airport.lon,
-        elevation_ft=best_airport.elevation_ft,
+    return AirportGuess(
+        id=best_match.id,
+        ident=best_match.ident,
+        distance_km=best_match.distance_km,
+        lat=best_match.airport.lat,
+        lon=best_match.airport.lon,
+        elevation_ft=best_match.airport.elevation_ft,
     )
 
 
-def _airport_guess_for_ident(
-    airport_lookup,
-    ident: str | None,
+def _airport_guess_for_id(
+    airport_catalog: AirportCatalogView,
+    airport_id: int | None,
     message: AdsbMessageRow | AdsbPositionMessage,
-) -> AirportIdentGuess:
-    if airport_lookup is None or ident is None:
-        return AirportIdentGuess(
+) -> AirportGuess:
+    if airport_id is None:
+        return AirportGuess(
+            id=None,
             ident=None,
             distance_km=None,
             lat=None,
@@ -579,17 +563,19 @@ def _airport_guess_for_ident(
             elevation_ft=None,
         )
 
-    airport = airport_lookup.get_Airport_from_airport_ident(ident)
+    airport = airport_catalog.get_airport_by_id(airport_id)
     if airport is None:
-        return AirportIdentGuess(
+        return AirportGuess(
+            id=None,
             ident=None,
             distance_km=None,
             lat=None,
             lon=None,
             elevation_ft=None,
         )
-    return AirportIdentGuess(
-        ident=ident,
+    return AirportGuess(
+        id=airport.id,
+        ident=airport.ident,
         distance_km=_airport_distance_to_message(airport, message),
         lat=airport.lat,
         lon=airport.lon,
@@ -597,22 +583,22 @@ def _airport_guess_for_ident(
     )
 
 
-def _airport_ident_is_confident(guess: AirportIdentGuess) -> bool:
+def _airport_guess_is_confident(guess: AirportGuess) -> bool:
     if guess.ident is None or guess.distance_km is None:
         return False
     return guess.distance_km <= MAX_AIRPORT_IDENT_DISTANCE_KM
 
 
-def _airport_ident_guesses_for_segments(
+def _airport_guesses_for_segments(
     segments: Sequence[FlightSegment],
-) -> tuple[list[AirportIdentGuess], list[AirportIdentGuess]]:
-    airport_lookup = _get_airport_lookup()
+    airport_catalog: AirportCatalogView,
+) -> tuple[list[AirportGuess], list[AirportGuess]]:
     takeoff_guesses = [
-        _airport_guess_for_message(airport_lookup, segment.takeoff_message)
+        _airport_guess_for_message(airport_catalog, segment.takeoff_message)
         for segment in segments
     ]
     landing_guesses = [
-        _airport_guess_for_message(airport_lookup, segment.landing_message)
+        _airport_guess_for_message(airport_catalog, segment.landing_message)
         for segment in segments
     ]
 
@@ -626,24 +612,30 @@ def _airport_ident_guesses_for_segments(
         if previous_segment.icao != current_segment.icao:
             continue
 
-        shared_guess = _airport_guess_for_ident(
-            airport_lookup,
-            takeoff_guesses[current_index].ident,
+        shared_guess = _airport_guess_for_id(
+            airport_catalog,
+            takeoff_guesses[current_index].id,
             previous_segment.landing_message,
         )
-        if _airport_ident_is_confident(shared_guess):
+        if _airport_guess_is_confident(shared_guess):
             landing_guesses[previous_index] = shared_guess
 
     return takeoff_guesses, landing_guesses
 
 
-def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
+def _segments_to_flights_df(
+    segments: list[FlightSegment],
+    airport_catalog: AirportCatalogView,
+) -> pl.DataFrame:
     from flights.flight_type import FLIGHT_POLARS_SCHEMA
 
     if not segments:
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
 
-    takeoff_guesses, landing_guesses = _airport_ident_guesses_for_segments(segments)
+    takeoff_guesses, landing_guesses = _airport_guesses_for_segments(
+        segments,
+        airport_catalog,
+    )
     rows = []
     for segment, takeoff_guess, landing_guess in zip(segments, takeoff_guesses, landing_guesses):
         flight_flags = _db_flags_to_flight_flags(
@@ -660,8 +652,10 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
                 "icao": segment.icao,
                 **flight_identity,
                 "takeoff_time": segment.takeoff_time,
+                "takeoff_airport_id": takeoff_guess.id,
                 "takeoff_airport_ident": takeoff_guess.ident,
                 "landing_time": segment.landing_time,
+                "landing_airport_id": landing_guess.id,
                 "landing_airport_ident": landing_guess.ident,
                 "first_message_time": segment.takeoff_message.time,
                 "first_lat": segment.takeoff_message.lat,
@@ -685,16 +679,15 @@ def _segments_to_flights_df(segments: list[FlightSegment]) -> pl.DataFrame:
 
 
 def _filter_short_same_airport_flights(flights_df: pl.DataFrame) -> pl.DataFrame:
-    same_named_airport = (
-        pl.col("takeoff_airport_ident").is_not_null()
-        & pl.col("landing_airport_ident").is_not_null()
-        & (pl.col("takeoff_airport_ident") != "")
-        & (pl.col("takeoff_airport_ident") == pl.col("landing_airport_ident"))
+    same_airport = (
+        pl.col("takeoff_airport_id").is_not_null()
+        & pl.col("landing_airport_id").is_not_null()
+        & (pl.col("takeoff_airport_id") == pl.col("landing_airport_id"))
     )
     short_flight = (
         pl.col("landing_time") - pl.col("takeoff_time")
     ) <= MAX_SHORT_SAME_AIRPORT_DURATION
-    return flights_df.filter(~(same_named_airport & short_flight))
+    return flights_df.filter(~(same_airport & short_flight))
 
 
 def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
@@ -732,14 +725,21 @@ def _segment_adsb_df(
     return segments
 
 
-def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
-    from flights.flight_source import get_flights
+def _sfdps_or_bts_icaos(
+    target_date: date,
+    airport_catalog: AirportCatalogView,
+) -> list[str]:
+    from flights.flight_source import get_flights_for_catalog
     from flights.providers.bts import BTSFlightSource
     from flights.providers.sfdps import SFDPSFlightSource
 
     source_icaos = set()
     for source in (SFDPSFlightSource(), BTSFlightSource()):
-        df_flights = get_flights(source, target_date)
+        df_flights = get_flights_for_catalog(
+            source,
+            target_date,
+            airport_catalog,
+        )
         source_icaos.update(
             df_flights.get_column("icao").drop_nulls().cast(pl.String).unique().to_list()
         )
@@ -749,8 +749,11 @@ def _sfdps_or_bts_icaos(target_date: date) -> list[str]:
 def _limit_icaos_to_sfdps_or_bts(
     target_date: date,
     icaos: Sequence[str] | None,
+    airport_catalog: AirportCatalogView,
 ) -> list[str]:
-    source_icaos = set(_sfdps_or_bts_icaos(target_date))
+    source_icaos = set(
+        _sfdps_or_bts_icaos(target_date, airport_catalog)
+    )
     if icaos is None:
         return sorted(source_icaos)
     return [icao for icao in icaos if icao in source_icaos]
@@ -778,6 +781,7 @@ def _limit_icaos_to_ground_truth(icaos: Sequence[str]) -> list[str]:
 def create_flights_from_adsb(
     df_adsb: pl.DataFrame,
     target_date: date,
+    airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
     """Segment ADS-B messages and assign endpoint-nearest airports for one day."""
     day_start, day_end = _day_bounds(target_date)
@@ -787,7 +791,9 @@ def create_flights_from_adsb(
         for segment in segments
         if _segment_takes_off_in_window(segment, day_start, day_end)
     ]
-    return _filter_short_same_airport_flights(_segments_to_flights_df(segments))
+    return _filter_short_same_airport_flights(
+        _segments_to_flights_df(segments, airport_catalog)
+    )
 
 
 def process_icaos(
@@ -798,7 +804,13 @@ def process_icaos(
 ) -> pl.DataFrame:
     source = ADSBSource(source)
     df_adsb = read_adsb(day_start, day_end, icaos=icaos, source=source)
-    flights_df = create_flights_from_adsb(df_adsb, day_start.date())
+    airport_catalog = _WORKER_AIRPORT_CATALOG
+    assert airport_catalog is not None
+    flights_df = create_flights_from_adsb(
+        df_adsb,
+        day_start.date(),
+        airport_catalog,
+    )
     if len(flights_df) == 0:
         print(f"Empty chunk: processed {len(icaos)} ICAOs, found 0 flights")
         return flights_df
@@ -817,11 +829,25 @@ def _number_of_workers_default() -> int:
     cpu_count = os.cpu_count()
     if cpu_count is None:
         return 1
-    return max(1, cpu_count // 2)
+    return min(MAX_AIRPORT_CATALOG_WORKERS, max(1, cpu_count // 2))
+
+
+_WORKER_AIRPORT_CATALOG: AirportCatalogView | None = None
+
+
+def _initialize_airport_catalog_worker(
+    target_date: date,
+    expected_provenance: AirportCatalogProvenance,
+) -> None:
+    global _WORKER_AIRPORT_CATALOG
+    airport_catalog = airport_catalog_for_date(target_date)
+    assert airport_catalog.provenance == expected_provenance
+    _WORKER_AIRPORT_CATALOG = airport_catalog
 
 
 def create_flights_for_day(
-    target_date: date = date(2026, 3, 1),
+    target_date: date,
+    airport_catalog: AirportCatalogView,
     icaos: Sequence[str] | None = None,
     pia_or_american_ladd_only: bool = False,
     sfdps_or_bts_only: bool = False,
@@ -846,13 +872,19 @@ def create_flights_for_day(
         requested_icaos = set(icaos)
         icaos = [icao for icao in available_icaos if icao in requested_icaos]
     if sfdps_or_bts_only:
-        icaos = _limit_icaos_to_sfdps_or_bts(target_date, icaos)
+        icaos = _limit_icaos_to_sfdps_or_bts(
+            target_date,
+            icaos,
+            airport_catalog,
+        )
     if ground_truth_only:
         icaos = _limit_icaos_to_ground_truth(icaos)
     icao_lists = _chunks_by_size(icaos, 500)
     with ProcessPoolExecutor(
         max_workers=max_workers,
         mp_context=mp.get_context("spawn"),
+        initializer=_initialize_airport_catalog_worker,
+        initargs=(target_date, airport_catalog.provenance),
     ) as executor:
         futures = [
             executor.submit(

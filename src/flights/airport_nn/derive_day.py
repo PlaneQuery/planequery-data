@@ -6,13 +6,18 @@ from pathlib import Path
 
 import polars as pl
 
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from flights.algorithm import AlgorithmNearestFlightSource
+from flights.airport_catalog_manifest import (
+    AirportCatalogManifest,
+    airport_catalog_manifest_path,
+)
 from flights.airport_nn.features import COLUMNS
 from flights.airport_nn.inference import predict_flights
 from flights.airport_nn.model import load_model
 from flights.airport_nn.source import DEFAULT_MODEL_PATH, AlgorithmNNFlightSource
-from flights.flight_source import flight_path, get_flights
+from flights.flight_source import flight_path, get_flights_for_catalog
 
 
 def derive_day(
@@ -24,8 +29,14 @@ def derive_day(
 ) -> Path:
     source = ADSBSource(source)
     assert batch_aircraft > 0
+    airport_catalog = airport_catalog_for_date(day)
     if flights is None:
-        flights = get_flights(AlgorithmNearestFlightSource(), day, source)
+        flights = get_flights_for_catalog(
+            AlgorithmNearestFlightSource(),
+            day,
+            airport_catalog,
+            source,
+        )
 
     aircraft = flights.get_column("icao").drop_nulls().unique().sort().to_list()
     model = load_model(Path(model_path))
@@ -34,7 +45,7 @@ def derive_day(
         icaos = aircraft[start : start + batch_aircraft]
         subset = flights.filter(pl.col("icao").is_in(icaos))
         messages = read_adsb(day, source=source, icaos=icaos, columns=COLUMNS)
-        parts.append(predict_flights(subset, messages, model))
+        parts.append(predict_flights(subset, messages, model, airport_catalog))
 
     result = pl.concat(parts) if parts else flights
     output = flight_path(
@@ -44,6 +55,9 @@ def derive_day(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     result.write_parquet(output)
+    AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
+        airport_catalog_manifest_path(output)
+    )
     return output
 
 

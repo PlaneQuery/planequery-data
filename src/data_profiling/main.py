@@ -2,6 +2,7 @@ from datetime import date
 import polars as pl
 
 from airports.polars_exprs import airport_size_expr
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_profiling.metrics.flights import FlightCohort
 from flights.evaluation.evaluation import main as run_evaluation
@@ -9,6 +10,7 @@ from flights.flight_source import get_flights
 from flights.sources import ALGORITHM_NEAREST_SOURCE, SFDPS_SOURCE
 
 TARGET_DATE = date(2026, 3, 1)
+AIRPORT_CATALOG = airport_catalog_for_date(TARGET_DATE)
 
 results, stats = run_evaluation(
     test_src=ALGORITHM_NEAREST_SOURCE,
@@ -23,9 +25,9 @@ evaluation_columns = [
     "icao",
     "takeoff_time",
     "match_status",
-    "same_takeoff_airport_ident",
-    "same_landing_airport_ident",
-    "same_airport_ident",
+    "same_takeoff_airport_id",
+    "same_landing_airport_id",
+    "same_airport_id",
     "takeoff_airport_ident_df1",
     "landing_airport_ident_df1",
 ]
@@ -44,7 +46,7 @@ profile_df = df_test.join(
     evaluation_annotations,
     on=["icao", "takeoff_time"],
     how="left",
-).with_columns(airport_size_expr("takeoff_airport_ident"))
+).with_columns(airport_size_expr(AIRPORT_CATALOG, "takeoff_airport_id"))
 
 AIRPORT_SIZES = (
     "large_airport",
@@ -70,11 +72,11 @@ def add_airport_size_subsets(
         if add_accuracy:
             size_cohort.add_subset(
                 "Correct",
-                pl.col("same_takeoff_airport_ident"),
+                pl.col("same_takeoff_airport_id"),
             )
             size_cohort.add_subset(
                 "Incorrect",
-                ~pl.col("same_takeoff_airport_ident"),
+                ~pl.col("same_takeoff_airport_id"),
             )
 
 funnel = FlightCohort("All algorithm flights", profile_df)
@@ -84,11 +86,11 @@ evaluatable = funnel.add_subset(
 )
 evaluatable.add_subset(
     "Correct takeoff airport",
-    pl.col("same_takeoff_airport_ident"),
+    pl.col("same_takeoff_airport_id"),
 )
 evaluatable.add_subset(
     "Incorrect takeoff airport",
-    ~pl.col("same_takeoff_airport_ident"),
+    ~pl.col("same_takeoff_airport_id"),
 )
 funnel.add_subset(
     "Not evaluatable",
@@ -111,7 +113,7 @@ add_airport_size_subsets(
 )
 
 evaluatable_by_size_df = evaluatable.df.with_columns(
-    airport_size_expr("takeoff_airport_ident_df1").alias(
+    airport_size_expr(AIRPORT_CATALOG, "takeoff_airport_id_df1").alias(
         "gold_takeoff_airport_size"
     )
 )

@@ -26,7 +26,7 @@ def test_ground_truth_is_registered_adsb_source(monkeypatch, tmp_path):
         ADSBSource.ADSBX,
     ) == (
         tmp_path
-        / "data/flights/source=ground-truth/adsb_source=adsbx/version=1"
+        / "data/flights/source=ground-truth/adsb_source=adsbx/version=2"
         / "year=2026/month=03/day=01/data.parquet"
     )
 
@@ -43,16 +43,19 @@ def test_ground_truth_source_uses_supplied_adsb(monkeypatch):
     )
     adsb = pl.DataFrame({"icao": ["abc123"]})
     calls = []
+    catalogs = []
 
     monkeypatch.setattr(
         ground_truth,
-        "get_flights",
-        lambda *_args, **_kwargs: flights.clone(),
+        "get_flights_for_catalog",
+        lambda _source, _day, catalog: (
+            catalogs.append(catalog) or flights.clone()
+        ),
     )
     monkeypatch.setattr(
         ground_truth,
         "continental_usa_to_continental_usa",
-        lambda df: df,
+        lambda df, _airport_catalog: df,
     )
     monkeypatch.setattr(
         ground_truth,
@@ -69,10 +72,16 @@ def test_ground_truth_source_uses_supplied_adsb(monkeypatch):
 
     monkeypatch.setattr(ground_truth, "get_matching_icaos_in_flights", match)
 
-    result = GroundTruthFlightSource().create_flights_for_day(TARGET_DATE, adsb)
+    airport_catalog = object()
+    result = GroundTruthFlightSource().create_flights_for_day(
+        TARGET_DATE,
+        adsb,
+        airport_catalog,
+    )
 
     assert result.equals(flights)
     assert calls == [(adsb, datetime(2026, 3, 1))]
+    assert catalogs == [airport_catalog, airport_catalog]
 
 
 def test_get_ground_truth_flights_delegates_to_generic_reader(monkeypatch):

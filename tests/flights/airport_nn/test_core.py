@@ -1,14 +1,22 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import json
 
 import numpy as np
 import polars as pl
 import pytest
 import torch
 
-from airports.airport_lookup import Airport, Airport_Types
+from airports.models import (
+    Airport,
+    AirportCatalogProvenance,
+    AirportMatch,
+    AirportMatchProvenance,
+    AirportType,
+)
 from flights.airport_nn import data, features
 from flights.airport_nn import derive_day as daily
-from flights.airport_nn.evaluate import metrics
+from flights.airport_nn.evaluate import metrics, score, write_report
 from flights.airport_nn.inference import predict, predict_flights
 from flights.airport_nn.model import AirportRanker, default_device
 from flights.airport_nn.train import (
@@ -20,20 +28,72 @@ from flights.airport_nn.train import (
     train,
 )
 from flights.flight_type import Flight, flights_to_flights_df
+from flights.providers.bts import BTSFlightSource
+from flights.providers.sfdps import SFDPSFlightSource
+
+
+@dataclass(frozen=True)
+class FakeAirportMatcher:
+    airport: Airport
+
+    def _match(self, lat: float, lon: float) -> AirportMatch:
+        return AirportMatch(
+            id=self.airport.id,
+            ident=self.airport.ident,
+            distance_km=self.airport.distance_to(lat, lon),
+            provenance=AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE,
+            source_commit_sha="test-commit",
+            airport=self.airport,
+        )
+
+    def nearest(self, lat: float, lon: float) -> AirportMatch:
+        return self._match(lat, lon)
+
+    def within_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float,
+    ) -> tuple[AirportMatch, ...]:
+        return (self._match(lat, lon),)
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    matcher: FakeAirportMatcher
+    provenance: AirportCatalogProvenance
+
+    @property
+    def airports(self):
+        return (self.matcher.airport,)
+
+    @property
+    def id_index(self):
+        return {self.matcher.airport.id: self.matcher.airport}
 
 
 @pytest.fixture
-def observation(monkeypatch):
-    airport = Airport(1, "TEST", Airport_Types.SMALL_AIRPORT, "Test", 40, -75, 100)
-
-    class Lookup:
-        def getClosestAirport(self, lat, lon):
-            return airport
-
-        def getAirportsWithinRadius(self, lat, lon, radius):
-            return [airport]
-
-    monkeypatch.setattr(features, "AirportLookup", Lookup)
+def observation():
+    airport = Airport(
+        id=1,
+        ident="TEST",
+        type=AirportType.SMALL_AIRPORT,
+        name="Test",
+        lat=40,
+        lon=-75,
+        elevation_ft=100,
+    )
+    airport_catalog = FakeAirportCatalog(
+        matcher=FakeAirportMatcher(airport),
+        provenance=AirportCatalogProvenance(
+            flight_date=date(2026, 2, 1),
+            observed_commit_sha="observed-commit",
+            knowledge_cutoff_date=date(2026, 3, 1),
+            knowledge_commit_sha="knowledge-commit",
+            catalog_available_date=date(2026, 3, 1),
+            policy_version="test",
+        ),
+    )
     start = datetime(2026, 2, 1, 12)  # noqa: DTZ001 - source timestamps are naive UTC
     flights = flights_to_flights_df(
         [Flight("abc123", start, start + timedelta(minutes=30), "OLD", "OLD")]
@@ -51,34 +111,50 @@ def observation(monkeypatch):
             "on_ground": [True, False, False, False, True],
         }
     )
-    return flights, messages
+    return flights, messages, airport_catalog
 
 
 def test_features_ignore_labels_and_neighboring_flights(observation):
-    flights, messages = observation
-    original = list(features.trajectories(flights, messages))
-    changed = flights.with_columns(pl.lit("LEAK").alias("takeoff_airport_ident"))
+    flights, messages, airport_catalog = observation
+    original = list(features.trajectories(flights, messages, airport_catalog))
+    changed = flights.with_columns(
+        pl.lit(999).alias("takeoff_airport_id"),
+        pl.lit("LEAK").alias("takeoff_airport_ident"),
+    )
     neighbors = messages.with_columns(pl.col("time") + pl.duration(hours=2))
-    actual = list(features.trajectories(changed, pl.concat([messages, neighbors])))
+    actual = list(
+        features.trajectories(
+            changed,
+            pl.concat([messages, neighbors]),
+            airport_catalog,
+        )
+    )
     for a, b in zip(original, actual):
         np.testing.assert_array_equal(a.values, b.values)
-        assert a.airports == b.airports
+        assert a.candidate_idents == b.candidate_idents
+        assert a.candidate_ids == b.candidate_ids
+        assert a.nearest_id == b.nearest_id == 1
     assert original[0].values.shape[1] == 3
     assert original[1].values.shape[1] == 2
 
 
 def test_missing_observations_clear_labels_and_preserve_schema(observation):
-    flights, messages = observation
+    flights, messages, airport_catalog = observation
     model = AirportRanker(8)
     torch.set_num_threads(1)
-    predicted = predict_flights(flights, messages, model)
-    missing = predict_flights(flights, messages.head(0), model)
-    labels = ["takeoff_airport_ident", "landing_airport_ident"]
+    predicted = predict_flights(flights, messages, model, airport_catalog)
+    missing = predict_flights(flights, messages.head(0), model, airport_catalog)
+    labels = [
+        "takeoff_airport_id",
+        "takeoff_airport_ident",
+        "landing_airport_id",
+        "landing_airport_ident",
+    ]
     assert predicted.schema == flights.schema == missing.schema
     assert predicted.drop(labels).equals(flights.drop(labels))
     assert missing.drop(labels).equals(flights.drop(labels))
-    assert predicted.select(labels).row(0) == ("TEST", "TEST")
-    assert missing.select(labels).row(0) == (None, None)
+    assert predicted.select(labels).row(0) == (1, "TEST", 1, "TEST")
+    assert missing.select(labels).row(0) == (None, None, None, None)
 
 
 def test_prediction_streams_endpoint_batches():
@@ -100,7 +176,8 @@ def test_prediction_streams_endpoint_batches():
             yield features.Endpoint(
                 row=row,
                 endpoint="takeoff",
-                airports=["TEST"],
+                candidate_ids=[1],
+                candidate_idents=["TEST"],
                 values=np.zeros((1, 1, features.INPUT_SIZE), dtype=np.float32),
             )
 
@@ -111,7 +188,7 @@ def test_prediction_streams_endpoint_batches():
 
 
 def test_derive_day_writes_predicted_flights(observation, monkeypatch, tmp_path):
-    flights, messages = observation
+    flights, messages, airport_catalog = observation
     checkpoint = tmp_path / "model.pt"
     model = AirportRanker(8)
     payload = {
@@ -127,6 +204,11 @@ def test_derive_day_writes_predicted_flights(observation, monkeypatch, tmp_path)
         return messages
 
     monkeypatch.setattr(daily, "read_adsb", read)
+    monkeypatch.setattr(
+        daily,
+        "airport_catalog_for_date",
+        lambda _day: airport_catalog,
+    )
     output = tmp_path / "data.parquet"
     monkeypatch.setattr(daily, "flight_path", lambda *args: output)
     day = date(2026, 2, 1)
@@ -137,6 +219,8 @@ def test_derive_day_writes_predicted_flights(observation, monkeypatch, tmp_path)
     assert predicted.schema == flights.schema
     assert predicted["takeoff_airport_ident"].to_list() == ["TEST"]
     assert predicted["landing_airport_ident"].to_list() == ["TEST"]
+    assert predicted["takeoff_airport_id"].to_list() == [1]
+    assert predicted["landing_airport_id"].to_list() == [1]
     assert len(calls) == 1
 
 
@@ -200,6 +284,57 @@ def test_temporal_matching_rejects_ambiguity():
     ).is_empty()
 
 
+def test_references_label_stable_ids_not_idents(observation, monkeypatch, tmp_path):
+    _, _, airport_catalog = observation
+    day = date(2026, 2, 1)
+    start = datetime(2026, 2, 1, 12)
+    paths = {}
+    frames = {}
+    for source in (SFDPSFlightSource(), BTSFlightSource()):
+        path = tmp_path / f"{source.name}.parquet"
+        paths[source.name] = path
+        frames[source.name] = pl.DataFrame(
+            {
+                "icao": ["abc123", "def456"],
+                "takeoff_time": [start, start + timedelta(hours=2)],
+                "landing_time": [
+                    start + timedelta(hours=1),
+                    start + timedelta(hours=3),
+                ],
+                "takeoff_airport_id": [1, 999],
+                "takeoff_airport_ident": [f"{source.name}-ALIAS", "TEST"],
+                "landing_airport_id": [1, 999],
+                "landing_airport_ident": [f"{source.name}-ALIAS", "TEST"],
+            }
+        )
+        frames[source.name].write_parquet(path)
+
+    monkeypatch.setattr(data, "airport_catalog_for_date", lambda _: airport_catalog)
+    monkeypatch.setattr(data, "flight_path", lambda source, _: paths[source.name])
+    catalog_calls = []
+    monkeypatch.setattr(
+        data,
+        "get_flights_for_catalog",
+        lambda source, requested_day, catalog: (
+            catalog_calls.append((source.name, requested_day, catalog))
+            or frames[source.name]
+        ),
+    )
+
+    refs, _ = data.references(day)
+
+    valid = refs.filter(pl.col("icao") == "abc123")
+    invalid = refs.filter(pl.col("icao") == "def456")
+    assert valid["takeoff_truth_id"].to_list() == [1, 1]
+    assert set(valid["takeoff_truth_ident"]) == {"bts-ALIAS", "sfdps-ALIAS"}
+    assert invalid["takeoff_truth_id"].null_count() == 2
+    assert invalid["takeoff_truth_ident"].to_list() == ["", ""]
+    assert catalog_calls == [
+        ("sfdps", day, airport_catalog),
+        ("bts", day, airport_catalog),
+    ]
+
+
 def test_split_is_disjoint_and_february_only():
     all_days = TRAIN_DAYS + VALIDATION_DAYS + BUFFER_DAYS + TEST_DAYS
     assert len(all_days) == len(set(all_days)) == 30
@@ -227,7 +362,7 @@ def test_selection_weights_days_equally_and_requires_every_day():
 def test_retrieval_failures_stay_in_accuracy_denominator():
     frame = pl.DataFrame(
         {
-            "truth": ["ONE", "TWO", "THREE"],
+            "truth_id": [1, 2, 3],
             "icao": ["a", "b", "c"],
             "target": [0, -1, 0],
             "eligible": [True, True, False],
@@ -244,12 +379,60 @@ def test_retrieval_failures_stay_in_accuracy_denominator():
     assert result["primary"]["candidate_recall"] == 0.5
 
 
+def test_score_and_report_use_ids_for_correctness(tmp_path):
+    part = tmp_path / "part-0000.npz"
+    x = np.zeros((2, features.CANDIDATES, features.POINTS, features.INPUT_SIZE))
+    mask = np.zeros(x.shape[:3], dtype=bool)
+    mask[:, 0, 0] = True
+    np.savez_compressed(
+        part,
+        x=x,
+        mask=mask,
+        target=np.array([0, 0]),
+        eligible=np.array([True, True]),
+    )
+    pl.DataFrame(
+        {
+            "truth_id": [1, 1],
+            "truth_ident": ["SAME", "OLD"],
+            "nearest_id": [2, 1],
+            "nearest_ident": ["SAME", "NEW"],
+            "candidate_ids": [[2], [1]],
+            "candidate_idents": [["SAME"], ["NEW"]],
+            "target": [0, 0],
+            "eligible": [True, True],
+            "airport_type": ["small_airport", "small_airport"],
+            "icao": ["a", "b"],
+        }
+    ).write_parquet(part.with_suffix(".parquet"))
+
+    scored, _ = score(AirportRanker(8), [part])
+
+    assert scored["nn_id"].to_list() == [2, 1]
+    assert scored["nn_ident"].to_list() == ["SAME", "NEW"]
+    assert scored["nn_correct"].to_list() == [False, True]
+    assert scored["nearest_correct"].to_list() == [False, True]
+
+    report = tmp_path / "report"
+    write_report(scored, report)
+    metadata = json.loads((report / "metadata.json").read_text())
+    assert metadata["airport_identity"] == "ourairports_id"
+    assert metadata["target_definition"] == "index of truth_id in candidate_ids"
+    assert metadata["display_only_fields"] == [
+        "truth_ident",
+        "nn_ident",
+        "nearest_ident",
+        "candidate_idents",
+    ]
+
+
 def test_train_accepts_one_day_without_validation(tmp_path):
     day = date(2026, 3, 1)
     folder = tmp_path / "cache" / str(day)
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(
-        '{"date": "2026-03-01", "network": "adsblol", "parts": 1}'
+        '{"date": "2026-03-01", "network": "adsblol", '
+        '"airport_identity": "ourairports_id", "parts": 1}'
     )
     x = np.zeros((2, features.CANDIDATES, features.POINTS, features.INPUT_SIZE))
     mask = np.zeros(x.shape[:3], dtype=bool)

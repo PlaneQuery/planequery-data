@@ -1,10 +1,12 @@
 from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from airports.airport_lookup import Airport
+if TYPE_CHECKING:
+    from airports.catalog import AirportCatalogView
 
 
 FLIGHT_POLARS_SCHEMA = {
@@ -12,8 +14,10 @@ FLIGHT_POLARS_SCHEMA = {
     "callsign": pl.String,
     "registration": pl.String,
     "takeoff_time": pl.Datetime("ms"),
+    "takeoff_airport_id": pl.Int64,
     "takeoff_airport_ident": pl.String,
     "landing_time": pl.Datetime("ms"),
+    "landing_airport_id": pl.Int64,
     "landing_airport_ident": pl.String,
     "first_message_time": pl.Datetime("ms"),
     "first_lat": pl.Float64,
@@ -70,8 +74,10 @@ class Flight:
     icao: str
     takeoff_time: datetime
     landing_time: datetime
-    takeoff_airport_ident: str # TODO: maybe have whole airport object as well. takeoff_airport_ident can be a property.
-    landing_airport_ident: str
+    takeoff_airport_ident: str | None
+    landing_airport_ident: str | None
+    takeoff_airport_id: int | None = None
+    landing_airport_id: int | None = None
     first_message_time: datetime | None = None
     first_lat: float | None = None
     first_lon: float | None = None
@@ -98,13 +104,6 @@ class Flight:
     def flight_id(self) -> str:
         return self.icao + "_" + self.takeoff_time.strftime("%Y-%m-%d_%H-%M")
 
-    @property
-    def takeoff_airport(self) -> Airport:
-        from airports.airport_lookup import AirportLookup
-        airport_lookup = AirportLookup()
-        airport =  airport_lookup.get_Airport_from_airport_ident(self.takeoff_airport_ident)
-        assert airport is not None
-        return airport
     def __hash__(self) -> int:
         return hash(self.flight_id)
 
@@ -116,14 +115,8 @@ class Flight:
 
 class FlightIndex:
 
-    def __init__(
-        self,
-        flights: list[Flight],
-        airport_continuity_tolerance: float | None = None,
-
-    ) -> None:
+    def __init__(self, flights: list[Flight]) -> None:
         """Index flights by ICAO, with PIA and LADD time indexes."""
-        self.airport_continuity_tolerance_km = airport_continuity_tolerance
         self._flights_by_id = {flight.flight_id: flight for flight in flights}
         self.flights_by_icao: dict[str, list[Flight]] = {}
 
@@ -193,61 +186,47 @@ class FlightIndex:
     def pia_flights_after(
         self,
         time: datetime,
-        lat: float,
-        lon: float,
-        airport_ident: str,
+        airport_id: int | None,
         before_time: datetime | None = None,
     ) -> list[Flight]:
-        """Return nearby PIA flights taking off at or after ``time``.
+        """Return PIA flights departing ``airport_id`` at or after ``time``.
 
         When ``before_time`` is provided, only flights that land strictly
         before it are returned.
-
-        A flight is nearby when it takes off from ``airport_ident`` or its first
-        reported position is within :attr:`PIA_LOCATION_RADIUS_KM` of ``lat``,
-        ``lon``.
         """
-        return self._nearby_flights_after(
+        return self._flights_after_from_airport(
             self._pia_flights,
             self._pia_takeoff_times,
             time,
-            lat,
-            lon,
-            airport_ident,
+            airport_id,
             before_time,
         )
 
     def ladd_flights_after(
         self,
         time: datetime,
-        lat: float,
-        lon: float,
-        airport_ident: str,
+        airport_id: int | None,
         before_time: datetime | None = None,
     ) -> list[Flight]:
-        """Return nearby LADD flights taking off at or after ``time``.
+        """Return LADD flights departing ``airport_id`` at or after ``time``.
 
         When ``before_time`` is provided, only flights that land strictly
         before it are returned.
         """
-        return self._nearby_flights_after(
+        return self._flights_after_from_airport(
             self._ladd_flights,
             self._ladd_takeoff_times,
             time,
-            lat,
-            lon,
-            airport_ident,
+            airport_id,
             before_time,
         )
 
-    def _nearby_flights_after(
+    def _flights_after_from_airport(
         self,
         flights: list[Flight],
         takeoff_times: list[datetime],
         time: datetime,
-        lat: float,
-        lon: float,
-        airport_ident: str,
+        airport_id: int | None,
         before_time: datetime | None,
     ) -> list[Flight]:
         index = bisect_left(takeoff_times, time)
@@ -256,7 +235,8 @@ class FlightIndex:
             for flight in flights[index:]
             if (before_time is None or flight.landing_time < before_time)
             and (
-                flight.takeoff_airport_ident == airport_ident
+                airport_id is not None
+                and flight.takeoff_airport_id == airport_id
             )
         ]
 
@@ -272,38 +252,27 @@ def flights_to_flights_df(flights: list[Flight]) -> pl.DataFrame:
     df = pl.DataFrame([asdict(flight) for flight in flights], schema=FLIGHT_POLARS_SCHEMA)
     return df.select(list(FLIGHT_POLARS_SCHEMA.keys()))
 
-def add_lat_lon_to_airport_ident_columns(df: pl.DataFrame) -> pl.DataFrame:
-    from airports.airport_lookup import AirportLookup
-
-    airport_lookup = AirportLookup()
-
+def add_lat_lon_to_airport_columns(
+    df: pl.DataFrame,
+    airport_catalog: "AirportCatalogView",
+) -> pl.DataFrame:
     def add_airport_coords(df: pl.DataFrame, prefix: str) -> pl.DataFrame:
-        ident_col = f"{prefix}_airport_ident"
+        id_col = f"{prefix}_airport_id"
         lat_col = f"{prefix}_airport_lat"
         lon_col = f"{prefix}_airport_lon"
-
-        def get_coords(airport_ident: str | None) -> dict[str, float | None]:
-            coords = airport_lookup.get_airport_coordinates(airport_ident)
-            if coords is None:
-                return {lat_col: None, lon_col: None}
-
-            lat, lon = coords
-            return {lat_col: lat, lon_col: lon}
-
-        return (
-            df.with_columns(
-                pl.col(ident_col)
-                .map_elements(
-                    get_coords,
-                    return_dtype=pl.Struct({
-                        lat_col: pl.Float64,
-                        lon_col: pl.Float64,
-                    }),
-                )
-                .alias("_airport_coords")
-            )
-            .unnest("_airport_coords")
+        coordinates = pl.DataFrame(
+            {
+                id_col: [airport.id for airport in airport_catalog.airports],
+                lat_col: [airport.lat for airport in airport_catalog.airports],
+                lon_col: [airport.lon for airport in airport_catalog.airports],
+            },
+            schema={
+                id_col: pl.Int64,
+                lat_col: pl.Float64,
+                lon_col: pl.Float64,
+            },
         )
+        return df.join(coordinates, on=id_col, how="left")
 
     df = add_airport_coords(df, "takeoff")
     return add_airport_coords(df, "landing")

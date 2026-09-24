@@ -1,8 +1,14 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import polars as pl
 
+from airports.models import (
+    Airport,
+    AirportMatch,
+    AirportMatchProvenance,
+    AirportType,
+)
 from flights.segmentation import algorithm
 from flights.segmentation.algorithm import (
     AdsbPositionMessage,
@@ -14,6 +20,57 @@ from flights.segmentation.readsb_legs import mark_leg_indexes
 
 ICAO = "abc123"
 START = datetime(2026, 3, 1)
+
+
+@dataclass(frozen=True)
+class FakeAirportMatcher:
+    airport: Airport
+
+    def _match(self, lat: float, lon: float) -> AirportMatch:
+        return AirportMatch(
+            id=self.airport.id,
+            ident=self.airport.ident,
+            distance_km=self.airport.distance_to(lat, lon),
+            provenance=AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE,
+            source_commit_sha="test-commit",
+            airport=self.airport,
+        )
+
+    def nearest(self, lat: float, lon: float) -> AirportMatch:
+        return self._match(lat, lon)
+
+    def within_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float,
+    ) -> tuple[AirportMatch, ...]:
+        return (self._match(lat, lon),)
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    airport: Airport
+    matcher: FakeAirportMatcher
+
+    def get_airport_by_ident(self, ident: str) -> Airport | None:
+        return self.airport if ident == self.airport.ident else None
+
+    def get_airport_by_id(self, airport_id: int) -> Airport | None:
+        return self.airport if airport_id == self.airport.id else None
+
+
+def fake_airport_catalog() -> FakeAirportCatalog:
+    airport = Airport(
+        id=101,
+        ident="TEST",
+        type=AirportType.SMALL_AIRPORT,
+        name="Test Airport",
+        lat=0.0,
+        lon=0.0,
+        elevation_ft=100,
+    )
+    return FakeAirportCatalog(airport, FakeAirportMatcher(airport))
 
 
 def message(
@@ -108,18 +165,23 @@ def test_processes_each_aircraft_group_before_requesting_the_next(monkeypatch):
     assert processed == ["first", "second"]
 
 
-def test_complete_aircraft_batches_match_one_shot_segmentation(monkeypatch):
-    monkeypatch.setattr(algorithm, "_get_airport_lookup", lambda: None)
+def test_complete_aircraft_batches_match_one_shot_segmentation():
+    airport_catalog = fake_airport_catalog()
     messages = two_flight_trace()
     messages += [replace(message, icao="def456") for message in two_flight_trace()]
     frame = pl.from_dicts([message.__dict__ for message in messages])
 
-    expected = algorithm.create_flights_from_adsb(frame, START.date())
+    expected = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        airport_catalog,
+    )
     actual = pl.concat(
         [
             algorithm.create_flights_from_adsb(
                 frame.filter(pl.col("icao") == icao),
                 START.date(),
+                airport_catalog,
             )
             for icao in (ICAO, "def456")
         ]
@@ -228,7 +290,7 @@ def test_uses_geometric_altitude_when_baro_altitude_is_missing():
     assert mark_leg_indexes(messages) == [16]
 
 
-def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
+def test_flight_identity_uses_the_mode_of_messages_in_its_sequence():
     messages = [
         message(
             index,
@@ -243,9 +305,17 @@ def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
     ]
 
     segments = identify_flight_segments(messages)
-    monkeypatch.setattr("flights.segmentation.algorithm._get_airport_lookup", lambda: None)
-
-    flights = _segments_to_flights_df(segments)
+    flights = _segments_to_flights_df(segments, fake_airport_catalog())
 
     assert flights.select("callsign").item() == "TEST123"
     assert flights.select("registration").item() == "N123AB"
+    assert flights.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (101, 101)
+
+
+def test_default_worker_count_is_capped_at_eight(monkeypatch):
+    monkeypatch.setattr(algorithm.os, "cpu_count", lambda: 64)
+
+    assert algorithm._number_of_workers_default() == 8

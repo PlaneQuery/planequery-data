@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.filters import pia_or_american_ladd
 from data_engineering.utils import OUTPUT_DIR
@@ -208,6 +209,7 @@ def main( # TODO: Maybe rename to run_evaluation
             for gold_source in gold_sources:
                 get_gold_flights = source_flights_reader(gold_source)
                 for test_date in test_dates:
+                    airport_catalog = airport_catalog_for_date(test_date)
                     df_test = get_source_flights(test_date)
                     df_gold = get_gold_flights(test_date)
                     expr = (pl.col("landing_time").dt.date() == test_date) & (pl.col("takeoff_time").dt.date() == test_date)
@@ -251,16 +253,26 @@ def main( # TODO: Maybe rename to run_evaluation
                         df_gold = df_gold.filter(~is_helicopter_expr())
                     if include_consecutive_airport_metrics:
                         consecutive_details = consecutive_airport_details(
-                            df_test
+                            df_test,
+                            airport_catalog=airport_catalog,
                         )
                         df_test = df_test.join(
                             consecutive_details.drop(
-                                "takeoff_airport_ident"
+                                "takeoff_airport_id",
+                                "takeoff_airport_ident",
                             ),
                             on=["icao", "takeoff_time"],
                             how="left",
                         )
-                    df = df_flights_comparison(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
+                    df = df_flights_comparison(
+                        df_test,
+                        df_gold,
+                        datetime(test_date.year, test_date.month, test_date.day),
+                        datetime(test_date.year, test_date.month, test_date.day)
+                        + timedelta(days=1),
+                        airport_catalog,
+                        compare_airports=False,
+                    )
                     results.append(df)
                     stats_adsb_src = (
                         source_adsb_src
@@ -272,6 +284,7 @@ def main( # TODO: Maybe rename to run_evaluation
                         stats.update(
                             consecutive_airport_stats(
                                 df_test,
+                                airport_catalog=airport_catalog,
                                 displacement_threshold_km=(
                                     consecutive_airport_displacement_threshold_km
                                 ),
