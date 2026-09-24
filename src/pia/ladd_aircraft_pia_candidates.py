@@ -1,31 +1,33 @@
 from datetime import date
 from flights.algorithm import get_flights_range
+from flights.airport_reference import airport_from_reference
 from flights.flight_type import flights_df_to_flights
 import polars as pl
-from airports.airport_lookup import AirportLookup
+from airports.runtime import airport_catalog_for_date
 from planequery_data.utils import haversine
-
-_airport_lookup = None
-
-def _get_airport_lookup() -> AirportLookup:
-    global _airport_lookup
-    if _airport_lookup is None:
-        _airport_lookup = AirportLookup()
-    return _airport_lookup
 
 def potential_pia_flight_count(group):
     # group = group.sort("takeoff_time") # uncessary alread sorted 
-    airport_lookup = _get_airport_lookup()
     flights = flights_df_to_flights(group)
     previous_flight = None
     count = 0
     for flight in flights:
         if previous_flight is not None:
-            if previous_flight.landing_airport_ident != flight.takeoff_airport_ident \
-            and airport_lookup.airport_ident_is_in_us_faa_airspace(previous_flight.landing_airport_ident) \
-            and airport_lookup.airport_ident_is_in_us_faa_airspace(flight.takeoff_airport_ident):
-                landing_airport = airport_lookup.get_Airport_from_airport_ident(previous_flight.landing_airport_ident)
-                takeoff_airport = airport_lookup.get_Airport_from_airport_ident(flight.takeoff_airport_ident)
+            if previous_flight.landing_airport_id == flight.takeoff_airport_id:
+                previous_flight = flight
+                continue
+            landing_airport = airport_from_reference(
+                airport_catalog_for_date(previous_flight.takeoff_time.date()),
+                previous_flight.landing_airport_id,
+            )
+            takeoff_airport = airport_from_reference(
+                airport_catalog_for_date(flight.takeoff_time.date()),
+                flight.takeoff_airport_id,
+            )
+            if (
+                landing_airport.is_in_us_faa_airspace
+                and takeoff_airport.is_in_us_faa_airspace
+            ):
                 distance = haversine(
                     landing_airport.lat,
                     landing_airport.lon,
@@ -37,39 +39,7 @@ def potential_pia_flight_count(group):
         previous_flight = flight
     return count
 
-def add_airport_coords(df: pl.DataFrame, prefix: str) -> pl.DataFrame:
-    airport_lookup = _get_airport_lookup()
-    airport_col = f"{prefix}_airport_ident"
-    lat_col = f"{prefix}_airport_lat"
-    lon_col = f"{prefix}_airport_lon"
-
-    def get_coords(airport_ident: str | None) -> dict[str, float | None]:
-        coords = airport_lookup.get_airport_coordinates(airport_ident)
-
-        if coords is None:
-            return {lat_col: None, lon_col: None}
-
-        lat, lon = coords
-        return {lat_col: lat, lon_col: lon}
-
-    return (
-        df.with_columns(
-            pl.col(airport_col)
-            .map_elements(
-                get_coords,
-                return_dtype=pl.Struct({
-                    lat_col: pl.Float64,
-                    lon_col: pl.Float64,
-                }),
-            )
-            .alias("_coords")
-        )
-        .unnest("_coords")
-    )
-
 def get_ladd_pia_candidates(df: pl.DataFrame) -> set[str]:
-    df = add_airport_coords(df, "takeoff")
-    df = add_airport_coords(df, "landing")
     candidates = set()
     for icao_key, group in df.group_by("icao"):
         icao = icao_key[0]

@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
@@ -6,12 +7,29 @@ from pathlib import Path
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 import polars as pl
+import pytest
 
 from flights.providers import bts as bts_module
 from flights.providers.bts import (
     _compute_bts_timestamps,
     create_flights_from_bts,
+    iata_airport_mapping,
 )
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    name: str = "test-catalog"
+
+
+def test_iata_airport_mapping_rejects_unknown_non_null_code():
+    class UnknownAirportCatalog:
+        def resolve_code(self, code, *, code_priority):
+            assert code_priority == ("iata_code",)
+            return None
+
+    with pytest.raises(ValueError, match="Unknown BTS IATA airport code 'ZZZ'"):
+        iata_airport_mapping(UnknownAirportCatalog(), ["ZZZ"])
 
 
 def test_compute_bts_timestamps_does_not_roll_one_minute_early_departure_to_next_day():
@@ -110,12 +128,15 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
             ],
         }
     )
-    monkeypatch.setattr(
-        bts_module,
-        "_create_flights_from_bts_month",
-        lambda year, month: df,
-    )
+    airport_catalog = FakeAirportCatalog()
 
-    result = create_flights_from_bts(date(2026, 3, 1))
+    def create_month(year, month, catalog):
+        assert (year, month) == (2026, 3)
+        assert catalog is airport_catalog
+        return df
+
+    monkeypatch.setattr(bts_module, "_create_flights_from_bts_month", create_month)
+    result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
+    assert bts_module.BTSFlightSource().version == 6

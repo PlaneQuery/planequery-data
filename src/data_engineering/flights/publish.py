@@ -10,14 +10,18 @@ from pathlib import Path
 
 import polars as pl
 
-from flights import algorithm
+from airports.catalog import AirportCatalogView
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
+from data_engineering.utils import upload_to_s3
+from flights import algorithm
+from flights.airport_catalog_manifest import (
+    AirportCatalogManifest,
+    airport_catalog_manifest_path,
+)
 from flights.flight_source import flight_path
 from flights.flight_type import with_flight_schema_columns
 from planequery_data.utils import date_range
-from data_engineering.utils import (
-    upload_to_s3,
-)
 
 
 ICEBERG_FLIGHTS_COLUMNS = [
@@ -25,8 +29,10 @@ ICEBERG_FLIGHTS_COLUMNS = [
     "callsign",
     "registration",
     "takeoff_time",
+    "takeoff_airport_id",
     "takeoff_airport_ident",
     "landing_time",
+    "landing_airport_id",
     "landing_airport_ident",
     "pia",
     "ladd",
@@ -36,6 +42,11 @@ ICEBERG_FLIGHTS_COLUMNS = [
     "owner",
     "aircraft_description",
     "category",
+    "airport_catalog_observed_commit_sha",
+    "airport_catalog_knowledge_cutoff_date",
+    "airport_catalog_knowledge_commit_sha",
+    "airport_catalog_available_date",
+    "airport_catalog_policy_version",
 ]
 BOOLEAN_COLUMNS = ["pia", "ladd", "military", "interesting"]
 
@@ -43,10 +54,12 @@ BOOLEAN_COLUMNS = ["pia", "ladd", "military", "interesting"]
 def _date_arg(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
+
 def publish_flights_parquet(
     df_flights: pl.DataFrame,
     target_date: date,
     source: ADSBSource,
+    airport_catalog: AirportCatalogView,
 ) -> Path:
     output_path = flight_path(
         algorithm.AlgorithmNearestFlightSource(),
@@ -55,12 +68,16 @@ def publish_flights_parquet(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with_flight_schema_columns(df_flights).write_parquet(output_path)
+    AirportCatalogManifest.from_provenance(
+        airport_catalog.provenance
+    ).write(airport_catalog_manifest_path(output_path))
     return output_path
 
 
 def ingest_flights_to_iceberg(
     df_flights: pl.DataFrame,
     target_date: date,
+    airport_catalog_manifest: AirportCatalogManifest,
     *,
     prod: bool,
 ) -> None:
@@ -86,7 +103,23 @@ def ingest_flights_to_iceberg(
 
         with tempfile.TemporaryDirectory() as tmpdir:
             parquet_path = Path(tmpdir) / "flights.parquet"
-            with_flight_schema_columns(df_flights).write_parquet(parquet_path)
+            with_flight_schema_columns(df_flights).with_columns(
+                pl.lit(
+                    airport_catalog_manifest.observed_commit_sha
+                ).alias("airport_catalog_observed_commit_sha"),
+                pl.lit(
+                    airport_catalog_manifest.knowledge_cutoff_date
+                ).alias("airport_catalog_knowledge_cutoff_date"),
+                pl.lit(
+                    airport_catalog_manifest.knowledge_commit_sha
+                ).alias("airport_catalog_knowledge_commit_sha"),
+                pl.lit(
+                    airport_catalog_manifest.catalog_available_date
+                ).alias("airport_catalog_available_date"),
+                pl.lit(
+                    airport_catalog_manifest.policy_version
+                ).alias("airport_catalog_policy_version"),
+            ).write_parquet(parquet_path)
             spark_df = (
                 spark.read.parquet(str(parquet_path))
                 .select(*ICEBERG_FLIGHTS_COLUMNS)
@@ -109,7 +142,11 @@ def main() -> None:
         choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
     )
-    parser.add_argument("--max-workers", type=int, default=os.cpu_count() or 1)
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=algorithm.default_max_workers(),
+    )
     parser.add_argument("--write-to-s3", action="store_true")
     parser.add_argument("--ingest-to-iceberg", action="store_true")
     parser.add_argument("--prod", action="store_true")
@@ -125,8 +162,10 @@ def main() -> None:
         dates = [dates[int(array_index)]]
 
     for target_date in dates:
+        airport_catalog = airport_catalog_for_date(target_date)
         df_flights = algorithm.create_flights_for_day(
             target_date=target_date,
+            airport_catalog=airport_catalog,
             adsb_src=args.source,
             max_workers=args.max_workers,
         )
@@ -134,12 +173,21 @@ def main() -> None:
             df_flights,
             target_date,
             args.source,
+            airport_catalog,
         )
         print(f"Published {len(df_flights)} flights to {output_path}")
         if args.write_to_s3:
             upload_to_s3(output_path)
+            upload_to_s3(airport_catalog_manifest_path(output_path))
         if args.ingest_to_iceberg:
-            ingest_flights_to_iceberg(df_flights, target_date, prod=args.prod)
+            ingest_flights_to_iceberg(
+                df_flights,
+                target_date,
+                AirportCatalogManifest.read(
+                    airport_catalog_manifest_path(output_path)
+                ),
+                prod=args.prod,
+            )
 
 
 if __name__ == "__main__":

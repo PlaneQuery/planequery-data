@@ -6,11 +6,10 @@ are used. Airports compete using the same observed trajectory.
 """
 
 from dataclasses import dataclass
-
 import numpy as np
 import polars as pl
 
-from airports.airport_lookup import AirportLookup
+from airports.catalog import AirportCatalogView
 
 VERSION = 3
 POINTS, CANDIDATES, INPUT_SIZE = 32, 32, 24
@@ -34,9 +33,11 @@ DISTANCE, ALTITUDE, ELAPSED, GAP = 4, 5, 10, 23
 class Endpoint:
     row: int
     endpoint: str
-    airports: list[str]
+    candidate_ids: list[int]
+    candidate_idents: list[str]
     values: np.ndarray  # [candidate, time, feature]
-    nearest: str = ""
+    nearest_id: int | None = None
+    nearest_ident: str = ""
 
 
 def clean_messages(messages):
@@ -53,11 +54,15 @@ def clean_messages(messages):
     )
 
 
-def trajectories(flights, messages, loss_seconds=0):
+def trajectories(
+    flights,
+    messages,
+    airport_catalog: AirportCatalogView,
+    loss_seconds=0,
+):
     """Yield two endpoints per flight, including those without observations."""
     if loss_seconds < 0:
         raise ValueError("Reception loss must be nonnegative")
-    lookup = AirportLookup()
     tracks = {}
     cleaned = clean_messages(messages.select(COLUMNS))
     for (icao,), frame in cleaned.group_by("icao", maintain_order=True):
@@ -87,7 +92,13 @@ def trajectories(flights, messages, loss_seconds=0):
             if landing:
                 points = points[::-1]
             if not len(points):
-                yield Endpoint(row, name, [], np.empty((0, 0, INPUT_SIZE), np.float32))
+                yield Endpoint(
+                    row=row,
+                    endpoint=name,
+                    candidate_ids=[],
+                    candidate_idents=[],
+                    values=np.empty((0, 0, INPUT_SIZE), np.float32),
+                )
                 continue
             if len(points) > POINTS:
                 indices = np.unique(
@@ -97,11 +108,12 @@ def trajectories(flights, messages, loss_seconds=0):
                 )
                 points = points[indices]
             lat, lon = points[0, 1:3]
-            nearest = lookup.getClosestAirport(lat, lon).ident
-            airports = sorted(
-                lookup.getAirportsWithinRadius(lat, lon, 200),
-                key=lambda a: (a.distance_to(lat, lon), a.ident),
+            nearest_match = airport_catalog.matcher.nearest(lat, lon)
+            matches = sorted(
+                airport_catalog.matcher.within_radius(lat, lon, 200),
+                key=lambda match: (match.distance_km, match.ident),
             )
+            airports = [match.airport for match in matches]
             # Reserve eight slots for larger airports behind dense private strips.
             nearby = airports[:24]
             larger = [a for a in airports[24:] if a.type != "small_airport"][:8]
@@ -109,7 +121,15 @@ def trajectories(flights, messages, loss_seconds=0):
                 nearby + larger + [a for a in airports[24:] if a not in larger]
             )[:CANDIDATES]
             values = relative_features(points, airports, boundary, landing)
-            yield Endpoint(row, name, [a.ident for a in airports], values, nearest)
+            yield Endpoint(
+                row=row,
+                endpoint=name,
+                candidate_ids=[a.id for a in airports],
+                candidate_idents=[a.ident for a in airports],
+                values=values,
+                nearest_id=nearest_match.id,
+                nearest_ident=nearest_match.ident,
+            )
 
 
 def relative_features(points, airports, boundary, landing):

@@ -3,14 +3,17 @@ from datetime import date
 
 import polars as pl
 
-from airports.airport_lookup import AirportLookup
+from airports.catalog import AirportCatalogView
 from data_engineering.eurocontrol.preprocess import prepare_eurocontrol_month_parquet
 from data_engineering.openairframes.read import get_openairframes_snapshot
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
 
 
-def create_eurocontrol_flights(target_date: date) -> pl.DataFrame:
+def create_eurocontrol_flights(
+    target_date: date,
+    airport_catalog: AirportCatalogView,
+) -> pl.DataFrame:
     df = (
         pl.scan_parquet(prepare_eurocontrol_month_parquet(target_date))
         .filter(pl.col("takeoff_time").dt.date() == target_date)
@@ -38,35 +41,77 @@ def create_eurocontrol_flights(target_date: date) -> pl.DataFrame:
         validate="m:1",
     )
 
-    airport_lookup = AirportLookup()
-
-    def get_airport_code(airport_id: str):
-        airport = airport_lookup.get_airport_from_code(
-            airport_id,
+    codes = (
+        pl.concat(
+            [
+                df.select(pl.col("takeoff_airport_code").alias("code")),
+                df.select(pl.col("landing_airport_code").alias("code")),
+            ]
+        )
+        .get_column("code")
+        .drop_nulls()
+        .unique()
+        .sort()
+        .to_list()
+    )
+    airports = []
+    for code in codes:
+        airport = airport_catalog.resolve_code(
+            code,
+            code_priority=(
+                "icao_code",
+                "ident",
+                "gps_code",
+                "iata_code",
+                "local_code",
+            ),
             prioritize_faa_airspace=False,
         )
-        if airport is not None:
-            return airport.ident
-        return None
-
-    df = df.with_columns(
-        pl.col("takeoff_airport_code")
-        .map_elements(get_airport_code, return_dtype=pl.String)
-        .alias("takeoff_airport_ident"),
-        pl.col("landing_airport_code")
-        .map_elements(get_airport_code, return_dtype=pl.String)
-        .alias("landing_airport_ident"),
+        if airport is None:
+            raise ValueError(f"Unknown Eurocontrol airport code {code!r}")
+        airports.append(airport)
+    mapping = pl.DataFrame(
+        {
+            "code": codes,
+            "airport_id": [airport.id for airport in airports],
+            "airport_ident": [airport.ident for airport in airports],
+        },
+        schema={
+            "code": pl.String,
+            "airport_id": pl.Int64,
+            "airport_ident": pl.String,
+        },
     )
-    df = df.filter(
-        pl.col("takeoff_airport_ident").is_not_null()
-        & pl.col("landing_airport_ident").is_not_null()
+    df = df.join(
+        mapping,
+        left_on="takeoff_airport_code",
+        right_on="code",
+        how="left",
+    ).rename(
+        {
+            "airport_id": "takeoff_airport_id",
+            "airport_ident": "takeoff_airport_ident",
+        }
+    )
+    df = df.join(
+        mapping,
+        left_on="landing_airport_code",
+        right_on="code",
+        how="left",
+    ).rename(
+        {
+            "airport_id": "landing_airport_id",
+            "airport_ident": "landing_airport_ident",
+        }
     )
     df = df.select(
         "icao",
         "registration",
         "takeoff_time",
         "landing_time",
+        "takeoff_airport_id",
         "takeoff_airport_ident",
+        "landing_airport_id",
         "landing_airport_ident",
         "aircraft_type",
         "owner",
@@ -77,7 +122,11 @@ def create_eurocontrol_flights(target_date: date) -> pl.DataFrame:
 @dataclass(frozen=True)
 class EurocontrolFlightSource(NonADSBFlightSource):
     name: str = "eurocontrol"
-    version: int = 1
+    version: int = 3
 
-    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
-        return create_eurocontrol_flights(dt)
+    def create_flights_for_day(
+        self,
+        dt: date,
+        airport_catalog: AirportCatalogView,
+    ) -> pl.DataFrame:
+        return create_eurocontrol_flights(dt, airport_catalog)

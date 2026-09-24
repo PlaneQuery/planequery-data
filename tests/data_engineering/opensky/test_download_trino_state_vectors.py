@@ -52,14 +52,18 @@ def test_rows_to_arrow_preserves_columns():
 
 
 def test_download_hour_writes_partitioned_parquet(tmp_path):
-    cursor = FakeCursor(batches=[[("abc123", 1)], [("def456", 1)]])
+    cursors = [
+        FakeCursor(batches=[[("abc123", 1)]]),
+        FakeCursor(batches=[[("def456", 1)]]),
+    ]
     start = datetime(2024, 6, 1, 3, tzinfo=timezone.utc)
 
     output_path = downloader.download_hour(
-        FakeConnection([cursor]),
+        FakeConnection(cursors),
         start,
         output_dir=tmp_path,
         batch_size=10,
+        query_window_minutes=30,
     )
 
     assert output_path == (
@@ -74,8 +78,17 @@ def test_download_hour_writes_partitioned_parquet(tmp_path):
         "abc123",
         "def456",
     ]
-    assert cursor.execute_args[1] == [int(start.timestamp())]
-    assert cursor.closed
+    assert cursors[0].execute_args[1] == [
+        int(start.timestamp()),
+        int(start.timestamp()),
+        int(start.timestamp()) + 30 * 60,
+    ]
+    assert cursors[1].execute_args[1] == [
+        int(start.timestamp()),
+        int(start.timestamp()) + 30 * 60,
+        int(start.timestamp()) + 60 * 60,
+    ]
+    assert all(cursor.closed for cursor in cursors)
     assert not output_path.with_suffix(".parquet.tmp").exists()
 
 
@@ -156,6 +169,8 @@ def test_main_passes_cli_arguments(monkeypatch, tmp_path):
             str(tmp_path),
             "--batch-size",
             "42",
+            "--query-window-minutes",
+            "5",
         ]
     )
 
@@ -166,6 +181,7 @@ def test_main_passes_cli_arguments(monkeypatch, tmp_path):
                 "user": "test-user",
                 "output_dir": tmp_path,
                 "batch_size": 42,
+                "query_window_minutes": 5,
             },
         )
     ]

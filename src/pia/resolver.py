@@ -8,9 +8,10 @@ import numpy as np
 from ortools.sat.python import cp_model
 from itertools import groupby
 from datetime import date
-from airports.airport_lookup import AirportLookup
+from airports.runtime import airport_catalog_for_date
 from data_engineering.filters import pia_or_american_ladd_icao
 from flights.algorithm import get_flights_range
+from flights.airport_reference import airport_from_reference
 from flights.flight_type import Flight, FlightIndex, flights_df_to_flights
 from pia.check_mappings import check_mappings
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
@@ -18,8 +19,6 @@ from datetime import datetime
 import heapq
 from pia.solver import pia_icao_mapping_from_selected_candidates, resolve_links_with_margin
 
-AIRPORT_CONTINUITY_TOLERANCE = 10
-airport_lookup = AirportLookup()
 def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
     # sorted by icao, time
     # add scores to each edge. 
@@ -36,7 +35,6 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                     next_flight.flight_id,
                     score = score
                 )
-                # if flight.landing_airport_ident == next_flight.takeoff_airport_ident:
                 candidates.append(candidate)
             else:
                 next_flight = None
@@ -47,7 +45,11 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 before_time = next_flight.takeoff_time
             else:
                 before_time = None
-            pia_flights = flight_index.pia_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
+            pia_flights = flight_index.pia_flights_after(
+                flight.landing_time,
+                flight.landing_airport_id,
+                before_time=before_time,
+            )
             for pia_flight in pia_flights:
                 icao_pair = tuple(sorted((icao, pia_flight.icao)))
                 if pia_flight.category != flight.category:
@@ -62,7 +64,11 @@ def build_candidates(flight_index: FlightIndex) -> list[FlightLinkCandidate]:
                 )
                 candidates.append(candidate)
             if flight.pia:
-                ladd_flights = flight_index.ladd_flights_after(flight.landing_time, flight.last_lat, flight.last_lon, flight.landing_airport_ident, before_time = before_time)
+                ladd_flights = flight_index.ladd_flights_after(
+                    flight.landing_time,
+                    flight.landing_airport_id,
+                    before_time=before_time,
+                )
                 for ladd_flight in ladd_flights:
                     icao_pair = tuple(sorted((icao, ladd_flight.icao)))
                     if icao_pair in overlapping_pairs:
@@ -130,12 +136,24 @@ def find_overlapping_icao_pairs(flight_index: FlightIndex) -> set[tuple[str, str
 def edge_score(a: Flight, b: Flight) -> int:
     score = 0
 
+    a_catalog = airport_catalog_for_date(a.takeoff_time.date())
+    a_takeoff_airport = airport_from_reference(
+        a_catalog,
+        a.takeoff_airport_id,
+    )
+    a_landing_airport = airport_from_reference(
+        a_catalog,
+        a.landing_airport_id,
+    )
     if a.icao == b.icao:
         score += 2000
 
-    if a.landing_airport_ident == b.takeoff_airport_ident:
+    if a.landing_airport_id == b.takeoff_airport_id:
         score += 1500
-    if airport_lookup.airport_ident_is_in_us_faa_airspace(a.takeoff_airport_ident) and not airport_lookup.airport_ident_is_in_us_faa_airspace(a.landing_airport_ident):
+    if (
+        a_takeoff_airport.is_in_us_faa_airspace
+        and not a_landing_airport.is_in_us_faa_airspace
+    ):
         if a.icao == b.icao:
             score += 2000
     if a.callsign and b.callsign and a.callsign == b.callsign:
@@ -229,7 +247,6 @@ def resolve_pia_mappings(
     flights: list[Flight],
     known_pia_mappings: dict[str, str] = {},
     # TODO: known_pia_users: list[str],
-    airport_continuity_tolerance: float = 10,
 ) -> tuple[dict[Flight, str], pl.DataFrame, pl.DataFrame]:
     if len(known_pia_mappings) > 0:
         icaos_to_remove = set(known_pia_mappings.keys()) | set(known_pia_mappings.values())
@@ -238,7 +255,7 @@ def resolve_pia_mappings(
             if flight.icao not in icaos_to_remove
         ]
     print(f"Number of flights: {len(flights)}")
-    flight_index = FlightIndex(flights, None)
+    flight_index = FlightIndex(flights)
     pia_flights = flight_index.get_pia_flights()
     print(f"Number of PIA flights: {len(pia_flights)}")
     candidates = build_candidates(flight_index)

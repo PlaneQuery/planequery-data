@@ -4,11 +4,10 @@ from pathlib import Path
 
 import polars as pl
 
-from flights.flight_type import (
-    FLIGHT_POLARS_SCHEMA,
-    with_flight_schema_columns,
-)
-from flights.flight_source import NonADSBFlightSource
+from airports.catalog import AirportCatalogView
+from flights.airport_reference import resolve_flight_airport_codes
+from flights.flight_type import with_flight_schema_columns
+from flights.flight_source import NonADSBFlightSource, file_artifact_cache_key
 
 
 DEFAULT_INPUT = Path(
@@ -78,18 +77,33 @@ def read_mike_flights_csv(input_csv: str | Path | None = None) -> pl.DataFrame:
 
 def create_mike_flights(
     target_date: date,
+    airport_catalog: AirportCatalogView,
     input_csv: str | Path | None = None,
 ) -> pl.DataFrame:
-    return read_mike_flights_csv(input_csv).filter(
+    flights = read_mike_flights_csv(input_csv).filter(
         pl.col("takeoff_time").dt.date() == target_date
+    )
+    return resolve_flight_airport_codes(
+        flights,
+        airport_catalog,
+        takeoff_code_column="takeoff_airport_ident",
+        landing_code_column="landing_airport_ident",
+        code_priority=("ident",),
     )
 
 
 @dataclass(frozen=True)
 class MikeFlightSource(NonADSBFlightSource):
     name: str = "mike"
-    version: int = 1
+    version: int = 2
     input_csv: str | Path | None = None
 
-    def create_flights_for_day(self, dt: date) -> pl.DataFrame:
-        return create_mike_flights(dt, self.input_csv)
+    def artifact_cache_key(self) -> str:
+        return file_artifact_cache_key("input", self.input_csv or DEFAULT_INPUT)
+
+    def create_flights_for_day(
+        self,
+        dt: date,
+        airport_catalog: AirportCatalogView,
+    ) -> pl.DataFrame:
+        return create_mike_flights(dt, airport_catalog, self.input_csv)

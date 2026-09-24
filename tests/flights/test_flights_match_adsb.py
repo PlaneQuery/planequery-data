@@ -1,15 +1,45 @@
 from datetime import date, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 import polars as pl
 import pytest
-from airports.airport_lookup import AirportLookup
 from data_engineering.adsb.read_adsb import read_adsb
 from flights.flight_type import Flight, flights_to_flights_df
 from flights.evaluation.flights_test_package import flights_match_real_adsb_with_dropout
 from flights.flights_match_adsb import flights_match_adsb
+import flights.flights_match_adsb as flights_match_adsb_module
 from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
 from tests.flights.example_false_flights import False_Flights_Test_Packages
 TARGET_DATE = date(2026, 3, 1)
+
+_AIRPORT_ROWS = pl.read_csv(
+    Path(__file__).parents[2] / "data" / "raw" / "ourairports" / "airports.csv",
+    columns=["id", "ident", "latitude_deg", "longitude_deg"],
+)
+_AIRPORT_ID_BY_IDENT = dict(
+    _AIRPORT_ROWS.select("ident", "id").iter_rows()
+)
+_AIRPORT_CATALOG = SimpleNamespace(
+    id_index={
+        row["id"]: SimpleNamespace(
+            id=row["id"],
+            ident=row["ident"],
+            lat=row["latitude_deg"],
+            lon=row["longitude_deg"],
+        )
+        for row in _AIRPORT_ROWS.iter_rows(named=True)
+    }
+)
+
+
+@pytest.fixture(autouse=True)
+def airport_catalog(monkeypatch):
+    monkeypatch.setattr(
+        flights_match_adsb_module,
+        "airport_catalog_for_date",
+        lambda _: _AIRPORT_CATALOG,
+    )
 
 FLIGHT_MATCH_CASES = [
     pytest.param(
@@ -97,8 +127,10 @@ def flights_df(icao: str, flight_rows) -> pl.DataFrame:
             Flight(
                 icao=icao,
                 takeoff_time=takeoff_time,
+                takeoff_airport_id=_AIRPORT_ID_BY_IDENT[takeoff_airport_ident],
                 takeoff_airport_ident=takeoff_airport_ident,
                 landing_time=landing_time,
+                landing_airport_id=_AIRPORT_ID_BY_IDENT[landing_airport_ident],
                 landing_airport_ident=landing_airport_ident,
             )
             for (
@@ -109,6 +141,34 @@ def flights_df(icao: str, flight_rows) -> pl.DataFrame:
             ) in flight_rows
         ]
     )
+
+
+def test_flights_match_adsb_uses_stable_airport_ids():
+    airport_ident = "KJFK"
+    airport = _AIRPORT_CATALOG.id_index[_AIRPORT_ID_BY_IDENT[airport_ident]]
+    takeoff_time = datetime(2026, 3, 1, 10)
+    landing_time = datetime(2026, 3, 1, 11)
+    df_flights = flights_df(
+        "abc123",
+        [(takeoff_time, airport_ident, landing_time, airport_ident)],
+    )
+    df_adsb = pl.DataFrame(
+        {
+            "time": [
+                takeoff_time,
+                landing_time,
+                landing_time.replace(minute=11),
+            ],
+            "lat": [airport.lat] * 3,
+            "lon": [airport.lon] * 3,
+        }
+    )
+
+    assert flights_match_adsb(
+        df_flights,
+        df_adsb,
+        datetime(2026, 3, 1),
+    ) is True
 
 
 @pytest.mark.parametrize(("icao", "expected_match", "flight_rows"), FLIGHT_MATCH_CASES)

@@ -74,7 +74,7 @@ def check_flights_are_continuous(flight_index: FlightIndex, mapping: dict[Flight
             flight_b = all_flights[i + 1]
             if flight_a.icao == flight_b.icao:
                 continue
-            if flight_a.landing_airport_ident != flight_b.takeoff_airport_ident:
+            if flight_a.landing_airport_id != flight_b.takeoff_airport_id:
                 print(
                     f"Flights {flight_a.flight_id} and {flight_b.flight_id} "
                     f"have a discontinuity in airports: "

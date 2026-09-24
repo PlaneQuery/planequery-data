@@ -40,7 +40,11 @@ def files_for(root, days):
     for day in days:
         folder = Path(root) / str(day)
         manifest = json.loads((folder / "manifest.json").read_text())
-        if manifest["date"] != str(day) or manifest["network"] != "adsblol":
+        if (
+            manifest["date"] != str(day)
+            or manifest["network"] != "adsblol"
+            or manifest["airport_identity"] != "ourairports_id"
+        ):
             raise ValueError(f"Wrong training source: {folder}")
         parts = [folder / f"part-{i:04d}.npz" for i in range(manifest["parts"])]
         if any(not p.exists() or not p.with_suffix(".parquet").exists() for p in parts):
@@ -93,20 +97,29 @@ def score(model, files, batch_size=128):
                         ).sum()
                     )
                     weight_sum += float(w.sum())
-            candidates = metadata["candidates"].to_list()
-            nn = [
+            candidate_ids = metadata["candidate_ids"].to_list()
+            candidate_idents = metadata["candidate_idents"].to_list()
+            nn_ids = [
+                airports[i] if i >= 0 else None
+                for airports, i in zip(candidate_ids, predicted)
+            ]
+            nn_idents = [
                 airports[i] if i >= 0 else ""
-                for airports, i in zip(candidates, predicted)
+                for airports, i in zip(candidate_idents, predicted)
             ]
             frames.append(
                 metadata.with_columns(
-                    pl.Series("nn", nn), pl.Series("confidence", confidence)
+                    pl.Series("nn_id", nn_ids, dtype=pl.Int64),
+                    pl.Series("nn_ident", nn_idents, dtype=pl.String),
+                    pl.Series("confidence", confidence),
                 ).with_columns(
-                    ((pl.col("target") >= 0) & (pl.col("nn") == pl.col("truth"))).alias(
-                        "nn_correct"
-                    ),
                     (
-                        (pl.col("truth") != "") & (pl.col("nearest") == pl.col("truth"))
+                        (pl.col("target") >= 0)
+                        & (pl.col("nn_id") == pl.col("truth_id"))
+                    ).alias("nn_correct"),
+                    (
+                        pl.col("truth_id").is_not_null()
+                        & (pl.col("nearest_id") == pl.col("truth_id"))
                     ).alias("nearest_correct"),
                 )
             )
@@ -119,7 +132,7 @@ def metrics(data):
     def rates(frame):
         return {
             "endpoints": frame.height,
-            "airports": frame["truth"].n_unique(),
+            "airports": frame["truth_id"].n_unique(),
             "aircraft": frame["icao"].n_unique(),
             "nn_accuracy": frame["nn_correct"].mean(),
             "nearest_accuracy": frame["nearest_correct"].mean(),
@@ -148,6 +161,26 @@ def write_report(data, output):
     data.write_parquet(output / "endpoints.parquet")
     summary = metrics(data)
     (output / "metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (output / "metadata.json").write_text(
+        json.dumps(
+            {
+                "airport_identity": "ourairports_id",
+                "truth_field": "truth_id",
+                "prediction_field": "nn_id",
+                "nearest_field": "nearest_id",
+                "candidate_field": "candidate_ids",
+                "target_definition": "index of truth_id in candidate_ids",
+                "display_only_fields": [
+                    "truth_ident",
+                    "nn_ident",
+                    "nearest_ident",
+                    "candidate_idents",
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     return summary
 
 

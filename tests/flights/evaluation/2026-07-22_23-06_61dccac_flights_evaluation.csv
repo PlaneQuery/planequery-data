@@ -1,4 +1,4 @@
-test_date,adsb_src,matching_adsb_src,test_src,gold_src,use_all_icaos,filter_rotorcraft,pia_or_american_ladd_only,true_positive,false_positive,false_negative,precision,recall,f1,takeoff_airport_ident_match_pct,landing_airport_ident_match_pct,airport_ident_match_pct
+test_date,adsb_src,matching_adsb_src,test_src,gold_src,use_all_icaos,filter_rotorcraft,pia_or_american_ladd_only,true_positive,false_positive,false_negative,precision,recall,f1,takeoff_airport_id_match_pct,landing_airport_id_match_pct,airport_id_match_pct
 2026-03-01,adsblol,adsbx,algorithm,sfdps,false,false,false,6693,63,116,0.9906749555950266,0.9829637244823028,0.9868042757095467,0.9689227551172868,0.979530853130136,0.9500971163902585
 2026-03-01,adsblol,adsbx,algorithm,bts,false,false,false,3521,22,83,0.9937905729607677,0.9769700332963374,0.9853085210577864,0.9886395910252769,0.9931837546151662,0.981823345640443
 2026-03-01,adsbx,adsbx,algorithm,sfdps,false,false,false,6801,19,12,0.9972140762463343,0.9982386613826508,0.9977261057727572,0.9995588883987648,0.9969122187913542,0.9964711071901191

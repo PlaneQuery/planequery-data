@@ -13,7 +13,7 @@ from flights.flight_source import ADSBFlightSource, NonADSBFlightSource
 class DummySource(NonADSBFlightSource):
     name: str = "bts"
 
-    def create_flights_for_day(self, dt):
+    def create_flights_for_day(self, dt, airport_catalog):
         raise AssertionError("write_flights should be mocked")
 
 
@@ -21,7 +21,7 @@ class DummySource(NonADSBFlightSource):
 class DummyADSBSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
 
-    def create_flights_for_day(self, dt, df_adsb):
+    def create_flights_for_day(self, dt, df_adsb, airport_catalog):
         raise AssertionError("write_flights should be mocked")
 
 

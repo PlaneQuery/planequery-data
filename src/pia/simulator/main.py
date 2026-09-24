@@ -4,28 +4,30 @@
 # change some flights in df_flights to pia flights with pia icao: pia_0343, will genereate unique pias
 import polars as pl
 from flights.flight_type import flights_df_to_flights, flights_to_flights_df
-from airports.airport_lookup import AirportLookup
+from flights.airport_reference import airport_from_reference
+from airports.runtime import airport_catalog_for_date
 import hashlib
 import random
 
 NUMBER_OF_PIA_PLANES = 10
-_airport_lookup = None
-
-def _get_airport_lookup() -> AirportLookup:
-    global _airport_lookup
-    if _airport_lookup is None:
-        _airport_lookup = AirportLookup()
-    return _airport_lookup
 
 
 def make_pia_icao(flight_id: str) -> str:
     return "pia_" + hashlib.md5(flight_id.encode()).hexdigest()[:8]
 
 def flight_is_in_united_states_airspace(flight) -> bool:
-    airport_lookup = _get_airport_lookup()
+    airport_catalog = airport_catalog_for_date(flight.takeoff_time.date())
+    takeoff_airport = airport_from_reference(
+        airport_catalog,
+        flight.takeoff_airport_id,
+    )
+    landing_airport = airport_from_reference(
+        airport_catalog,
+        flight.landing_airport_id,
+    )
     return (
-        airport_lookup.airport_ident_is_in_us_faa_airspace(flight.takeoff_airport_ident)
-        and airport_lookup.airport_ident_is_in_us_faa_airspace(flight.landing_airport_ident)
+        takeoff_airport.is_in_us_faa_airspace
+        and landing_airport.is_in_us_faa_airspace
     )
 
 # We'll start with every X days
