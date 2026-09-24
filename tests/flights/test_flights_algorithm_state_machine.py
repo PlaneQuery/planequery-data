@@ -53,6 +53,10 @@ class FakeAirportCatalog:
     airport: Airport
     matcher: FakeAirportMatcher
 
+    @property
+    def id_index(self) -> dict[int, Airport]:
+        return {self.airport.id: self.airport}
+
     def get_airport_by_ident(self, ident: str) -> Airport | None:
         return self.airport if ident == self.airport.ident else None
 
@@ -188,6 +192,59 @@ def test_complete_aircraft_batches_match_one_shot_segmentation():
     )
 
     assert actual.equals(expected)
+
+
+def test_airport_assignment_does_not_decide_if_a_flight_exists(monkeypatch):
+    messages = two_flight_trace()[:15]
+    frame = pl.from_dicts([message.__dict__ for message in messages])
+    same_airport_catalog = object()
+    different_airports_catalog = object()
+
+    def airport_guesses(segments, airport_catalog):
+        assert len(segments) == 1
+        takeoff = algorithm.AirportGuess(1, "A", 0.0)
+        landing = (
+            takeoff
+            if airport_catalog is same_airport_catalog
+            else algorithm.AirportGuess(2, "B", 0.0)
+        )
+        return [takeoff], [landing]
+
+    monkeypatch.setattr(
+        algorithm,
+        "_airport_guesses_for_segments",
+        airport_guesses,
+    )
+
+    same_airport = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        same_airport_catalog,
+    )
+    different_airports = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        different_airports_catalog,
+    )
+
+    airport_columns = [
+        "takeoff_airport_id",
+        "takeoff_airport_ident",
+        "landing_airport_id",
+        "landing_airport_ident",
+    ]
+    assert same_airport.height == different_airports.height == 1
+    assert same_airport.drop(airport_columns).equals(
+        different_airports.drop(airport_columns)
+    )
+    assert same_airport.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (1, 1)
+    assert different_airports.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (1, 2)
 
 
 def test_marks_new_leg_during_ground_interval_between_descent_and_climb():

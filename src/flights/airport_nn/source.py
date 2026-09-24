@@ -20,7 +20,7 @@ DEFAULT_MODEL_PATH = (
 @dataclass(frozen=True)
 class AlgorithmNNFlightSource(ADSBFlightSource):
     name: str = "algorithm-nn"
-    version: int = 3
+    version: int = 4
     model_path: Path = DEFAULT_MODEL_PATH
 
     def adsb_icao_batch_size(self) -> int:

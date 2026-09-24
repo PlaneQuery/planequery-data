@@ -130,7 +130,7 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
 
     assert path == Path(
         tmp_path,
-        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=5",
+        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=6",
         "year=2026/month=03/day=01/data.parquet",
     )
 
