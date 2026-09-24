@@ -1,3 +1,5 @@
+import logging
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,6 +12,8 @@ from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
 from data_engineering.utils import OUTPUT_DIR
+
+logger = logging.getLogger(__name__)
 
 tf = TimezoneFinder()
 
@@ -130,15 +134,31 @@ def iata_airport_mapping(
     airport_catalog: AirportCatalogView,
     codes: list[str],
 ) -> pl.DataFrame:
+    """Resolve BTS IATA codes, omitting codes absent from the catalog."""
+    code_counts = Counter(codes)
     resolved = []
-    for code in sorted(set(codes)):
+    unresolved_codes = []
+    for code in sorted(code_counts):
         airport = airport_catalog.resolve_code(
             code,
             code_priority=("iata_code",),
         )
         if airport is None:
-            raise ValueError(f"Unknown BTS IATA airport code {code!r}")
+            unresolved_codes.append(code)
+            continue
         resolved.append((code, airport))
+
+    if unresolved_codes:
+        details = ", ".join(
+            f"{code!r} ({code_counts[code]} "
+            f"occurrence{'s' if code_counts[code] != 1 else ''})"
+            for code in unresolved_codes
+        )
+        logger.warning(
+            "BTS flights with unresolved IATA airport codes will be excluded: %s",
+            details,
+        )
+
     return pl.DataFrame(
         {
             "iata": [code for code, _ in resolved],
@@ -147,6 +167,8 @@ def iata_airport_mapping(
         },
         schema={"iata": pl.String, "airport_id": pl.Int64, "ident": pl.String},
     )
+
+
 def get_registration_to_icao() -> pl.DataFrame:
     return (
         scan_latest_faa_registration_icao_for_join(real_icao_column="icao")
@@ -203,7 +225,7 @@ def _create_flights_from_bts_month(
     df = df.join(mapping, on="registration", how="inner")
     airport_codes = pl.concat(
         [df.get_column("origin"), df.get_column("dest")]
-    ).drop_nulls().unique().to_list()
+    ).drop_nulls().to_list()
     mapping = iata_airport_mapping(airport_catalog, airport_codes)
     df = df.join(mapping, left_on="origin", right_on="iata", how="inner").rename(
         {
@@ -295,7 +317,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 6
+    version: int = 7
 
     def create_flights_for_day(
         self,
