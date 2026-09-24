@@ -1,15 +1,19 @@
 # Project: <Project Name>
 
 ## Goal
-<One sentence describing what success looks like.>
+My paper is published in OpenSky Journal and my flights algorithm is used by readsb websites. 
 
 ## Current Milestone
-<The specific outcome you are currently trying to reach.>
+Publish flights from 2024-01-01 -> 2026-09-24
 
 ### Definition of Done
-- [ ] <Condition 1>
-- [ ] <Condition 2>
-- [ ] <Condition 3>
+- [ ] Neural Network flights release
+- [ ] Nearest Airport Method flights release
+- [ ] OpenSky Discord Post
+- [ ] Github readme
+#### after inital
+- [ ] GroundControl Discord Post
+- [ ] r/ADSB post
 
 ---
 
@@ -17,9 +21,13 @@
 
 Tasks that directly advance the current milestone.
 
-- [ ] <Task 1>
-- [ ] <Task 2>
-- [ ] <Task 3>
+- [ ] Hookup 8TB harddrive
+- [ ] Figure out Ourairports.com changes over time
+- [ ] Start 1 year flights run.
+- [ ] Figure out how to deal with any missing ADS-B days
+- [ ] Determine which days have less flights because of missing ADS-B data
+- [ ] Write Discord Post
+- [ ] Organize repo for release
 
 ---
 
