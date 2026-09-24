@@ -151,7 +151,9 @@ def edge_score(a: Flight, b: Flight) -> int:
     if a.landing_airport_id == b.takeoff_airport_id:
         score += 1500
     if (
-        a_takeoff_airport.is_in_us_faa_airspace
+        a_takeoff_airport is not None
+        and a_landing_airport is not None
+        and a_takeoff_airport.is_in_us_faa_airspace
         and not a_landing_airport.is_in_us_faa_airspace
     ):
         if a.icao == b.icao:

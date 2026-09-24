@@ -59,6 +59,13 @@ def _flight_rows() -> pl.DataFrame:
                 "landing_airport_id": 1,
                 "landing_airport_ident": "KJFK",
             },
+            {
+                "icao": "unresolved",
+                "takeoff_airport_id": None,
+                "takeoff_airport_ident": None,
+                "landing_airport_id": 999,
+                "landing_airport_ident": None,
+            },
         ]
     )
 
@@ -93,6 +100,13 @@ def test_add_airspace_columns_marks_us_faa_and_island_airspace():
             "icao": "outside",
             "takeoff_airport_in_us_faa_airspace": False,
             "landing_airport_in_us_faa_airspace": True,
+            "takeoff_airport_in_us_faa_island_airspace": False,
+            "landing_airport_in_us_faa_island_airspace": False,
+        },
+        {
+            "icao": "unresolved",
+            "takeoff_airport_in_us_faa_airspace": False,
+            "landing_airport_in_us_faa_airspace": False,
             "takeoff_airport_in_us_faa_island_airspace": False,
             "landing_airport_in_us_faa_island_airspace": False,
         },

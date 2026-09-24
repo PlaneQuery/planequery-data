@@ -149,7 +149,7 @@ def test_consecutive_airport_stats_are_per_icao_and_time_ordered():
     ] == pytest.approx(1 / 2)
 
 
-def test_missing_airport_id_in_catalog_fails():
+def test_missing_airport_id_in_catalog_has_unknown_displacement():
     df_flights = pl.DataFrame(
         [
             flight("abc123", 1, "A", "UNKNOWN"),
@@ -157,11 +157,21 @@ def test_missing_airport_id_in_catalog_fails():
         ]
     )
 
-    with pytest.raises(KeyError, match="99"):
-        consecutive_airport_stats(
-            df_flights,
-            airport_catalog=AirportCatalog(),
-        )
+    details = consecutive_airport_details(
+        df_flights,
+        airport_catalog=AirportCatalog(),
+    )
+    stats = consecutive_airport_stats(
+        df_flights,
+        airport_catalog=AirportCatalog(),
+    )
+
+    assert details.get_column(
+        "consecutive_airport_displacement_km"
+    ).to_list() == [None]
+    assert stats["consecutive_airport_comparison_count"] == 1
+    assert stats["consecutive_airport_mismatch_count"] == 1
+    assert stats["consecutive_airport_displacement_km_max"] is None
 
 
 def test_missing_airport_idents_are_not_comparable():

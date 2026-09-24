@@ -7,7 +7,10 @@ import pytest
 from data_engineering.adsb.read_adsb import read_adsb
 from flights.flight_type import Flight, flights_to_flights_df
 from flights.evaluation.flights_test_package import flights_match_real_adsb_with_dropout
-from flights.flights_match_adsb import flights_match_adsb
+from flights.flights_match_adsb import (
+    flights_match_adsb,
+    get_matching_icaos_in_flights,
+)
 import flights.flights_match_adsb as flights_match_adsb_module
 from tests.flights.example_flights import Flights_Test_Packages, FlightsTestPackage
 from tests.flights.example_false_flights import False_Flights_Test_Packages
@@ -169,6 +172,57 @@ def test_flights_match_adsb_uses_stable_airport_ids():
         df_adsb,
         datetime(2026, 3, 1),
     ) is True
+
+
+@pytest.mark.parametrize("missing_endpoint", ["takeoff", "landing"])
+def test_flights_match_adsb_returns_false_for_unresolved_airport(
+    missing_endpoint: str,
+):
+    airport_ident = "KJFK"
+    airport_id = _AIRPORT_ID_BY_IDENT[airport_ident]
+    airport = _AIRPORT_CATALOG.id_index[airport_id]
+    takeoff_time = datetime(2026, 3, 1, 10)
+    landing_time = datetime(2026, 3, 1, 11)
+    df_flights = flights_to_flights_df(
+        [
+            Flight(
+                icao="abc123",
+                takeoff_time=takeoff_time,
+                takeoff_airport_id=(
+                    None if missing_endpoint == "takeoff" else airport_id
+                ),
+                takeoff_airport_ident=(
+                    None if missing_endpoint == "takeoff" else airport_ident
+                ),
+                landing_time=landing_time,
+                landing_airport_id=(
+                    None if missing_endpoint == "landing" else airport_id
+                ),
+                landing_airport_ident=(
+                    None if missing_endpoint == "landing" else airport_ident
+                ),
+            )
+        ]
+    )
+    df_adsb = pl.DataFrame(
+        {
+            "icao": ["abc123", "abc123"],
+            "time": [takeoff_time, landing_time],
+            "lat": [airport.lat, airport.lat],
+            "lon": [airport.lon, airport.lon],
+        }
+    )
+
+    assert flights_match_adsb(
+        df_flights,
+        df_adsb,
+        datetime(2026, 3, 1),
+    ) is False
+    assert get_matching_icaos_in_flights(
+        df_flights,
+        df_adsb,
+        datetime(2026, 3, 1),
+    ).is_empty()
 
 
 @pytest.mark.parametrize(("icao", "expected_match", "flight_rows"), FLIGHT_MATCH_CASES)
