@@ -7,7 +7,7 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from flights.airport_reference import resolve_flight_airport_codes
 from flights.flight_type import with_flight_schema_columns
-from flights.flight_source import NonADSBFlightSource, file_artifact_cache_key
+from flights.flight_source import NonADSBFlightSource
 
 
 DEFAULT_INPUT = Path(
@@ -97,9 +97,6 @@ class MikeFlightSource(NonADSBFlightSource):
     name: str = "mike"
     version: int = 2
     input_csv: str | Path | None = None
-
-    def artifact_cache_key(self) -> str:
-        return file_artifact_cache_key("input", self.input_csv or DEFAULT_INPUT)
 
     def create_flights_for_day(
         self,
