@@ -19,6 +19,7 @@ from data_engineering.opensky.paths import (
 
 
 BATCH_SIZE = 100_000
+QUERY_WINDOW_MINUTES = 10
 DEFAULT_OUTPUT_DIR = OPENSKY_RAW_STATE_VECTORS_ROOT
 DEFAULT_TRINO_USER = os.environ.get("OPENSKY_TRINO_USER", "goodejonah")
 
@@ -63,8 +64,12 @@ def download_hour(
     *,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     batch_size: int = BATCH_SIZE,
+    query_window_minutes: int = QUERY_WINDOW_MINUTES,
 ) -> Path:
     """Download one UTC hour, returning its final parquet path.
+
+    The hour is queried in smaller time windows so that dense hours do not hit
+    OpenSky Trino's per-query execution-time limit.
 
     Existing output is left untouched. A partially written file is kept under
     a ``.tmp`` suffix and removed if querying or writing fails.
@@ -73,6 +78,8 @@ def download_hour(
         raise ValueError("start must be timezone-aware and in UTC")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if query_window_minutes <= 0:
+        raise ValueError("query_window_minutes must be positive")
 
     output_path = state_vectors_output_path(start, output_dir)
     if output_path.exists():
@@ -84,35 +91,58 @@ def download_hour(
     temp_path.unlink(missing_ok=True)
 
     print(f"Downloading {start}")
-    cursor = connection.cursor()
     writer: pq.ParquetWriter | None = None
     total_rows = 0
+    columns: list[str] | None = None
+    end = start + timedelta(hours=1)
+    window_size = timedelta(minutes=query_window_minutes)
 
     try:
-        cursor.execute(
-            """
-            SELECT *
-            FROM state_vectors_data4
-            WHERE hour = ?
-            """,
-            [int(start.timestamp())],
-        )
-        columns = [column[0] for column in cursor.description]
-
-        while rows := cursor.fetchmany(batch_size):
-            table = rows_to_arrow(rows, columns)
-            if writer is None:
-                writer = pq.ParquetWriter(
-                    temp_path,
-                    table.schema,
-                    compression="zstd",
-                    use_dictionary=True,
+        window_start = start
+        while window_start < end:
+            window_end = min(window_start + window_size, end)
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM state_vectors_data4
+                    WHERE hour = ?
+                      AND time >= ?
+                      AND time < ?
+                    """,
+                    [
+                        int(start.timestamp()),
+                        int(window_start.timestamp()),
+                        int(window_end.timestamp()),
+                    ],
                 )
-            writer.write_table(table)
-            total_rows += len(rows)
-            print(f"\r  {total_rows:,} rows", end="", flush=True)
+                window_columns = [column[0] for column in cursor.description]
+                if columns is None:
+                    columns = window_columns
+                elif window_columns != columns:
+                    raise RuntimeError("Trino returned inconsistent columns")
+
+                while rows := cursor.fetchmany(batch_size):
+                    table = rows_to_arrow(rows, columns)
+                    if writer is None:
+                        writer = pq.ParquetWriter(
+                            temp_path,
+                            table.schema,
+                            compression="zstd",
+                            use_dictionary=True,
+                        )
+                    writer.write_table(table)
+                    total_rows += len(rows)
+                    print(f"\r  {total_rows:,} rows", end="", flush=True)
+            finally:
+                cursor.close()
+
+            window_start = window_end
 
         if writer is None:
+            if columns is None:
+                raise RuntimeError("Trino did not return column metadata")
             pq.write_table(rows_to_arrow([], columns), temp_path)
         else:
             writer.close()
@@ -133,7 +163,6 @@ def download_hour(
     finally:
         if writer is not None:
             writer.close()
-        cursor.close()
 
 
 def download_day(
@@ -142,6 +171,7 @@ def download_day(
     user: str = DEFAULT_TRINO_USER,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     batch_size: int = BATCH_SIZE,
+    query_window_minutes: int = QUERY_WINDOW_MINUTES,
     connection: Connection | None = None,
 ) -> list[Path]:
     """Download all 24 UTC hours for ``target_date``.
@@ -161,6 +191,7 @@ def download_day(
                 start_of_day + timedelta(hours=hour),
                 output_dir=output_dir,
                 batch_size=batch_size,
+                query_window_minutes=query_window_minutes,
             )
             for hour in range(24)
         ]
@@ -194,6 +225,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=BATCH_SIZE,
         help=f"Rows fetched per batch (default: {BATCH_SIZE:,})",
     )
+    parser.add_argument(
+        "--query-window-minutes",
+        type=int,
+        default=QUERY_WINDOW_MINUTES,
+        help=(
+            "Minutes covered by each Trino query "
+            f"(default: {QUERY_WINDOW_MINUTES})"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -204,6 +244,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         user=args.user,
         output_dir=args.output_dir,
         batch_size=args.batch_size,
+        query_window_minutes=args.query_window_minutes,
     )
 
 
