@@ -30,13 +30,12 @@ def test_algorithm_nn_is_canonical_adsb_flight_source(monkeypatch, tmp_path):
     assert flight_path(source, date(2026, 3, 1), ADSBSource.ADSBX) == (
         tmp_path
         / "data/flights/source=algorithm-nn/adsb_source=adsbx"
-        / f"artifact={source.artifact_cache_key()}"
         / f"version={source.version}"
         / "year=2026/month=03/day=01/data.parquet"
     )
 
 
-def test_algorithm_nn_model_contents_change_flight_path(monkeypatch, tmp_path):
+def test_algorithm_nn_model_does_not_change_flight_path(monkeypatch, tmp_path):
     from flights import flight_source
 
     monkeypatch.setattr(flight_source, "OUTPUT_DIR", tmp_path / "output")
@@ -58,7 +57,7 @@ def test_algorithm_nn_model_contents_change_flight_path(monkeypatch, tmp_path):
         ADSBSource.ADSBX,
     )
 
-    assert first_path != second_path
+    assert first_path == second_path
 
 
 def test_algorithm_nn_segments_then_replaces_airports(monkeypatch, tmp_path):
