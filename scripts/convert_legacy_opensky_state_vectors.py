@@ -8,13 +8,40 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from data_engineering.opensky.download_trino_state_vectors import (
-    BATCH_SIZE,
-    STATE_VECTORS_SCHEMA,
-)
 from data_engineering.opensky.paths import (
     OPENSKY_RAW_STATE_VECTORS_ROOT,
     raw_state_vectors_hour_path,
+)
+
+
+BATCH_SIZE = 100_000
+DEFAULT_SOURCE_DIR = Path(
+    "/Volumes/T2-SSD/planequery/data/raw/opensky/trino-tables/2026-03-01"
+)
+LEGACY_STATE_VECTORS_RELATIVE_DIR = Path(
+    "opensky_state_vectors/trino-tables/state_vectors"
+)
+STATE_VECTORS_SCHEMA = pa.schema(
+    [
+        ("time", pa.int64()),
+        ("icao24", pa.string()),
+        ("lat", pa.float64()),
+        ("lon", pa.float64()),
+        ("velocity", pa.float64()),
+        ("heading", pa.float64()),
+        ("vertrate", pa.float64()),
+        ("callsign", pa.string()),
+        ("onground", pa.bool_()),
+        ("alert", pa.bool_()),
+        ("spi", pa.bool_()),
+        ("squawk", pa.string()),
+        ("baroaltitude", pa.float64()),
+        ("geoaltitude", pa.float64()),
+        ("lastposupdate", pa.float64()),
+        ("lastcontact", pa.float64()),
+        ("serials", pa.list_(pa.int64())),
+        ("hour", pa.int64()),
+    ]
 )
 
 
@@ -114,6 +141,10 @@ def convert_day(
     batch_size: int = BATCH_SIZE,
 ) -> list[Path]:
     """Convert all 24 legacy Unix-hour partitions for one UTC day."""
+    nested_source_dir = source_dir / LEGACY_STATE_VECTORS_RELATIVE_DIR
+    if nested_source_dir.is_dir():
+        source_dir = nested_source_dir
+
     files_by_hour: dict[datetime, list[Path]] = {}
     for source_path in sorted(source_dir.glob("hour=*/*.parquet")):
         start = _hour_from_legacy_path(source_path)
@@ -154,7 +185,13 @@ def convert_day(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("date", type=date.fromisoformat)
-    parser.add_argument("source_dir", type=Path)
+    parser.add_argument(
+        "source_dir",
+        type=Path,
+        nargs="?",
+        default=DEFAULT_SOURCE_DIR,
+        help=f"legacy day or state-vectors directory (default: {DEFAULT_SOURCE_DIR})",
+    )
     parser.add_argument(
         "--output-root",
         type=Path,
