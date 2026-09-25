@@ -348,6 +348,20 @@ def test_split_is_disjoint_and_february_only():
             data.february(day)
 
 
+def test_prepare_defaults_workers_from_machine_resources(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        data,
+        "default_worker_count",
+        lambda: calls.append("default") or 1,
+    )
+    monkeypatch.setattr(data, "ensure_airport_history", lambda: object())
+
+    data.prepare([], output=tmp_path)
+
+    assert calls == ["default"]
+
+
 def test_selection_weights_days_equally_and_requires_every_day():
     losses = {str(d): i / 10 for i, d in enumerate(VALIDATION_DAYS, 1)}
     assert selection_loss(losses) == pytest.approx(0.4)

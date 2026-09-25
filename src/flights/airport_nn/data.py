@@ -23,6 +23,7 @@ from flights.flight_source import (
 from flights.providers.bts import BTSFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 from flights.segmentation.algorithm import _segment_adsb_df
+from flights.workers import default_worker_count
 
 CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
 TYPES = ("large_airport", "medium_airport", "small_airport")
@@ -328,9 +329,11 @@ def prepare_part(day, refs, path, parquet_root=None):
     }
 
 
-def prepare(days, output=CACHE, workers=4, batch_aircraft=256, parquet_root=None):
+def prepare(days, output=CACHE, workers=None, batch_aircraft=256, parquet_root=None):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
+    if workers is None:
+        workers = default_worker_count()
     if workers < 1 or batch_aircraft < 1:
         raise ValueError("Workers and aircraft batch size must be positive")
     history = ensure_airport_history()
@@ -392,7 +395,10 @@ def prepare(days, output=CACHE, workers=4, batch_aircraft=256, parquet_root=None
                         parquet_root,
                     )
                 )
-    print(f"Preparing {len(tasks)} aircraft batches", flush=True)
+    print(
+        f"Preparing {len(tasks)} aircraft batches with {workers} worker(s)",
+        flush=True,
+    )
     if workers == 1:
         for i, task in enumerate(tasks, 1):
             result = prepare_part(*task)
@@ -421,7 +427,11 @@ if __name__ == "__main__":
         help="ADSB.lol observations root containing year=/month=/day= partitions",
     )
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        help="Worker count (default: sized from CPU count and RAM)",
+    )
     args = parser.parse_args()
     days = args.dates or [date(2026, 2, d) for d in range(1, 28)]
     output = args.output or CACHE
