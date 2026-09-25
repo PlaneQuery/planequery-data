@@ -2,6 +2,8 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from itertools import groupby
+from operator import itemgetter
 from typing import Sequence
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
@@ -74,6 +76,28 @@ AIRCRAFT_METADATA_ALIASES = {
     "aircraft_description": ("aircraft_description", "desc"),
     "category": ("category",),
 }
+POSITION_MESSAGE_COLUMNS = (
+    "time",
+    "icao",
+    "lat",
+    "lon",
+    "ground_speed_kt",
+    "track_deg",
+    "on_ground",
+    "baro_altitude_ft",
+    "geom_altitude_ft",
+    "dbFlags",
+    "pia",
+    "ladd",
+    "military",
+    "interesting",
+    "callsign",
+    "registration",
+    "aircraft_type",
+    "owner",
+    "aircraft_description",
+    "category",
+)
 FLIGHT_IDENTITY_COLUMNS = (
     "callsign",
     "registration",
@@ -296,6 +320,48 @@ def _aircraft_metadata_counts_for_messages(
     )
 
 
+def _segment_counts_for_messages(
+    messages: Sequence[AdsbMessageRow | AdsbPositionMessage],
+) -> tuple[
+    tuple[tuple[int, int], ...],
+    tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+    tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+]:
+    """Collect flight metadata in one pass without changing mode tie-breaking."""
+    db_flags_counts: Counter[int] = Counter()
+    flight_identity_counts = {
+        column: Counter() for column in FLIGHT_IDENTITY_COLUMNS
+    }
+    aircraft_metadata_counts = {
+        column: Counter() for column in AIRCRAFT_METADATA_COLUMNS
+    }
+
+    for message in messages:
+        db_flags = _db_flags_from_message(message)
+        if db_flags is not None:
+            db_flags_counts[db_flags] += 1
+        for column, counts in flight_identity_counts.items():
+            value = _message_flight_identity(message, column)
+            if value is not None:
+                counts[value] += 1
+        for column, counts in aircraft_metadata_counts.items():
+            value = _message_aircraft_metadata(message, column)
+            if value is not None:
+                counts[value] += 1
+
+    return (
+        tuple(db_flags_counts.items()),
+        tuple(
+            (column, tuple(counts.items()))
+            for column, counts in flight_identity_counts.items()
+        ),
+        tuple(
+            (column, tuple(counts.items()))
+            for column, counts in aircraft_metadata_counts.items()
+        ),
+    )
+
+
 def _aircraft_metadata_mode_from_counts(
     aircraft_metadata_counts: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
 ) -> dict[str, str]:
@@ -450,6 +516,12 @@ def identify_flight_segments(
         if distance_travelled_km < MIN_FLIGHT_DISTANCE_KM:
             continue
 
+        (
+            db_flags_counts,
+            flight_identity_counts,
+            aircraft_metadata_counts,
+        ) = _segment_counts_for_messages(leg_messages)
+
         segments.append(
             FlightSegment(
                 icao=takeoff_message.icao,
@@ -458,13 +530,9 @@ def identify_flight_segments(
                 takeoff_message=takeoff_message,
                 landing_message=landing_message,
                 distance_travelled_km=distance_travelled_km,
-                db_flags_counts=_db_flags_counts_for_messages(leg_messages),
-                flight_identity_counts=_flight_identity_counts_for_messages(
-                    leg_messages
-                ),
-                aircraft_metadata_counts=_aircraft_metadata_counts_for_messages(
-                    leg_messages
-                ),
+                db_flags_counts=db_flags_counts,
+                flight_identity_counts=flight_identity_counts,
+                aircraft_metadata_counts=aircraft_metadata_counts,
             )
         )
     return segments
@@ -472,30 +540,19 @@ def identify_flight_segments(
 
 def _rows_to_position_messages(df: pl.DataFrame) -> list[AdsbPositionMessage]:
     return [
-        AdsbPositionMessage(
-            time=row["time"],
-            icao=row["icao"],
-            lat=row["lat"],
-            lon=row["lon"],
-            ground_speed_kt=row.get("ground_speed_kt"),
-            track_deg=row.get("track_deg"),
-            on_ground=row.get("on_ground"),
-            baro_altitude_ft=row.get("baro_altitude_ft"),
-            geom_altitude_ft=row.get("geom_altitude_ft"),
-            dbFlags=row.get("dbFlags"),
-            pia=row.get("pia"),
-            ladd=row.get("ladd"),
-            military=row.get("military"),
-            interesting=row.get("interesting"),
-            callsign=row.get("callsign"),
-            registration=row.get("registration"),
-            aircraft_type=row.get("aircraft_type"),
-            owner=row.get("owner"),
-            aircraft_description=row.get("aircraft_description"),
-            category=row.get("category"),
-        )
-        for row in df.iter_rows(named=True)
+        AdsbPositionMessage(*row)
+        for row in _position_message_rows(df)
     ]
+
+
+def _position_message_rows(df: pl.DataFrame):
+    expressions = [
+        pl.col(column)
+        if column in df.columns
+        else pl.lit(None).alias(column)
+        for column in POSITION_MESSAGE_COLUMNS
+    ]
+    return df.select(expressions).iter_rows()
 
 
 def _airport_rank(airport: Airport) -> int:
@@ -675,8 +732,18 @@ def _segment_adsb_df(
     )
 
     segments = []
-    for _, df_icao in df_adsb.group_by("icao", maintain_order=True):
-        segments.extend(identify_flight_segments(_rows_to_position_messages(df_icao)))
+    if not isinstance(df_adsb, pl.DataFrame):
+        # Keep lightweight dataframe substitutes useful for contract tests.
+        for _, df_icao in df_adsb.group_by("icao", maintain_order=True):
+            segments.extend(
+                identify_flight_segments(_rows_to_position_messages(df_icao))
+            )
+        return segments
+
+    rows_by_icao = groupby(_position_message_rows(df_adsb), key=itemgetter(1))
+    for _, rows in rows_by_icao:
+        messages = [AdsbPositionMessage(*row) for row in rows]
+        segments.extend(identify_flight_segments(messages))
 
     return segments
 

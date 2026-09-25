@@ -194,6 +194,25 @@ def test_complete_aircraft_batches_match_one_shot_segmentation():
     assert actual.equals(expected)
 
 
+def test_combined_segment_counts_match_individual_collectors():
+    messages = [
+        replace(
+            item,
+            pia=index % 2 == 0,
+            callsign=("FIRST" if index < 3 else "SECOND"),
+            registration=("N1" if index % 3 else "N2"),
+            owner=("Owner A" if index < 4 else "Owner B"),
+        )
+        for index, item in enumerate(two_flight_trace()[:8])
+    ]
+
+    assert algorithm._segment_counts_for_messages(messages) == (
+        algorithm._db_flags_counts_for_messages(messages),
+        algorithm._flight_identity_counts_for_messages(messages),
+        algorithm._aircraft_metadata_counts_for_messages(messages),
+    )
+
+
 def test_airport_assignment_does_not_decide_if_a_flight_exists(monkeypatch):
     messages = two_flight_trace()[:15]
     frame = pl.from_dicts([message.__dict__ for message in messages])

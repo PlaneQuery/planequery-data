@@ -95,3 +95,43 @@ def test_algorithm_nn_segments_then_replaces_airports(monkeypatch, tmp_path):
     ).equals(predicted)
     assert model_loads == [tmp_path / "model.pt"]
     assert catalogs == [airport_catalog, airport_catalog]
+
+
+def test_algorithm_nn_replaces_airports_in_reused_flights(monkeypatch, tmp_path):
+    source = AlgorithmNNFlightSource(model_path=tmp_path / "model.pt")
+    assert source.adsb_icao_batch_size_for_reused_flights() == 2048
+    adsb = pl.DataFrame({"icao": ["abc123"]})
+    nearest = pl.DataFrame(
+        {"icao": ["abc123"], "takeoff_airport_ident": ["OLD"]}
+    )
+    predicted = pl.DataFrame(
+        {"icao": ["abc123"], "takeoff_airport_ident": ["KJFK"]}
+    )
+    airport_catalog = FakeAirportCatalog()
+
+    monkeypatch.setattr(model, "load_model", lambda path: "model")
+    monkeypatch.setattr(
+        algorithm.AlgorithmNearestFlightSource,
+        "create_flights_for_day",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("nearest segmentation must not run")
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        inference,
+        "predict_flights",
+        lambda flights, messages, loaded_model, catalog: (
+            calls.append((flights, messages, loaded_model, catalog)) or predicted
+        ),
+    )
+
+    result = source.create_flights_from_reused_flights(
+        date(2026, 3, 1),
+        nearest,
+        adsb,
+        airport_catalog,
+    )
+
+    assert result.equals(predicted)
+    assert calls == [(nearest, adsb, "model", airport_catalog)]
