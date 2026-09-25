@@ -373,6 +373,6 @@ def test_flight_identity_uses_the_mode_of_messages_in_its_sequence():
 
 
 def test_default_worker_count_is_capped_at_eight(monkeypatch):
-    monkeypatch.setattr(algorithm.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(algorithm, "default_worker_count", lambda: 32)
 
     assert algorithm._number_of_workers_default() == 8
