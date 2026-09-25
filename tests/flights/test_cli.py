@@ -151,6 +151,44 @@ def test_algorithm_range_uses_configured_parallel_workers(monkeypatch, tmp_path)
     assert calls == [date(2026, 3, 1), date(2026, 3, 2)]
 
 
+def test_single_algorithm_day_uses_workers_for_adsb_batches(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+
+    def write(source, dt, adsb_source, *, batch_workers):
+        calls.append((source, dt, adsb_source, batch_workers))
+        return empty_flights()
+
+    monkeypatch.setattr(cli, "write_flights", write)
+    monkeypatch.setattr(cli, "flight_path", lambda *args: tmp_path / "data.parquet")
+    monkeypatch.setattr(
+        cli,
+        "ProcessPoolExecutor",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("one day must not create the day-level pool")
+        ),
+    )
+    source = cli.FLIGHT_SOURCES_BY_NAME["algorithm-nn"]
+
+    cli.write_flights_range(
+        date(2026, 6, 1),
+        date(2026, 6, 2),
+        source,
+        workers=4,
+    )
+
+    assert calls == [
+        (
+            source,
+            date(2026, 6, 1),
+            ADSBSource.ADSBLOL,
+            4,
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("start_date", "end_date"),
     [

@@ -1,12 +1,17 @@
+from __future__ import annotations
+
+import multiprocessing
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
 
 from airports.catalog import AirportCatalogView
+from airports.models import AirportCatalogProvenance
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import (
     ADSBSource,
@@ -49,6 +54,31 @@ class ADSBFlightSource(FlightSource):
     ) -> tuple[date | datetime, datetime | None]:
         return dt, None
 
+    def reusable_flight_source(self) -> FlightSource | None:
+        """Previously generated flights that can replace source segmentation."""
+        return None
+
+    def adsb_columns_for_reused_flights(self) -> Sequence[str] | None:
+        return self.adsb_columns()
+
+    def adsb_icao_batch_size_for_reused_flights(self) -> int | None:
+        return self.adsb_icao_batch_size()
+
+    def initialize_batch_worker(self, worker_count: int) -> None:
+        """Configure process-local resources before processing ADS-B batches."""
+        return None
+
+    def create_flights_from_reused_flights(
+        self,
+        dt: date,
+        flights: pl.DataFrame,
+        df_adsb: pl.DataFrame,
+        airport_catalog: AirportCatalogView,
+    ) -> pl.DataFrame:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support reusable flights"
+        )
+
     @abstractmethod
     def create_flights_for_day(
         self,
@@ -68,6 +98,131 @@ class NonADSBFlightSource(FlightSource):
         airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
         ...
+
+
+@dataclass(frozen=True)
+class _ADSBBatchTask:
+    index: int
+    icaos: tuple[str, ...]
+    reused_flights: pl.DataFrame | None = None
+
+
+_BATCH_WORKER_SOURCE: ADSBFlightSource | None = None
+_BATCH_WORKER_DATE: date | None = None
+_BATCH_WORKER_CATALOG: AirportCatalogView | None = None
+_BATCH_WORKER_ADSB_SOURCE: ADSBSource | None = None
+
+
+def _initialize_adsb_batch_worker(
+    source: ADSBFlightSource,
+    dt: date,
+    expected_provenance: AirportCatalogProvenance,
+    adsb_src: ADSBSource,
+    worker_count: int,
+) -> None:
+    global _BATCH_WORKER_SOURCE
+    global _BATCH_WORKER_DATE
+    global _BATCH_WORKER_CATALOG
+    global _BATCH_WORKER_ADSB_SOURCE
+
+    airport_catalog = airport_catalog_for_date(dt)
+    if airport_catalog.provenance != expected_provenance:
+        raise RuntimeError("Batch worker loaded a different airport catalog")
+    source.initialize_batch_worker(worker_count)
+    _BATCH_WORKER_SOURCE = source
+    _BATCH_WORKER_DATE = dt
+    _BATCH_WORKER_CATALOG = airport_catalog
+    _BATCH_WORKER_ADSB_SOURCE = adsb_src
+
+
+def _create_adsb_batch(
+    source: ADSBFlightSource,
+    dt: date,
+    airport_catalog: AirportCatalogView,
+    adsb_src: ADSBSource,
+    task: _ADSBBatchTask,
+) -> tuple[int, pl.DataFrame]:
+    reused = task.reused_flights is not None
+    columns = (
+        source.adsb_columns_for_reused_flights()
+        if reused
+        else source.adsb_columns()
+    )
+    start, end = source.adsb_read_interval(dt)
+    kwargs = {
+        "source": adsb_src,
+        "icaos": list(task.icaos),
+    }
+    if columns is not None:
+        kwargs["columns"] = columns
+    df_adsb = read_adsb(start, end, **kwargs)
+    if reused:
+        assert task.reused_flights is not None
+        flights = source.create_flights_from_reused_flights(
+            dt,
+            task.reused_flights,
+            df_adsb,
+            airport_catalog,
+        )
+    else:
+        flights = source.create_flights_for_day(dt, df_adsb, airport_catalog)
+    return task.index, flights
+
+
+def _create_adsb_batch_in_worker(
+    task: _ADSBBatchTask,
+) -> tuple[int, pl.DataFrame]:
+    assert _BATCH_WORKER_SOURCE is not None
+    assert _BATCH_WORKER_DATE is not None
+    assert _BATCH_WORKER_CATALOG is not None
+    assert _BATCH_WORKER_ADSB_SOURCE is not None
+    return _create_adsb_batch(
+        _BATCH_WORKER_SOURCE,
+        _BATCH_WORKER_DATE,
+        _BATCH_WORKER_CATALOG,
+        _BATCH_WORKER_ADSB_SOURCE,
+        task,
+    )
+
+
+def _create_adsb_batches(
+    source: ADSBFlightSource,
+    dt: date,
+    airport_catalog: AirportCatalogView,
+    adsb_src: ADSBSource,
+    tasks: Sequence[_ADSBBatchTask],
+    batch_workers: int,
+) -> pl.DataFrame:
+    worker_count = min(batch_workers, len(tasks))
+    if worker_count == 1:
+        indexed_parts = [
+            _create_adsb_batch(source, dt, airport_catalog, adsb_src, task)
+            for task in tasks
+        ]
+    else:
+        print(
+            f"Processing {len(tasks)} {source.name} ADS-B batches with "
+            f"{worker_count} within-day workers",
+            flush=True,
+        )
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_initialize_adsb_batch_worker,
+            initargs=(
+                replace(source),
+                dt,
+                airport_catalog.provenance,
+                adsb_src,
+                worker_count,
+            ),
+        ) as executor:
+            indexed_parts = list(
+                executor.map(_create_adsb_batch_in_worker, tasks)
+            )
+
+    indexed_parts.sort(key=lambda item: item[0])
+    return pl.concat([part for _, part in indexed_parts])
 
 
 def flight_path(
@@ -92,6 +247,107 @@ def flight_path(
     )
 
 
+def _read_cached_flights_for_catalog(
+    source: FlightSource,
+    dt: date,
+    airport_catalog: AirportCatalogView,
+    adsb_src: ADSBSource | None,
+) -> pl.DataFrame | None:
+    path = flight_path(source, dt, adsb_src)
+    if not path.exists():
+        return None
+
+    current_manifest = AirportCatalogManifest.from_provenance(
+        airport_catalog.provenance
+    )
+    cached_manifest = AirportCatalogManifest.read(
+        airport_catalog_manifest_path(path)
+    )
+    if cached_manifest.catalog_cache_key != current_manifest.catalog_cache_key:
+        return None
+    return pl.read_parquet(path)
+
+
+def _reusable_flights_for_source(
+    source: ADSBFlightSource,
+    dt: date,
+    airport_catalog: AirportCatalogView,
+    adsb_src: ADSBSource,
+) -> pl.DataFrame | None:
+    reusable_source = source.reusable_flight_source()
+    if reusable_source is None:
+        return None
+
+    reusable_adsb_src = (
+        adsb_src if isinstance(reusable_source, ADSBFlightSource) else None
+    )
+    try:
+        flights = _read_cached_flights_for_catalog(
+            reusable_source,
+            dt,
+            airport_catalog,
+            reusable_adsb_src,
+        )
+    except FileNotFoundError:
+        # A data file without its provenance manifest is not a reusable cache.
+        return None
+    if flights is not None:
+        print(
+            f"Reusing cached {reusable_source.name} flights for {source.name} "
+            f"on {dt}",
+            flush=True,
+        )
+    return flights
+
+
+def _create_flights_from_reused_flights(
+    source: ADSBFlightSource,
+    dt: date,
+    reusable_flights: pl.DataFrame,
+    airport_catalog: AirportCatalogView,
+    adsb_src: ADSBSource,
+    batch_workers: int,
+) -> pl.DataFrame:
+    batch_size = source.adsb_icao_batch_size_for_reused_flights()
+    if batch_size is None:
+        batch_size = max(1, reusable_flights.height)
+    if batch_size <= 0:
+        raise ValueError("adsb_icao_batch_size must be positive")
+
+    icaos = (
+        reusable_flights.get_column("icao")
+        .drop_nulls()
+        .unique()
+        .sort()
+        .to_list()
+    )
+    batches = [
+        icaos[offset : offset + batch_size]
+        for offset in range(0, len(icaos), batch_size)
+    ]
+    if not batches:
+        batches = [[]]
+
+    tasks = [
+        _ADSBBatchTask(
+            index=batch_index,
+            icaos=tuple(icao_batch),
+            reused_flights=reusable_flights.filter(
+                pl.col("icao").is_in(icao_batch)
+            ),
+        )
+        for batch_index, icao_batch in enumerate(batches)
+    ]
+    return _create_adsb_batches(
+        source,
+        dt,
+        airport_catalog,
+        adsb_src,
+        tasks,
+        batch_workers,
+    )
+
+
 def _get_flights_for_catalog_at_path(
     source: FlightSource,
     dt: date,
@@ -99,19 +355,37 @@ def _get_flights_for_catalog_at_path(
     path: Path,
     adsb_src: ADSBSource | None = None,
     use_cache: bool = True,
+    batch_workers: int = 1,
 ) -> pl.DataFrame:
+    if batch_workers < 1:
+        raise ValueError("batch_workers must be positive")
     if use_cache and path.exists():
-        current_manifest = AirportCatalogManifest.from_provenance(
-            airport_catalog.provenance
+        cached_flights = _read_cached_flights_for_catalog(
+            source,
+            dt,
+            airport_catalog,
+            adsb_src,
         )
-        cached_manifest = AirportCatalogManifest.read(
-            airport_catalog_manifest_path(path)
-        )
-        if cached_manifest.catalog_cache_key == current_manifest.catalog_cache_key:
-            return pl.read_parquet(path)
+        if cached_flights is not None:
+            return cached_flights
 
     if isinstance(source, ADSBFlightSource):
         assert adsb_src is not None, f"{source.name} requires an ADS-B source"
+        reusable_flights = _reusable_flights_for_source(
+            source,
+            dt,
+            airport_catalog,
+            adsb_src,
+        )
+        if reusable_flights is not None:
+            return _create_flights_from_reused_flights(
+                source,
+                dt,
+                reusable_flights,
+                airport_catalog,
+                adsb_src,
+                batch_workers,
+            )
         start, end = source.adsb_read_interval(dt)
         columns = source.adsb_columns()
         batch_size = source.adsb_icao_batch_size()
@@ -155,30 +429,18 @@ def _get_flights_for_catalog_at_path(
         if not batches:
             batches = [[]]
 
-        flights = []
-        for batch_index, icao_batch in enumerate(batches, 1):
-            if len(batches) > 1 and (
-                batch_index == 1
-                or batch_index % 10 == 0
-                or batch_index == len(batches)
-            ):
-                print(
-                    f"Processing {source.name} ADS-B batch "
-                    f"{batch_index}/{len(batches)}",
-                    flush=True,
-                )
-            kwargs = {
-                "source": adsb_src,
-                "icaos": icao_batch,
-            }
-            if columns is not None:
-                kwargs["columns"] = columns
-            df_adsb = read_adsb(start, end, **kwargs)
-            flights.append(
-                source.create_flights_for_day(dt, df_adsb, airport_catalog)
-            )
-            del df_adsb
-        return pl.concat(flights)
+        tasks = [
+            _ADSBBatchTask(batch_index, tuple(icao_batch))
+            for batch_index, icao_batch in enumerate(batches)
+        ]
+        return _create_adsb_batches(
+            source,
+            dt,
+            airport_catalog,
+            adsb_src,
+            tasks,
+            batch_workers,
+        )
     if isinstance(source, NonADSBFlightSource):
         return source.create_flights_for_day(dt, airport_catalog)
     raise ValueError(f"Unknown FlightSource type: {type(source)}")
@@ -190,6 +452,7 @@ def get_flights_for_catalog(
     airport_catalog: AirportCatalogView,
     adsb_src: ADSBSource | None = None,
     use_cache: bool = True,
+    batch_workers: int = 1,
 ) -> pl.DataFrame:
     """Read or build a flight day using exactly ``airport_catalog``."""
     return _get_flights_for_catalog_at_path(
@@ -199,6 +462,7 @@ def get_flights_for_catalog(
         flight_path(source, dt, adsb_src),
         adsb_src,
         use_cache,
+        batch_workers,
     )
 
 
@@ -207,6 +471,7 @@ def get_flights(
     dt: date,
     adsb_src: ADSBSource | None = None,
     use_cache: bool = True,
+    batch_workers: int = 1,
 ) -> pl.DataFrame:
     airport_catalog = airport_catalog_for_date(dt)
     return get_flights_for_catalog(
@@ -215,6 +480,7 @@ def get_flights(
         airport_catalog,
         adsb_src,
         use_cache,
+        batch_workers,
     )
 
 
@@ -222,6 +488,7 @@ def write_flights(
     source: FlightSource,
     dt: date,
     adsb_src: ADSBSource | None = None,
+    batch_workers: int = 1,
 ) -> pl.DataFrame:
     airport_catalog = airport_catalog_for_date(dt)
     return write_flights_for_catalog(
@@ -229,6 +496,7 @@ def write_flights(
         dt,
         airport_catalog,
         adsb_src,
+        batch_workers,
     )
 
 
@@ -237,6 +505,7 @@ def write_flights_for_catalog(
     dt: date,
     airport_catalog: AirportCatalogView,
     adsb_src: ADSBSource | None = None,
+    batch_workers: int = 1,
 ) -> pl.DataFrame:
     """Build and persist a flight day using exactly ``airport_catalog``."""
     path = flight_path(source, dt, adsb_src)
@@ -248,6 +517,7 @@ def write_flights_for_catalog(
         path,
         adsb_src,
         use_cache=False,
+        batch_workers=batch_workers,
     )
     df_flights.write_parquet(path)
     AirportCatalogManifest.from_provenance(

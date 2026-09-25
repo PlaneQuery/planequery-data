@@ -59,7 +59,12 @@ def predict_flights(
 ):
     flights = with_flight_schema_columns(flights)
     predictions = predict(
-        trajectories(flights, messages, airport_catalog),
+        trajectories(
+            flights,
+            messages,
+            airport_catalog,
+            include_nearest=False,
+        ),
         model,
     )
     airport_ids = {name: [None] * flights.height for name in ("takeoff", "landing")}

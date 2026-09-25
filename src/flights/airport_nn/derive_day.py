@@ -14,9 +14,11 @@ from flights.airport_catalog_manifest import (
     airport_catalog_manifest_path,
 )
 from flights.airport_nn.features import COLUMNS
-from flights.airport_nn.inference import predict_flights
-from flights.airport_nn.model import load_model
-from flights.airport_nn.source import DEFAULT_MODEL_PATH, AlgorithmNNFlightSource
+from flights.airport_nn.source import (
+    DEFAULT_MODEL_PATH,
+    REUSED_FLIGHT_BATCH_SIZE,
+    AlgorithmNNFlightSource,
+)
 from flights.flight_source import flight_path, get_flights_for_catalog
 
 
@@ -25,7 +27,7 @@ def derive_day(
     source: ADSBSource = ADSBSource.ADSBLOL,
     model_path: str | Path = DEFAULT_MODEL_PATH,
     flights: pl.DataFrame | None = None,
-    batch_aircraft: int = 256,
+    batch_aircraft: int = REUSED_FLIGHT_BATCH_SIZE,
 ) -> Path:
     source = ADSBSource(source)
     assert batch_aircraft > 0
@@ -38,18 +40,25 @@ def derive_day(
             source,
         )
 
+    nn_source = AlgorithmNNFlightSource(model_path=Path(model_path))
     aircraft = flights.get_column("icao").drop_nulls().unique().sort().to_list()
-    model = load_model(Path(model_path))
     parts = []
     for start in range(0, len(aircraft), batch_aircraft):
         icaos = aircraft[start : start + batch_aircraft]
         subset = flights.filter(pl.col("icao").is_in(icaos))
         messages = read_adsb(day, source=source, icaos=icaos, columns=COLUMNS)
-        parts.append(predict_flights(subset, messages, model, airport_catalog))
+        parts.append(
+            nn_source.create_flights_from_reused_flights(
+                day,
+                subset,
+                messages,
+                airport_catalog,
+            )
+        )
 
     result = pl.concat(parts) if parts else flights
     output = flight_path(
-        AlgorithmNNFlightSource(model_path=Path(model_path)),
+        nn_source,
         day,
         source,
     )
@@ -71,6 +80,10 @@ if __name__ == "__main__":
         default=ADSBSource.ADSBLOL,
     )
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--batch-aircraft", type=int, default=256)
+    parser.add_argument(
+        "--batch-aircraft",
+        type=int,
+        default=REUSED_FLIGHT_BATCH_SIZE,
+    )
     args = parser.parse_args()
     print(derive_day(args.date, args.source, args.model, batch_aircraft=args.batch_aircraft))
