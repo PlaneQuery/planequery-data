@@ -54,11 +54,39 @@ def clean_messages(messages):
     )
 
 
+def _candidate_airports(matcher, lat, lon):
+    if hasattr(matcher, "airports_within_radius"):
+        airport_distances = matcher.airports_within_radius(lat, lon, 200)
+        airport_distances = sorted(
+            airport_distances,
+            key=lambda item: (item[1], item[0].ident),
+        )
+        airports = [airport for airport, _ in airport_distances]
+    else:
+        # Preserve compatibility with small matchers used by downstream users/tests.
+        matches = sorted(
+            matcher.within_radius(lat, lon, 200),
+            key=lambda match: (match.distance_km, match.ident),
+        )
+        airports = [match.airport for match in matches]
+
+    # Reserve eight slots for larger airports behind dense private strips.
+    nearby = airports[:24]
+    larger = [a for a in airports[24:] if a.type != "small_airport"][:8]
+    larger_ids = {a.id for a in larger}
+    return (
+        nearby
+        + larger
+        + [a for a in airports[24:] if a.id not in larger_ids]
+    )[:CANDIDATES]
+
+
 def trajectories(
     flights,
     messages,
     airport_catalog: AirportCatalogView,
     loss_seconds=0,
+    include_nearest=True,
 ):
     """Yield two endpoints per flight, including those without observations."""
     if loss_seconds < 0:
@@ -70,12 +98,12 @@ def trajectories(
             pl.col("time").dt.epoch("ms"),
             *[pl.col(c).cast(pl.Float64) for c in COLUMNS[2:]],
         ).to_numpy()
-    for row, f in enumerate(
-        flights.select("icao", "takeoff_time", "landing_time").iter_rows(named=True)
+    for row, (icao, takeoff_time, landing_time) in enumerate(
+        flights.select("icao", "takeoff_time", "landing_time").iter_rows()
     ):
-        start = np.datetime64(f["takeoff_time"], "ms").astype(np.int64)
-        end = np.datetime64(f["landing_time"], "ms").astype(np.int64)
-        track = tracks.get(f["icao"])
+        start = np.datetime64(takeoff_time, "ms").astype(np.int64)
+        end = np.datetime64(landing_time, "ms").astype(np.int64)
+        track = tracks.get(icao)
         for landing in (False, True):
             name = "landing" if landing else "takeoff"
             boundary = end if landing else start
@@ -108,18 +136,12 @@ def trajectories(
                 )
                 points = points[indices]
             lat, lon = points[0, 1:3]
-            nearest_match = airport_catalog.matcher.nearest(lat, lon)
-            matches = sorted(
-                airport_catalog.matcher.within_radius(lat, lon, 200),
-                key=lambda match: (match.distance_km, match.ident),
+            nearest_match = (
+                airport_catalog.matcher.nearest(lat, lon)
+                if include_nearest
+                else None
             )
-            airports = [match.airport for match in matches]
-            # Reserve eight slots for larger airports behind dense private strips.
-            nearby = airports[:24]
-            larger = [a for a in airports[24:] if a.type != "small_airport"][:8]
-            airports = (
-                nearby + larger + [a for a in airports[24:] if a not in larger]
-            )[:CANDIDATES]
+            airports = _candidate_airports(airport_catalog.matcher, lat, lon)
             values = relative_features(points, airports, boundary, landing)
             yield Endpoint(
                 row=row,
@@ -127,8 +149,10 @@ def trajectories(
                 candidate_ids=[a.id for a in airports],
                 candidate_idents=[a.ident for a in airports],
                 values=values,
-                nearest_id=nearest_match.id,
-                nearest_ident=nearest_match.ident,
+                nearest_id=(nearest_match.id if nearest_match is not None else None),
+                nearest_ident=(
+                    nearest_match.ident if nearest_match is not None else ""
+                ),
             )
 
 

@@ -43,8 +43,17 @@ def _write_flights_day(
     source: FlightSource,
     target_date: date,
     adsb_source: ADSBSource | None,
+    batch_workers: int = 1,
 ) -> tuple[date, int, Path]:
-    flights = write_flights(source, target_date, adsb_source)
+    if batch_workers == 1:
+        flights = write_flights(source, target_date, adsb_source)
+    else:
+        flights = write_flights(
+            source,
+            target_date,
+            adsb_source,
+            batch_workers=batch_workers,
+        )
     return (
         target_date,
         len(flights),
@@ -91,8 +100,28 @@ def write_flights_range(
         raise ValueError("workers must be positive")
 
     target_dates = list(date_range(start_date, end_date))
+    within_day_parallel = (
+        len(target_dates) == 1
+        and isinstance(source, PARALLEL_ALGORITHM_SOURCES)
+    )
+    if within_day_parallel:
+        print(
+            f"Using {workers} within-day worker(s) for {source.name}",
+            flush=True,
+        )
+        _print_write_result(
+            _write_flights_day(
+                source,
+                target_dates[0],
+                source_adsb,
+                batch_workers=workers,
+            ),
+            source,
+        )
+        return
+
     worker_count = min(workers, len(target_dates))
-    print(f"Using {worker_count} worker(s) for {source.name}", flush=True)
+    print(f"Using {worker_count} day worker(s) for {source.name}", flush=True)
 
     if worker_count == 1:
         for target_date in target_dates:
@@ -141,9 +170,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--workers",
         type=int,
         help=(
-            "Parallel day workers. By default algorithm-nn and "
-            "algorithm-nearest size this from CPU count and RAM; other "
-            "sources use one worker."
+            "Parallel workers. A one-day algorithm run parallelizes ADS-B "
+            "aircraft batches; a multi-day run parallelizes days instead. "
+            "Defaults are sized from CPU count and RAM."
         ),
     )
     return parser.parse_args(argv)

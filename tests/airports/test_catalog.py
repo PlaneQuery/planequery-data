@@ -308,9 +308,18 @@ def test_nearest_and_radius_return_immutable_matches_sorted_by_distance():
 
     assert view.matcher.nearest(40.01, -75.0).id == 1
     matches = view.matcher.within_radius(40.01, -75.0, radius_km=20.0)
+    airport_distances = view.matcher.airports_within_radius(
+        40.01,
+        -75.0,
+        radius_km=20.0,
+    )
 
     assert [match.id for match in matches] == [1, 2]
     assert matches[0].distance_km < matches[1].distance_km
+    assert [airport.id for airport, _ in airport_distances] == [1, 2]
+    assert [distance for _, distance in airport_distances] == pytest.approx(
+        [match.distance_km for match in matches]
+    )
     with pytest.raises(FrozenInstanceError):
         matches[0].distance_km = 100.0
 

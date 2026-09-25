@@ -70,6 +70,13 @@ part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
 `data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.
 
+The canonical `flights.cli` command automatically reuses a matching cached
+`algorithm-nearest` day and reads only the trajectory columns needed by the NN.
+If that day is absent or its airport-catalog manifest is stale, inference falls
+back to segmenting the ADS-B observations normally.
+Reuse-only reads use larger aircraft batches because they do not materialize
+the segmentation message objects.
+
 To score a prepared validation cache:
 
 ```bash
