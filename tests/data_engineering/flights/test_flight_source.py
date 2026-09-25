@@ -9,6 +9,9 @@ from airports.models import AirportCatalogProvenance
 from flights import flight_source as flight_source_module
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.algorithm import AlgorithmNearestFlightSource
+from flights.airport_nn import inference, model
+from flights.airport_nn.features import COLUMNS as AIRPORT_NN_COLUMNS
+from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.flight_source import (
     ADSBFlightSource,
     NonADSBFlightSource,
@@ -203,6 +206,63 @@ def test_get_flights_reads_bounded_complete_aircraft_batches(monkeypatch, tmp_pa
     ]
 
 
+def test_get_flights_can_process_aircraft_batches_in_parallel(
+    monkeypatch,
+    tmp_path,
+):
+    target_date = date(2026, 3, 1)
+    batches = []
+    pool_settings = []
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+
+    class InlinePool:
+        def __init__(self, *, max_workers, mp_context, initializer, initargs):
+            pool_settings.append((max_workers, mp_context.get_start_method()))
+            initializer(*initargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def map(self, function, items):
+            return map(function, items)
+
+    def read_adsb(start, end, *, source, columns=None, lazy=False, icaos=None):
+        if lazy:
+            return pl.DataFrame(
+                {"icao": ["eee555", "aaa111", "ccc333", "bbb222", "ddd444"]}
+            ).lazy()
+        batches.append(icaos)
+        return pl.DataFrame({"icao": icaos})
+
+    monkeypatch.setattr(flight_source_module, "ProcessPoolExecutor", InlinePool)
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+
+    result = get_flights(
+        DummyBatchedADSBFlightSource(),
+        target_date,
+        ADSBSource.ADSBX,
+        use_cache=False,
+        batch_workers=2,
+    )
+
+    assert pool_settings == [(2, "spawn")]
+    assert batches == [
+        ["aaa111", "bbb222"],
+        ["ccc333", "ddd444"],
+        ["eee555"],
+    ]
+    assert result.get_column("icao").to_list() == [
+        "aaa111",
+        "bbb222",
+        "ccc333",
+        "ddd444",
+        "eee555",
+    ]
+
+
 def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
     monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
     calls = []
@@ -222,6 +282,138 @@ def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
 
     assert calls == [["abc123", "def456"]]
     assert result.get_column("icao").to_list() == ["abc123", "def456"]
+
+
+def test_algorithm_nn_reuses_cached_algorithm_nearest_flights(
+    monkeypatch,
+    tmp_path,
+):
+    target_date = date(2026, 3, 1)
+    airport_catalog = fake_airport_catalog(target_date)
+    nearest_source = AlgorithmNearestFlightSource()
+    nn_source = AlgorithmNNFlightSource(model_path=tmp_path / "model.pt")
+    nearest_flights = pl.DataFrame(
+        {
+            "icao": ["def456", "abc123"],
+            "takeoff_airport_ident": ["OLD2", "OLD1"],
+        }
+    )
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    nearest_path = flight_path(
+        nearest_source,
+        target_date,
+        ADSBSource.ADSBLOL,
+    )
+    nearest_path.parent.mkdir(parents=True)
+    nearest_flights.write_parquet(nearest_path)
+    AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
+        airport_catalog_manifest_path(nearest_path)
+    )
+
+    reads = []
+
+    def read_adsb(start, end, *, source, icaos, columns):
+        reads.append((source, icaos, columns))
+        return pl.DataFrame({"icao": icaos})
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+    monkeypatch.setattr(
+        nearest_source.__class__,
+        "create_flights_for_day",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("nearest segmentation must not run")
+        ),
+    )
+    monkeypatch.setattr(model, "load_model", lambda path: "loaded-model")
+    prediction_calls = []
+    monkeypatch.setattr(
+        inference,
+        "predict_flights",
+        lambda flights, messages, loaded_model, catalog: (
+            prediction_calls.append((flights, messages, loaded_model, catalog))
+            or flights
+        ),
+    )
+
+    result = flight_source_module.get_flights_for_catalog(
+        nn_source,
+        target_date,
+        airport_catalog,
+        ADSBSource.ADSBLOL,
+        use_cache=False,
+    )
+
+    assert result.equals(nearest_flights)
+    assert reads == [
+        (
+            ADSBSource.ADSBLOL,
+            ["abc123", "def456"],
+            AIRPORT_NN_COLUMNS,
+        )
+    ]
+    assert len(prediction_calls) == 1
+    reused, messages, loaded_model, catalog = prediction_calls[0]
+    assert reused.equals(nearest_flights)
+    assert messages.get_column("icao").to_list() == ["abc123", "def456"]
+    assert loaded_model == "loaded-model"
+    assert catalog is airport_catalog
+
+
+def test_algorithm_nn_ignores_nearest_flights_from_a_stale_catalog(
+    monkeypatch,
+    tmp_path,
+):
+    target_date = date(2026, 3, 1)
+    airport_catalog = fake_airport_catalog(target_date)
+    nearest_source = AlgorithmNearestFlightSource()
+    nn_source = AlgorithmNNFlightSource(model_path=tmp_path / "model.pt")
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    nearest_path = flight_path(
+        nearest_source,
+        target_date,
+        ADSBSource.ADSBLOL,
+    )
+    nearest_path.parent.mkdir(parents=True)
+    pl.DataFrame({"icao": ["stale1"]}).write_parquet(nearest_path)
+    stale_catalog = FakeAirportCatalog(
+        AirportCatalogProvenance(
+            flight_date=target_date,
+            observed_commit_sha="stale-observed-commit",
+            knowledge_cutoff_date=date(2026, 4, 1),
+            knowledge_commit_sha="stale-knowledge-commit",
+            catalog_available_date=date(2026, 4, 1),
+            policy_version="test",
+        )
+    )
+    AirportCatalogManifest.from_provenance(stale_catalog.provenance).write(
+        airport_catalog_manifest_path(nearest_path)
+    )
+
+    reads = []
+
+    def read_adsb(start, end, *, source, columns=None, lazy=False, icaos=None):
+        reads.append((lazy, icaos))
+        frame = pl.DataFrame({"icao": ["abc123"]})
+        return frame.lazy() if lazy else frame
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+    expected = pl.DataFrame({"icao": ["fresh"]})
+    monkeypatch.setattr(
+        AlgorithmNNFlightSource,
+        "create_flights_for_day",
+        lambda self, dt, df, catalog: expected,
+    )
+
+    result = flight_source_module.get_flights_for_catalog(
+        nn_source,
+        target_date,
+        airport_catalog,
+        ADSBSource.ADSBLOL,
+        use_cache=False,
+    )
+
+    assert result.equals(expected)
+    assert reads == [(True, None), (False, ["abc123"])]
 
 
 def test_get_flights_handles_empty_batched_adsb_day(monkeypatch, tmp_path):

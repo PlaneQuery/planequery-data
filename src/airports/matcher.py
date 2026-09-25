@@ -63,3 +63,25 @@ class AirportMatcher:
             self._match(int(index), float(distance))
             for index, distance in zip(indices[0], distances[0], strict=True)
         )
+
+    def airports_within_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float = 15.0,
+    ) -> tuple[tuple[Airport, float], ...]:
+        """Return airport/distance pairs without match provenance allocation."""
+        query_point = np.radians([(lat, lon)])
+        indices, distances = self._tree.query_radius(
+            query_point,
+            r=radius_km / EARTH_RADIUS_KM,
+            return_distance=True,
+            sort_results=True,
+        )
+        return tuple(
+            (
+                self._airports[int(index)],
+                float(distance * EARTH_RADIUS_KM),
+            )
+            for index, distance in zip(indices[0], distances[0], strict=True)
+        )
