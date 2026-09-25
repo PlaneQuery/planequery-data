@@ -8,13 +8,14 @@ Publish flights from 2024-01-01 -> 2026-09-24
 
 ### Definition of Done
 - [ ] Neural Network flights release
-- [ ] Nearest Airport Method flights release
-- [ ] OpenSky Discord Post
-- [ ] Github readme
 - [ ] Github planequery-data repo
+- [ ] Github readme
+- [ ] OpenSky Discord Post
 #### after inital
 - [ ] GroundControl Discord Post
 - [ ] r/ADSB post
+- [ ] Nearest Airport Method flights release
+
 
 ---
 
@@ -25,10 +26,12 @@ Tasks that directly advance the current milestone.
 - [ x ] Hookup 8TB harddrive
 - [ x ] Figure out Ourairports.com changes over time
 - [ x ] Change flights run to no logner delete ADS-B files downloaded. 
+- [ ] **Calculate how long 1 year flights run will take.** 
 - [ ] Start 1 year flights run.
 - [ ] Figure out how to deal with any missing ADS-B days
 - [ ] Determine which days have less flights because of missing ADS-B data
-- [ ] Write github readme which will be condecnsed to the posts.
+- [ ] Write github readme which will be condensed to the posts.
+- [ ] Do sanity checks on the data
 - [ ] Write Discord Post
 - [ ] Organize repo for release
 
@@ -38,8 +41,8 @@ Tasks that directly advance the current milestone.
 
 Important tasks once the current work is complete.
 
-- [ ] <Task>
-- [ ] <Task>
+- [ Next Milestone will be doing analysis of algorihtms comapred with OpenSky ] <Task>
+- [ Training on OpenSky data ? ] <Task>
 - [ ] <Task>
 
 ---
