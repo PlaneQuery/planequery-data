@@ -1,5 +1,4 @@
 import math
-import os
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -20,6 +19,7 @@ from data_engineering.adsb.read_adsb import (
     read_adsb,
 )
 from flights.segmentation.readsb_legs import mark_leg_indexes
+from flights.workers import default_worker_count
 
 
 AIRPORT_CANDIDATE_RADIUS_KM = 40.0
@@ -780,10 +780,7 @@ def _chunks_by_size(items: list[str], chunk_size: int) -> list[list[str]]:
 
 
 def _number_of_workers_default() -> int:
-    cpu_count = os.cpu_count()
-    if cpu_count is None:
-        return 1
-    return min(MAX_AIRPORT_CATALOG_WORKERS, max(1, cpu_count // 2))
+    return min(MAX_AIRPORT_CATALOG_WORKERS, default_worker_count())
 
 
 _WORKER_AIRPORT_CATALOG: AirportCatalogView | None = None

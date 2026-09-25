@@ -16,6 +16,11 @@ python -m flights.cli 2026-03-01 2026-03-08 algorithm-nn \
 The start date is inclusive and the end date is exclusive. Run
 `python -m flights.cli --help` to list sources and options.
 
+`algorithm-nn` and `algorithm-nearest` process days in parallel. Their default
+worker count uses half of the machine's logical CPUs, is limited to roughly one
+worker per 4 GiB of RAM while retaining 20% memory headroom, and can be
+overridden with `--workers`.
+
 ## Eurocontrol
 
 Place each raw monthly archive at:
