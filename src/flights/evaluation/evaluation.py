@@ -17,7 +17,13 @@ from flights.evaluation.consecutive_airports import (
 )
 from flights.flights_comparison import df_flights_comparison, df_flights_comparison_stats
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
-from flights.flight_source import ADSBFlightSource, FlightSource, get_flights
+from flights.flight_source import (
+    ADSBFlightSource,
+    FlightSource,
+    flight_path,
+    get_flights,
+    write_flights,
+)
 from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
     BTS_SOURCE,
@@ -95,6 +101,8 @@ def source_flights_reader(
                 f"Airport NN checkpoint not found: {source.model_path}. "
                 "Pass --airport-nn-model with an existing checkpoint."
             )
+        if not flight_path(source, target_date, source_adsb).is_file():
+            return write_flights(source, target_date, source_adsb)
         return get_flights(source, target_date, source_adsb)
 
     return read_source

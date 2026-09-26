@@ -39,6 +39,9 @@ def test_algorithm_nn_source_uses_checkpoint(
         return flights_to_flights_df([predicted, unavailable])
 
     monkeypatch.setattr(evaluation, "get_flights", read_flights)
+    parquet = tmp_path / "data.parquet"
+    parquet.touch()
+    monkeypatch.setattr(evaluation, "flight_path", lambda *args: parquet)
 
     source = AlgorithmNNFlightSource(model_path=checkpoint)
     reader = evaluation.source_flights_reader(
@@ -62,7 +65,7 @@ def test_algorithm_nn_requires_checkpoint(tmp_path):
         reader(date(2026, 3, 1))
 
 
-def test_canonical_name_resolves_to_flight_source(monkeypatch):
+def test_canonical_name_resolves_to_flight_source(monkeypatch, tmp_path):
     day = date(2026, 3, 1)
     calls = []
 
@@ -71,6 +74,9 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
         return flights_to_flights_df([])
 
     monkeypatch.setattr(evaluation, "get_flights", read_flights)
+    parquet = tmp_path / "data.parquet"
+    parquet.touch()
+    monkeypatch.setattr(evaluation, "flight_path", lambda *args: parquet)
 
     evaluation.source_flights_reader(BTS_SOURCE.name)(day)
 
@@ -79,3 +85,33 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
     ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+
+
+def test_source_flights_reader_writes_missing_parquet(monkeypatch, tmp_path):
+    day = date(2026, 3, 1)
+    parquet = tmp_path / "missing.parquet"
+    expected = flights_to_flights_df([])
+    calls = []
+
+    monkeypatch.setattr(evaluation, "flight_path", lambda *args: parquet)
+
+    def write(source, target_date, adsb_source):
+        calls.append((source, target_date, adsb_source))
+        return expected
+
+    monkeypatch.setattr(evaluation, "write_flights", write)
+    monkeypatch.setattr(
+        evaluation,
+        "get_flights",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("a missing parquet must be written")
+        ),
+    )
+
+    result = evaluation.source_flights_reader(
+        BTS_SOURCE,
+        adsb_src=ADSBSource.ADSBX,
+    )(day)
+
+    assert result.equals(expected)
+    assert calls == [(BTS_SOURCE, day, None)]
