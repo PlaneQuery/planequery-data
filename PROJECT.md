@@ -26,7 +26,7 @@ Tasks that directly advance the current milestone.
 - [ x ] Hookup 8TB harddrive
 - [ x ] Figure out Ourairports.com changes over time
 - [ x ] Change flights run to no logner delete ADS-B files downloaded. 
-- [   ] End to end test suite so I can make performance changes. 
+- [   ] **End to end test suite so I can make performance changes.** 
 - [ ] **Calculate how long 1 year flights run will take.** 
 - [ ] Start 1 year flights run.
 - [ ] Figure out how to deal with any missing ADS-B days
@@ -35,6 +35,7 @@ Tasks that directly advance the current milestone.
 - [ ] Do sanity checks on the data
 - [ ] Write Discord Post
 - [ ] Organize repo for release
+- [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality. 
 
 ---
 
