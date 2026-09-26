@@ -3,7 +3,7 @@ from pathlib import Path
 
 import polars as pl
 
-from data_engineering.flights.flight_type import (
+from flights.flight_type import (
     FLIGHT_POLARS_SCHEMA,
     with_flight_schema_columns,
 )

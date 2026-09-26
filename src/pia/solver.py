@@ -2,7 +2,7 @@ import networkx as nx
 import polars as pl
 from collections import defaultdict
 from ortools.sat.python import cp_model
-from data_engineering.flights.flight_type import Flight, FlightIndex
+from flights.flight_type import Flight, FlightIndex
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
 DEBUG = True
 MINIMUM_SCORE_MARGIN = 1000

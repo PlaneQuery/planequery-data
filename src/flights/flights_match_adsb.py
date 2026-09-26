@@ -1,10 +1,12 @@
-from data_engineering.flights.flight_type import flights_df_to_flights
+from flights.flight_type import flights_df_to_flights
 import polars as pl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
-from airports.airport_lookup import AirportLookup
-from utils import haversine
+from airports.models import Airport
+from airports.runtime import airport_catalog_for_date
+from flights.airport_reference import airport_from_reference
+from planequery_data.utils import haversine
 
 ADSB_MATCHING_COLUMNS = [
     "time",
@@ -22,7 +24,6 @@ AIRPORT_DISTANCE_GRACE_KM_PER_MINUTE = 8
 AIRPORT_DWELL_GRACE_PERIOD = timedelta(minutes=10)
 MAX_DWELL_GROUND_SPEED_KT = 40
 MAX_DWELL_BARO_ALTITUDE_FT = 1000
-airport_lookup = AirportLookup()
 @dataclass
 class _AdsbRow:
     time: datetime
@@ -61,16 +62,13 @@ def allowed_airport_distance_km(row_time: datetime, target_times: list[datetime]
 
 def adsb_row_matches_airport(
     row: _AdsbRow,
-    airport_ident: str,
+    airport: Airport | None,
     target_times: list[datetime],
     use_time_grace: bool = True,
 ) -> bool:
-    airport_coordinates = airport_lookup.get_airport_coordinates(airport_ident)
-    if airport_coordinates is None:
+    if airport is None:
         return False
-
-    airport_lat, airport_lon = airport_coordinates
-    distance_km = haversine(row.lat, row.lon, airport_lat, airport_lon)
+    distance_km = haversine(row.lat, row.lon, airport.lat, airport.lon)
     allowed_distance_km = (
         allowed_airport_distance_km(row.time, target_times)
         if use_time_grace
@@ -80,22 +78,22 @@ def adsb_row_matches_airport(
 
 def adsb_rows_match_airport(
     adsb_rows: list[_AdsbRow],
-    airport_ident: str,
+    airport: Airport | None,
     target_times: list[datetime],
     use_time_grace: bool = True,
 ) -> bool:
     return all(
-        adsb_row_matches_airport(row, airport_ident, target_times, use_time_grace)
+        adsb_row_matches_airport(row, airport, target_times, use_time_grace)
         for row in adsb_rows
     )
 
-def adsb_row_is_dwelling_at_airport(row: _AdsbRow, airport_ident: str) -> bool:
-    airport_coordinates = airport_lookup.get_airport_coordinates(airport_ident)
-    if airport_coordinates is None:
+def adsb_row_is_dwelling_at_airport(
+    row: _AdsbRow,
+    airport: Airport | None,
+) -> bool:
+    if airport is None:
         return False
-
-    airport_lat, airport_lon = airport_coordinates
-    if haversine(row.lat, row.lon, airport_lat, airport_lon) > MAX_AIRPORT_DISTANCE_KM:
+    if haversine(row.lat, row.lon, airport.lat, airport.lon) > MAX_AIRPORT_DISTANCE_KM:
         return False
     if row.ground_speed_kt is not None and row.ground_speed_kt > MAX_DWELL_GROUND_SPEED_KT:
         return False
@@ -105,14 +103,14 @@ def adsb_row_is_dwelling_at_airport(row: _AdsbRow, airport_ident: str) -> bool:
 
 def adsb_rows_dwell_at_airport(
     adsb_rows: list[_AdsbRow],
-    airport_ident: str,
+    airport: Airport | None,
     start_time: datetime,
     end_time: datetime | None = None,
 ) -> bool:
     dwell_start = start_time + AIRPORT_DWELL_GRACE_PERIOD
     dwell_end = None if end_time is None else end_time - AIRPORT_DWELL_GRACE_PERIOD
     return all(
-        adsb_row_is_dwelling_at_airport(row, airport_ident)
+        adsb_row_is_dwelling_at_airport(row, airport)
         for row in adsb_rows
         if row.time >= dwell_start and (dwell_end is None or row.time <= dwell_end)
     )
@@ -123,6 +121,7 @@ def flights_match_adsb(
     if df_flights.is_empty() or df_adsb.is_empty():
         return False
 
+    airport_catalog = airport_catalog_for_date(start_dt.date())
     flights = flights_df_to_flights(df_flights)
     optional_adsb_cols = ["on_ground", "ground_speed_kt", "baro_altitude_ft"]
     adsb_cols = ["time", "lat", "lon"] + [
@@ -141,20 +140,35 @@ def flights_match_adsb(
     ]
     assert any(flight.landing_time <= flight.takeoff_time for flight in flights) == False # TODO: may need to change.
 
-    # check that takeoff_airport idents match landing airport idents
+    # Check that stable takeoff airport IDs match stable landing airport IDs.
     # 2. check that from when flights say plane is landed plane did not move
     # 3. check that last adsb message and first adsb message is near the airport. 
     previous_flight = None
     for flight in flights:
+        takeoff_airport = airport_from_reference(
+            airport_catalog,
+            flight.takeoff_airport_id,
+        )
+        landing_airport = airport_from_reference(
+            airport_catalog,
+            flight.landing_airport_id,
+        )
         if previous_flight:
-            if previous_flight.landing_airport_ident != flight.takeoff_airport_ident:
+            previous_landing_airport = airport_from_reference(
+                airport_catalog,
+                previous_flight.landing_airport_id,
+            )
+            if (
+                previous_flight.landing_airport_id
+                != flight.takeoff_airport_id
+            ):
                 return False
             landing_row_idx = closest_time_row_idx(adsb_rows, previous_flight.landing_time, True)
             if landing_row_idx is None:
                 return False
             if not adsb_rows_dwell_at_airport(
                 adsb_rows[landing_row_idx:],
-                previous_flight.landing_airport_ident,
+                previous_landing_airport,
                 previous_flight.landing_time,
                 flight.takeoff_time,
             ):
@@ -168,7 +182,7 @@ def flights_match_adsb(
 
         if not adsb_rows_match_airport(
             adsb_rows[landing_row_idx : takeoff_row_idx + 1],
-            flight.takeoff_airport_ident,
+            takeoff_airport,
             [flight.takeoff_time]
             if previous_flight is None
             else [previous_flight.landing_time, flight.takeoff_time],
@@ -183,7 +197,7 @@ def flights_match_adsb(
             return False
         if not adsb_rows_match_airport(
             [adsb_rows[current_landing_row_idx]],
-            flight.landing_airport_ident,
+            landing_airport,
             [flight.landing_time],
         ):
             return False
@@ -195,15 +209,20 @@ def flights_match_adsb(
     if landing_row_idx is None:
         return False
 
+    last_landing_airport = airport_from_reference(
+        airport_catalog,
+        last_flight.landing_airport_id,
+    )
+
     if not adsb_rows_match_airport(
         adsb_rows[landing_row_idx:],
-        last_flight.landing_airport_ident,
+        last_landing_airport,
         [last_flight.landing_time],
     ):
         return False
     return adsb_rows_dwell_at_airport(
         adsb_rows[landing_row_idx:],
-        last_flight.landing_airport_ident,
+        last_landing_airport,
         last_flight.landing_time,
     )
 

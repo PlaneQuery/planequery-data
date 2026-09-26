@@ -1,36 +1,119 @@
+import os
+from dataclasses import dataclass
 from datetime import date, datetime
-from types import SimpleNamespace
+from pathlib import Path
 
 import polars as pl
 
-from data_engineering.flights import sfdps_to_flights as sfdps
+os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
+
+from flights.providers import sfdps
 
 
-class FakeAirportLookup:
-    def get_airport_from_code(self, code):
+@dataclass(frozen=True)
+class FakeAirport:
+    id: int
+    ident: str
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    def resolve_code(
+        self,
+        code: str,
+        *,
+        code_priority: tuple[str, ...],
+    ) -> FakeAirport | None:
+        assert code_priority == sfdps.SFDPS_AIRPORT_CODE_PRIORITY
         if code == "AMBIGUOUS":
             raise ValueError("ambiguous airport code")
-        ident = {
-            "ALM": "KALM",
-            "IA8": "IA8",
+        return {
+            "ALM": FakeAirport(101, "KALM"),
+            "IA8": FakeAirport(202, "IA8"),
         }.get(code)
-        return SimpleNamespace(ident=ident) if ident is not None else None
 
 
-def test_resolve_sfdps_airport_idents_replaces_raw_codes():
+def test_resolve_sfdps_airports_replaces_raw_codes_with_stable_ids():
     source = pl.DataFrame(
         {
-            "takeoff_airport_ident": ["ALM", "UNKNOWN", "AMBIGUOUS"],
-            "landing_airport_ident": ["IA8", None, "ALM"],
-        }
+            "takeoff_airport_ident": ["ALM", None],
+            "landing_airport_ident": ["IA8", None],
+        },
+        schema={
+            "takeoff_airport_ident": pl.String,
+            "landing_airport_ident": pl.String,
+        },
     )
 
-    result = sfdps.resolve_sfdps_airport_idents(source, FakeAirportLookup())
+    result = sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
 
     assert result.to_dicts() == [
-        {"takeoff_airport_ident": "KALM", "landing_airport_ident": "IA8"},
-        {"takeoff_airport_ident": None, "landing_airport_ident": None},
-        {"takeoff_airport_ident": None, "landing_airport_ident": "KALM"},
+        {
+            "takeoff_airport_ident": "KALM",
+            "landing_airport_ident": "IA8",
+            "takeoff_airport_id": 101,
+            "landing_airport_id": 202,
+        },
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": None,
+            "takeoff_airport_id": None,
+            "landing_airport_id": None,
+        },
+    ]
+
+
+def test_resolve_sfdps_airports_maps_unknown_non_null_code_to_null():
+    source = pl.DataFrame(
+        {
+            "takeoff_airport_ident": ["UNKNOWN", "UNKNOWN"],
+            "landing_airport_ident": ["IA8", None],
+        },
+        schema={
+            "takeoff_airport_ident": pl.String,
+            "landing_airport_ident": pl.String,
+        },
+    )
+
+    result = sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+
+    assert result.to_dicts() == [
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": "IA8",
+            "takeoff_airport_id": None,
+            "landing_airport_id": 202,
+        },
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": None,
+            "takeoff_airport_id": None,
+            "landing_airport_id": None,
+        },
+    ]
+
+
+def test_resolve_sfdps_airports_maps_ambiguous_code_to_null():
+    source = pl.DataFrame(
+        {
+            "takeoff_airport_ident": ["AMBIGUOUS"],
+            "landing_airport_ident": [None],
+        },
+        schema={
+            "takeoff_airport_ident": pl.String,
+            "landing_airport_ident": pl.String,
+        },
+    )
+
+    result = sfdps.resolve_sfdps_airports(source, FakeAirportCatalog())
+
+    assert result.to_dicts() == [
+        {
+            "takeoff_airport_ident": None,
+            "landing_airport_ident": None,
+            "takeoff_airport_id": None,
+            "landing_airport_id": None,
+        }
     ]
 
 
@@ -47,9 +130,9 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
     monkeypatch.setattr(sfdps, "sfdps_to_flights", lambda _day: source)
     monkeypatch.setattr(sfdps, "filter_sfdps_flights", lambda flights, _day: flights)
     monkeypatch.setattr(sfdps, "sfdps_flights_derive_icao", lambda flights, _day: flights)
-    monkeypatch.setattr(sfdps, "AirportLookup", FakeAirportLookup)
+    airport_catalog = FakeAirportCatalog()
 
-    result = sfdps.create_sfdps_flights_day(target_date)
+    result = sfdps.create_sfdps_flights_day(target_date, airport_catalog)
 
     assert result.to_dicts() == [
         {
@@ -57,8 +140,11 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "takeoff_time": datetime(2026, 3, 1, 1, 0),
             "takeoff_airport_ident": "KALM",
             "landing_airport_ident": "IA8",
+            "takeoff_airport_id": 101,
+            "landing_airport_id": 202,
         }
     ]
+    assert sfdps.SFDPSFlightSource().version == 5
 
 
 def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(

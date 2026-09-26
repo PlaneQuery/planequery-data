@@ -11,15 +11,13 @@ import pandas as pd
 import polars as pl
 import requests
 
-from data_engineering.fr24.get_registrations_to_use import get_registrations_to_use
-
 logger = logging.getLogger(__name__)
 
 FR24_FLIGHT_SUMMARY_LIGHT_URL = (
     "https://fr24api.flightradar24.com/api/flight-summary/light"
 )
 TARGET_DATE = date(2026, 6, 1)
-FR24_FLIGHTS_VERSION = "v2"
+FR24_FLIGHTS_VERSION = "v3"
 MAX_RETURNED_FLIGHTS = 20
 INITIAL_REGISTRATION_BATCH_SIZE = 10
 QUERIES_PER_MINUTE = 10
@@ -293,6 +291,10 @@ def get_test_data(
         raise ValueError("queries_per_minute must be at least 1")
 
     if registrations is None:
+        from data_engineering.fr24.get_registrations_to_use import (
+            get_registrations_to_use,
+        )
+
         registrations = get_registrations_to_use(target_date=target_date)
 
     registrations = list(registrations)
@@ -341,32 +343,74 @@ def default_output_path(target_date: date) -> Path:
     )
 
 
-def _airport_code_to_ident(code: str | None) -> str | None:
-    from airports.airport_lookup import AirportLookup
+def _add_airport_reference(
+    df: pl.DataFrame,
+    *,
+    code_column: str,
+    prefix: str,
+    catalogs: dict,
+) -> pl.DataFrame:
+    from airports.runtime import airport_catalog_for_date
 
-    if code is None:
-        return None
-
-    code = code.strip().upper()
-    if not code:
-        return None
-
-    airport_lookup = AirportLookup()
-    if len(code) == 3:
-        return (
-            airport_lookup.iata_to_ident_index.get(code)
-            or airport_lookup.gps_code_to_ident_index.get(code)
-            or airport_lookup.local_code_to_ident_index.get(code)
+    id_column = f"{prefix}_airport_id"
+    ident_column = f"{prefix}_airport_ident"
+    flight_date_column = "_airport_flight_date"
+    normalized_code_column = "_airport_code"
+    df = df.with_columns(
+        pl.col("takeoff_time").dt.date().alias(flight_date_column),
+        pl.col(code_column)
+        .str.strip_chars()
+        .str.to_uppercase()
+        .alias(normalized_code_column),
+    )
+    keys = (
+        df.select(flight_date_column, normalized_code_column)
+        .filter(
+            pl.col(normalized_code_column).is_not_null()
+            & (pl.col(normalized_code_column) != "")
+        )
+        .unique()
+        .sort(flight_date_column, normalized_code_column)
+    )
+    mappings = []
+    for flight_date, code in keys.iter_rows():
+        if flight_date not in catalogs:
+            catalogs[flight_date] = airport_catalog_for_date(flight_date)
+        airport = catalogs[flight_date].resolve_code(
+            code,
+            code_priority=(
+                "icao_code",
+                "gps_code",
+                "ident",
+                "iata_code",
+                "local_code",
+            ),
+        )
+        mappings.append(
+            {
+                flight_date_column: flight_date,
+                normalized_code_column: code,
+                id_column: airport.id,
+                ident_column: airport.ident,
+            }
         )
 
-    airport = airport_lookup.get_Airport_from_airport_ident(code)
-    if airport is not None:
-        return airport.ident
-
+    mapping = pl.DataFrame(
+        mappings,
+        schema={
+            flight_date_column: pl.Date,
+            normalized_code_column: pl.String,
+            id_column: pl.Int64,
+            ident_column: pl.String,
+        },
+    )
     return (
-        airport_lookup.gps_code_to_ident_index.get(code)
-        or airport_lookup.local_code_to_ident_index.get(code)
-        or airport_lookup.iata_to_ident_index.get(code)
+        df.join(
+            mapping,
+            on=[flight_date_column, normalized_code_column],
+            how="left",
+        )
+        .drop(flight_date_column, normalized_code_column)
     )
 
 
@@ -379,7 +423,7 @@ def _natural_empty_expr(col_name: str, dtype: pl.DataType) -> pl.Expr:
 
 
 def fr24_raw_to_flights(df: pd.DataFrame | pl.DataFrame) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import FLIGHT_POLARS_SCHEMA
+    from flights.flight_type import FLIGHT_POLARS_SCHEMA
 
     if isinstance(df, pd.DataFrame):
         if df.empty:
@@ -407,15 +451,18 @@ def fr24_raw_to_flights(df: pd.DataFrame | pl.DataFrame) -> pl.DataFrame:
         "datetime_landed": "landing_time",
         "reg": "registration",
     })
-    df = df.with_columns(
-        pl.col("orig_icao")
-        .map_elements(_airport_code_to_ident, return_dtype=pl.String)
-        .alias("takeoff_airport_ident"),
+    catalogs = {}
+    df = _add_airport_reference(
+        df,
+        code_column="orig_icao",
+        prefix="takeoff",
+        catalogs=catalogs,
     )
-    df = df.with_columns(
-        pl.col("dest_icao_actual")
-        .map_elements(_airport_code_to_ident, return_dtype=pl.String)
-        .alias("landing_airport_ident"),
+    df = _add_airport_reference(
+        df,
+        code_column="dest_icao_actual",
+        prefix="landing",
+        catalogs=catalogs,
     )
     df = (
         df
@@ -437,14 +484,28 @@ def fr24_raw_to_flights(df: pd.DataFrame | pl.DataFrame) -> pl.DataFrame:
 def write_fr24_flights(
     df: pd.DataFrame | pl.DataFrame,
     output_path: Path,
+    target_date: date,
 ) -> pl.DataFrame:
+    from airports.runtime import airport_catalog_for_date
+    from flights.airport_catalog_manifest import (
+        AirportCatalogManifest,
+        airport_catalog_manifest_path,
+    )
+
     df_flights = fr24_raw_to_flights(df)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df_flights.write_parquet(output_path)
+    AirportCatalogManifest.from_provenance(
+        airport_catalog_for_date(target_date).provenance
+    ).write(airport_catalog_manifest_path(output_path))
     return df_flights
 
 
 def main() -> None:
+    from data_engineering.fr24.get_registrations_to_use import (
+        get_registrations_to_use,
+    )
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=TARGET_DATE.isoformat())
     parser.add_argument("--n-planes", type=int, default=None)
@@ -470,7 +531,7 @@ def main() -> None:
     )
 
     output_path = args.output or default_output_path(target_date)
-    df_flights = write_fr24_flights(df, output_path)
+    df_flights = write_fr24_flights(df, output_path, target_date)
     print(f"Wrote {len(df_flights)} flights to {output_path}")
 
 
