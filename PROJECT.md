@@ -36,6 +36,7 @@ Tasks that directly advance the current milestone.
 - [ ] Write Discord Post
 - [ ] Organize repo for release
 - [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality. 
+- [ ] I shoudl really add as many regression tests as possible 
 
 ---
 
