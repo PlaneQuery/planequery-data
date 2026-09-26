@@ -1,11 +1,50 @@
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
-from data_engineering.bts.read_bts_ontime_to_flights import _compute_bts_timestamps
+import polars as pl
+
+from flights.providers import bts as bts_module
+from flights.providers.bts import (
+    _compute_bts_timestamps,
+    create_flights_from_bts,
+    iata_airport_mapping,
+)
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    name: str = "test-catalog"
+
+
+def test_iata_airport_mapping_omits_unknown_non_null_code():
+    class UnknownAirportCatalog:
+        def resolve_code(self, code, *, code_priority):
+            assert code_priority == ("iata_code",)
+            return None
+
+    result = iata_airport_mapping(UnknownAirportCatalog(), ["ZZZ", "ZZZ"])
+
+    assert result.is_empty()
+    assert result.schema == {
+        "iata": pl.String,
+        "airport_id": pl.Int64,
+        "ident": pl.String,
+    }
+
+
+def test_iata_airport_mapping_omits_ambiguous_code():
+    class AmbiguousAirportCatalog:
+        def resolve_code(self, code, *, code_priority):
+            raise ValueError(f"ambiguous airport code: {code}")
+
+    result = iata_airport_mapping(AmbiguousAirportCatalog(), ["AAA"])
+
+    assert result.is_empty()
 
 
 def test_compute_bts_timestamps_does_not_roll_one_minute_early_departure_to_next_day():
@@ -82,3 +121,37 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
         "time_takeoff": datetime(2026, 3, 1, 11, 0),
         "time_landing": datetime(2026, 3, 1, 12, 3),
     }
+
+
+def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
+    df = pl.DataFrame(
+        {
+            "icao": ["outside-before", "abc123", "abc123", "def456", "outside-after"],
+            "takeoff_time": [
+                datetime(2026, 2, 28, 23),
+                datetime(2026, 3, 1, 10),
+                datetime(2026, 3, 1, 10, 30),
+                datetime(2026, 3, 1, 12),
+                datetime(2026, 4, 1),
+            ],
+            "landing_time": [
+                datetime(2026, 3, 1),
+                datetime(2026, 3, 1, 11),
+                datetime(2026, 3, 1, 11, 30),
+                datetime(2026, 3, 1, 13),
+                datetime(2026, 4, 1, 1),
+            ],
+        }
+    )
+    airport_catalog = FakeAirportCatalog()
+
+    def create_month(year, month, catalog):
+        assert (year, month) == (2026, 3)
+        assert catalog is airport_catalog
+        return df
+
+    monkeypatch.setattr(bts_module, "_create_flights_from_bts_month", create_month)
+    result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
+
+    assert result.get_column("icao").to_list() == ["def456"]
+    assert bts_module.BTSFlightSource().version == 8
