@@ -28,6 +28,7 @@ Tasks that directly advance the current milestone.
 - [ x ] Change flights run to no logner delete ADS-B files downloaded. 
 - [   ] **End to end test suite so I can make performance changes.** 
 - [ ] **Calculate how long 1 year flights run will take.** 
+- [ ] **Do basic numerical checks on number of flights per day**
 - [ ] Start 1 year flights run.
 - [ ] Figure out how to deal with any missing ADS-B days
 - [ ] Determine which days have less flights because of missing ADS-B data
