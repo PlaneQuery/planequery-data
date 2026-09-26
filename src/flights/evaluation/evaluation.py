@@ -1,37 +1,43 @@
 import argparse
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-import polars as pl
-from data_engineering.adsb.read_adsb import read_adsb
-from data_engineering.bts.read_bts_ontime_to_flights import get_bts_flights_for_day
-from data_engineering.filters import pia_or_american_ladd
 
-from data_engineering.flights.flight_type import ALGORITHM_ADSB_SOURCES, get_flights
-from data_engineering.eurocontrol.read import get_eurocontrol_flights
-from data_engineering.opdi.read import get_opdi_flights
-from data_engineering.openairframes.read import add_latest_icao_info
+import polars as pl
+
+from airports.runtime import airport_catalog_for_date
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
+from data_engineering.filters import pia_or_american_ladd
+from data_engineering.utils import OUTPUT_DIR
+from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation.consecutive_airports import (
     DEFAULT_DISPLACEMENT_THRESHOLD_KM,
     consecutive_airport_details,
     consecutive_airport_stats,
 )
-from flights.flights_comparison import df_flights_comparision, df_flights_comparison_stats
-from flights.ground_truth.bts_and_sfdps_to_gold import (
-    get_ground_truth_flights_for_day,
-)
+from flights.flights_comparison import df_flights_comparison, df_flights_comparison_stats
 from flights.flights_match_adsb import ADSB_MATCHING_COLUMNS, get_matching_icaos_in_flights
-from utils import current_commit_hash
-from data_engineering.flights.sfdps_to_flights import get_sfdps_flights_day
-from data_engineering.flights.mike import get_mike_flights_for_day
-from data_engineering.utils import OUTPUT_DIR
+from flights.flight_source import (
+    ADSBFlightSource,
+    FlightSource,
+    flight_path,
+    get_flights,
+    write_flights,
+)
+from flights.sources import (
+    ALGORITHM_NEAREST_SOURCE,
+    BTS_SOURCE,
+    FLIGHT_SOURCES_BY_NAME,
+)
+from planequery_data.utils import current_commit_hash
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
-DEFAULT_ADSB_SRC_FOR_MATCHING = "adsbx"
-DEFAULT_ADSB_SRC_FOR_FLIGHTS = "adsblol"
+DEFAULT_ADSB_SRC_FOR_MATCHING = ADSBSource.ADSBX
+DEFAULT_ADSB_SRC_FOR_FLIGHTS = ADSBSource.ADSBLOL
 
 
 def default_stats_path() -> Path:
-    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M")
+    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S-%f")
     commit_hash = current_commit_hash()
     filename = f"{run_time}_{commit_hash}_flights_evaluation.csv"
     return OUTPUT_DIR / "data" / "experiments" / "comparison" / filename
@@ -68,85 +74,48 @@ def is_helicopter_expr(
     )
 
 
-def read_fr24_flights(target_date: date) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import (
-    with_flight_schema_columns,
-    )
-    return with_flight_schema_columns(
-        pl.read_parquet(fr24_flights_parquet_path(target_date))
-    )
-
-def get_algorithm_flights_for_adsb_src(
-    target_date: date,
-    adsb_src: str,
-    no_airports_model: bool = False,
-) -> pl.DataFrame:
-    from data_engineering.flights.flight_type import flights_algorithm_output_path
-    from flights_algorithm.main import run_main
-
-    output_path = flights_algorithm_output_path(target_date, adsb_src=adsb_src, no_airports_model=no_airports_model)
-    if output_path.exists():
-        return get_flights(
-            target_date,
-            no_airports_model=no_airports_model,
-            adsb_src=adsb_src,
-        )
-
-    label = "algorithm (no airports model)" if no_airports_model else "algorithm"
-    print(f"Missing {label} {adsb_src} flights for {target_date}; generating at {output_path}")
-    run_main(
-        target_date=target_date,
-        no_airports_model=no_airports_model,
-        source=adsb_src,
-    )
-    if not output_path.exists():
-        raise FileNotFoundError(
-            f"Failed to generate {label} {adsb_src} flights for {target_date}: {output_path}"
-        )
-    return get_flights(
-        target_date,
-        no_airports_model=no_airports_model,
-        adsb_src=adsb_src,
-    )
+def resolve_source(source: FlightSource | str) -> FlightSource:
+    if isinstance(source, str):
+        try:
+            return FLIGHT_SOURCES_BY_NAME[source]
+        except KeyError:
+            raise ValueError(f"Unknown flight source: {source}") from None
+    return source
 
 
 def source_flights_reader(
-    src: str,
-    adsb_src: str = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    source: FlightSource | str,
+    adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
 ):
-    if src == "adsbx":
-        return lambda target_date: get_flights(target_date, algorithm="adsbx")
-    if src == "algorithm":
-        if adsb_src in ALGORITHM_ADSB_SOURCES:
-            return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src)
-        raise ValueError(f"algorithm source does not support adsb_src={adsb_src!r}")
-    if src == "algorithm-no-airports":
-        if adsb_src in ALGORITHM_ADSB_SOURCES:
-            return lambda target_date: get_algorithm_flights_for_adsb_src(target_date, adsb_src, no_airports_model=True)
-        raise ValueError(f"algorithm-no-airports source does not support adsb_src={adsb_src!r}")
-    if src == "sfdps":
-        return get_sfdps_flights_day
-    if src == "bts":
-        return get_bts_flights_for_day
-    if src == "ground_truth":
-        return get_ground_truth_flights_for_day
-    if src =="opensky":
-        return lambda target_date: get_flights(target_date, algorithm="opensky")
-    if src == "fr24":
-        return read_fr24_flights
-    if src == "eurocontrol":
-        return get_eurocontrol_flights
-    if src == "opdi":
-        return get_opdi_flights
-    if src == "mike":
-        return get_mike_flights_for_day
+    source = resolve_source(source)
+    source_adsb = (
+        ADSBSource(adsb_src) if isinstance(source, ADSBFlightSource) else None
+    )
 
-    raise ValueError(f"Unknown flight source: {src}")
+    def read_source(target_date: date) -> pl.DataFrame:
+        if (
+            isinstance(source, AlgorithmNNFlightSource)
+            and not source.model_path.is_file()
+        ):
+            raise FileNotFoundError(
+                f"Airport NN checkpoint not found: {source.model_path}. "
+                "Pass --airport-nn-model with an existing checkpoint."
+            )
+        if not flight_path(source, target_date, source_adsb).is_file():
+            return write_flights(source, target_date, source_adsb)
+        return get_flights(source, target_date, source_adsb)
 
-def adsb_srcs_for_test_source(src: str, adsb_srcs: list[str]) -> list[str]:
-    if src in ("algorithm", "algorithm-no-airports"):
+    return read_source
+
+
+def adsb_srcs_for_test_source(
+    source: FlightSource | str,
+    adsb_srcs: list[ADSBSource],
+) -> list[ADSBSource]:
+    if isinstance(resolve_source(source), ADSBFlightSource):
         return adsb_srcs
-    return [src]
+    return [DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+
 
 def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
     metadata_cols = {
@@ -183,7 +152,7 @@ def read_adsb_for_matching(
     df_flights: pl.DataFrame,
     target_date: date,
     *,
-    adsb_src: str = DEFAULT_ADSB_SRC_FOR_MATCHING,
+    adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_MATCHING,
     pia_or_american_ladd_only: bool,
 ) -> pl.DataFrame:
     return read_adsb(
@@ -196,11 +165,11 @@ def read_adsb_for_matching(
 
 
 def main( # TODO: Maybe rename to run_evaluation
-    test_src: str | list[str],
-    gold_src: str | list[str],
+    test_src: FlightSource | str | list[FlightSource | str],
+    gold_src: FlightSource | str | list[FlightSource | str],
     test_dates: date | list[date],
-    adsb_src: str | list[str] = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
-    matching_adsb_src: str = DEFAULT_ADSB_SRC_FOR_MATCHING,
+    adsb_src: ADSBSource | list[ADSBSource] = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    matching_adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_MATCHING,
     use_all_icaos = False,
     filter_rotorcraft = False,
     pia_or_american_ladd_only = False,
@@ -208,31 +177,47 @@ def main( # TODO: Maybe rename to run_evaluation
     consecutive_airport_displacement_threshold_km = (
         DEFAULT_DISPLACEMENT_THRESHOLD_KM
     ),
+    write_outputs = True,
+    airport_nn_model_path: Path | None = None,
 ):
-    if isinstance(test_src, str):
+    if isinstance(test_src, (FlightSource, str)):
         test_src = [test_src]
-    if isinstance(gold_src, str):
+    if isinstance(gold_src, (FlightSource, str)):
         gold_src = [gold_src]
+    test_sources = [resolve_source(source) for source in test_src]
+    gold_sources = [resolve_source(source) for source in gold_src]
+    if airport_nn_model_path is not None:
+        test_sources = [
+            replace(source, model_path=airport_nn_model_path)
+            if isinstance(source, AlgorithmNNFlightSource)
+            else source
+            for source in test_sources
+        ]
     if isinstance(adsb_src, str):
-        adsb_src = [adsb_src]
+        adsb_src = [ADSBSource(adsb_src)]
+    else:
+        adsb_src = [ADSBSource(source) for source in adsb_src]
+    matching_adsb_src = ADSBSource(matching_adsb_src)
     if isinstance(test_dates, date):
         test_dates = [test_dates]
 
     results = []
     rows = []
-    matched_gold_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
-    adsb_by_date: dict[tuple[date, str, str, bool], pl.DataFrame] = {}
-    for src in test_src:
-        for source_adsb_src in adsb_srcs_for_test_source(src, adsb_src):
+    stats_output = default_stats_path()
+    matched_gold_by_date: dict[
+        tuple[date, ADSBSource, str, bool], pl.DataFrame
+    ] = {}
+    adsb_by_date: dict[tuple[date, ADSBSource, str, bool], pl.DataFrame] = {}
+    for source in test_sources:
+        for source_adsb_src in adsb_srcs_for_test_source(source, adsb_src):
             get_source_flights = source_flights_reader(
-                src,
+                source,
                 adsb_src=source_adsb_src,
             )
-            for gold in gold_src:
-                get_gold_flights = source_flights_reader(
-                    gold,
-                )
+            for gold_source in gold_sources:
+                get_gold_flights = source_flights_reader(gold_source)
                 for test_date in test_dates:
+                    airport_catalog = airport_catalog_for_date(test_date)
                     df_test = get_source_flights(test_date)
                     df_gold = get_gold_flights(test_date)
                     expr = (pl.col("landing_time").dt.date() == test_date) & (pl.col("takeoff_time").dt.date() == test_date)
@@ -245,14 +230,14 @@ def main( # TODO: Maybe rename to run_evaluation
                         matching_cache_key = (
                             test_date,
                             matching_adsb_src,
-                            gold,
+                            gold_source.name,
                             pia_or_american_ladd_only,
                         )
                         if matching_cache_key not in matched_gold_by_date:
                             adsb_cache_key = (
                                 test_date,
                                 matching_adsb_src,
-                                gold,
+                                gold_source.name,
                                 pia_or_american_ladd_only,
                             )
                             if adsb_cache_key not in adsb_by_date:
@@ -276,61 +261,99 @@ def main( # TODO: Maybe rename to run_evaluation
                         df_gold = df_gold.filter(~is_helicopter_expr())
                     if include_consecutive_airport_metrics:
                         consecutive_details = consecutive_airport_details(
-                            df_test
+                            df_test,
+                            airport_catalog=airport_catalog,
                         )
                         df_test = df_test.join(
                             consecutive_details.drop(
-                                "takeoff_airport_ident"
+                                "takeoff_airport_id",
+                                "takeoff_airport_ident",
                             ),
                             on=["icao", "takeoff_time"],
                             how="left",
                         )
-                    df = df_flights_comparision(df_test, df_gold, datetime(test_date.year, test_date.month, test_date.day), datetime(test_date.year, test_date.month, test_date.day) + timedelta(days=1), compare_airports=False)
+                    df = df_flights_comparison(
+                        df_test,
+                        df_gold,
+                        datetime(test_date.year, test_date.month, test_date.day),
+                        datetime(test_date.year, test_date.month, test_date.day)
+                        + timedelta(days=1),
+                        airport_catalog,
+                        compare_airports=False,
+                    )
                     results.append(df)
+                    stats_adsb_src = (
+                        source_adsb_src
+                        if isinstance(source, ADSBFlightSource)
+                        else None
+                    )
                     stats = df_flights_comparison_stats(df)
                     if include_consecutive_airport_metrics:
                         stats.update(
                             consecutive_airport_stats(
                                 df_test,
+                                airport_catalog=airport_catalog,
                                 displacement_threshold_km=(
                                     consecutive_airport_displacement_threshold_km
                                 ),
                             )
                         )
-                    stats_adsb_src = (
-                        source_adsb_src
-                        if src in ("algorithm", "algorithm-no-airports")
-                        else None
-                    )
                     rows.append({
                         "test_date": test_date.isoformat(),
                         "adsb_src": stats_adsb_src,
                         "matching_adsb_src": matching_adsb_src,
-                        "test_src": src,
-                        "gold_src": gold,
+                        "test_src": source.name,
+                        "gold_src": gold_source.name,
                         "use_all_icaos": use_all_icaos,
                         "filter_rotorcraft": filter_rotorcraft,
                         "pia_or_american_ladd_only": pia_or_american_ladd_only,
                         **stats,
                     })
-                    print(f"Stats for {src}:{gold}: {stats}")
+                    print(
+                        f"Stats for {source.name}:{gold_source.name}: {stats}"
+                    )
 
-    stats_output = default_stats_path()
-    stats_output.parent.mkdir(parents=True, exist_ok=True)
     df_stats = pl.DataFrame(rows)
     if len(test_dates) > 1:
         df_stats = add_average_rows(df_stats)
-    df_stats.write_csv(stats_output)
-    print(f"Stats CSV saved to {stats_output}")
+    if write_outputs:
+        stats_output.parent.mkdir(parents=True, exist_ok=True)
+        df_stats.write_csv(stats_output)
+        print(f"Stats CSV saved to {stats_output}")
     return results, df_stats
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-src", nargs="+", default=["adsbx"])
-    parser.add_argument("--adsb-src", nargs="+", default=[DEFAULT_ADSB_SRC_FOR_FLIGHTS])
-    parser.add_argument("--matching-adsb-src", default=DEFAULT_ADSB_SRC_FOR_MATCHING)
-    parser.add_argument("--gold-src", nargs="+", default=["bts"])
+    parser.add_argument(
+        "--test-src",
+        nargs="+",
+        choices=FLIGHT_SOURCES_BY_NAME,
+        default=[ALGORITHM_NEAREST_SOURCE.name],
+    )
+    parser.add_argument(
+        "--adsb-src",
+        nargs="+",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=[DEFAULT_ADSB_SRC_FOR_FLIGHTS],
+    )
+    parser.add_argument(
+        "--matching-adsb-src",
+        type=ADSBSource,
+        choices=tuple(ADSBSource),
+        default=DEFAULT_ADSB_SRC_FOR_MATCHING,
+    )
+    parser.add_argument(
+        "--airport-nn-model",
+        type=Path,
+    )
+    parser.add_argument(
+        "--gold-src",
+        nargs="+",
+        choices=FLIGHT_SOURCES_BY_NAME,
+        default=[BTS_SOURCE.name],
+    )
     date_group = parser.add_mutually_exclusive_group()
     date_group.add_argument("--test-dates", nargs="+", dest="test_dates")
     test_date_sets = {
@@ -364,6 +387,7 @@ if __name__ == "__main__":
     main(
         test_src=args.test_src,
         adsb_src=args.adsb_src,
+        airport_nn_model_path=args.airport_nn_model,
         matching_adsb_src=args.matching_adsb_src,
         gold_src=args.gold_src,
         test_dates=test_dates,

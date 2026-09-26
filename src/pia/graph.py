@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from data_engineering.flights.flight_type import FlightIndex
+from flights.flight_type import FlightIndex
 import networkx as nx
 
 @dataclass(frozen=True, slots=True)

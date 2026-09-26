@@ -4,6 +4,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       default-jre-headless \
+      git \
       libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
@@ -32,12 +33,13 @@ spark.stop()
 EOF
 
 COPY src/ /app/src/
-RUN mkdir -p /app/data/raw/ourairports \
- && python -c 'import urllib.request; urllib.request.urlretrieve("https://ourairports.com/data/airports.csv", "/app/data/raw/ourairports/airports.csv")'
-
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \
     OUTPUT_DIR=/app \
     PLANEQUERY_READ_FROM_S3=1
+
+# Build the immutable temporal catalog once into the image. Local runs use the
+# same AirportHistory.open() entry point and build it automatically when absent.
+RUN python -c 'from airports.history import AirportHistory; AirportHistory.open()'
 
 CMD ["python", "/app/src/data_engineering/flights/flights_from_model.py", "--help"]

@@ -10,7 +10,8 @@ from data_engineering.filters import pia_or_american_ladd_icao
 from data_engineering.utils import OUTPUT_DIR
 from pia.ground_truth import get_ground_truth_mappings
 
-from data_engineering.flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df, get_flights, make_pia_consistent
+from flights.algorithm import get_flights_range
+from flights.flight_type import FlightIndex, create_pia_evaluation_df, flights_df_to_flights, flights_to_flights_df
 from pia.resolver import build_candidates, check_candidate_mapping_paths, resolve_pia_mappings
 from pia.evaluation.main import evaluation
 from pia.evaluation.pia_graph_0 import flights_0, flights_2, flights_3, test_mapping_dict_3, test_mapping_dict_0
@@ -18,6 +19,28 @@ from pia.main import main
 from pia.evaluation.real_flights_0 import a039a2_flights
 
 END_DATE = date(2026,8,24)
+
+def make_pia_consistent(df: pl.DataFrame) -> pl.DataFrame:
+    '''
+    due to notebooks/pia/a0fe1f_switched_between_pia_true_false.ipynb
+    '''
+    icao_pia_switch = (
+    df.group_by("icao")
+    .agg(pl.col("pia").n_unique().alias("pia_variants"))
+    .filter(pl.col("pia_variants") > 1)
+)
+    df = df.with_columns(
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
+        .then(True)
+        .otherwise(pl.col("pia"))
+        .alias("pia"),
+        pl.when(pl.col("icao").is_in(icao_pia_switch["icao"].implode()))
+        .then(False)
+        .otherwise(pl.col("ladd"))
+        .alias("ladd")
+    )
+    return df
+
 def test_simulator_flights_0():
     # TODO: What is the random assignment percentage
     from pia.evaluation.simulator_flights import get_simulated_flights_0
@@ -280,7 +303,7 @@ def pia_tester(
 
     df_mappings = get_ground_truth_mappings()
     pia_to_real_icao = dict(zip(df_mappings["pia_icao"], df_mappings["real_icao"]))
-    df_flights = get_flights(start_date, end_date)
+    df_flights = get_flights_range(start_date, end_date)
     df_flights = make_pia_consistent(df_flights)
     for pia_icao, real_icao in list(pia_to_real_icao.items()):
         n_pia_flights = len(df_flights.filter(pl.col("icao") == pia_icao))
