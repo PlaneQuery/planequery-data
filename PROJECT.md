@@ -46,6 +46,7 @@ Important tasks once the current work is complete.
 
 - [ Next Milestone will be doing analysis of algorihtms comapred with OpenSky ] <Task>
 - [ Training on OpenSky data ? ] <Task>
+- [ Investigate OpenSky coverage, is it acutally worse? ]
 - [ ] <Task>
 
 ---
