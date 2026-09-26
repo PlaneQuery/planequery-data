@@ -1,3 +1,4 @@
+import shutil
 from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
@@ -6,11 +7,21 @@ import polars as pl
 import pyarrow as pa
 
 from data_engineering.adsb.parquet_schema import PARQUET_SCHEMA
-from data_engineering.utils import OUTPUT_DIR
+from data_engineering.adsb.partitions import (
+    ICAO_BUCKET_COUNT,
+    ICAO_BUCKET_SIZE,
+    query_icao_buckets,
+)
+from data_engineering.opensky.paths import (
+    OPENSKY_PROCESSED_STATE_VECTORS_ROOT,
+    OPENSKY_RAW_STATE_VECTORS_ROOT,
+    processed_state_vectors_day_dir,
+    raw_state_vectors_day_dir,
+)
 
 
-DEFAULT_OPENSKY_TRINO_ROOT = OUTPUT_DIR / "data/raw/opensky/trino-tables"
-DEFAULT_OPENSKY_PROCESSED_ROOT = OUTPUT_DIR / "data/processed/opensky/v2"
+DEFAULT_OPENSKY_TRINO_ROOT = OPENSKY_RAW_STATE_VECTORS_ROOT
+DEFAULT_OPENSKY_PROCESSED_ROOT = OPENSKY_PROCESSED_STATE_VECTORS_ROOT
 
 # A state-vector row is a snapshot, not necessarily a newly received position.
 # OpenSky may repeat the last known state for minutes. Only retain snapshots
@@ -19,48 +30,31 @@ MAX_STATE_VECTOR_AGE_SECONDS = 5.0
 MAX_FUTURE_TIMESTAMP_SKEW_SECONDS = 1.0
 
 
-def _coerce_date(current_day: date | datetime | str) -> date:
-    if isinstance(current_day, datetime):
-        return current_day.date()
-    if isinstance(current_day, date):
-        return current_day
-    return datetime.strptime(current_day, "%Y-%m-%d").date()
-
-
 def opensky_state_vectors_dir(
     current_day: date | datetime | str,
 ) -> Path:
-    current_day = _coerce_date(current_day)
-    return (
-        DEFAULT_OPENSKY_TRINO_ROOT
-        / f"{current_day:%Y-%m-%d}"
-        / "opensky_state_vectors"
-        / "trino-tables"
-        / "state_vectors"
-    )
+    return raw_state_vectors_day_dir(current_day)
 
 
 def opensky_state_vector_files(
     current_day: date | datetime | str,
 ) -> list[Path]:
     state_vectors_dir = opensky_state_vectors_dir(current_day)
-    return sorted(state_vectors_dir.glob("hour=*/part-*.parquet"))
+    return sorted(state_vectors_dir.glob("hour=*/data.parquet"))
 
 
-def opensky_processed_state_vectors_path(current_day: date | datetime | str) -> Path:
-    current_day = _coerce_date(current_day)
-    return (
-        DEFAULT_OPENSKY_PROCESSED_ROOT
-        / f"year={current_day:%Y}"
-        / f"month={current_day:%m}"
-        / f"day={current_day:%d}"
-        / "data.parquet"
-    )
+def opensky_processed_state_vectors_path(
+    current_day: date | datetime | str,
+) -> Path:
+    """Return the generated, ICAO-bucketed cache directory for one day."""
+    return processed_state_vectors_day_dir(current_day)
 
 
 def scan_opensky_state_vectors_for_day(
     current_day: date | datetime | str,
     columns: list[str] | None = None,
+    *,
+    require_complete: bool = True,
 ) -> pl.LazyFrame:
     parquet_files = opensky_state_vector_files(current_day)
     if not parquet_files:
@@ -68,10 +62,22 @@ def scan_opensky_state_vectors_for_day(
             f"No OpenSky state vector parquet files found under "
             f"{opensky_state_vectors_dir(current_day)}"
         )
+    if require_complete:
+        found_hours = {path.parent.name for path in parquet_files}
+        expected_hours = {f"hour={hour:02d}" for hour in range(24)}
+        missing_hours = sorted(expected_hours - found_hours)
+        if missing_hours:
+            raise FileNotFoundError(
+                f"OpenSky raw day is incomplete under "
+                f"{opensky_state_vectors_dir(current_day)}; missing "
+                f"{', '.join(missing_hours)}"
+            )
 
     df = pl.scan_parquet(
         parquet_files,
-        hive_partitioning=True,
+        # The files already contain Trino's Unix-hour ``hour`` column. The
+        # directory's hour=00 label is only filesystem organization.
+        hive_partitioning=False,
     )
     if columns:
         df = df.select(columns)
@@ -82,14 +88,25 @@ MAP_DICT = {
     "icao24": "icao",
     "velocity": "ground_speed_kt", # m/s -> knots
     "heading": "track_deg",
-    "onGround": "on_ground",
-    "baroAltitude": "baro_altitude_ft", # meters -> ft
+    # OpenSky exposes one vertical-rate value without a barometric/geometric
+    # discriminator. Use it as the canonical rate consumed by the airport NN.
+    "vertrate": "baro_rate_fpm", # m/s -> ft/min
+    "onground": "on_ground",
+    "baroaltitude": "baro_altitude_ft", # meters -> ft
+    "geoaltitude": "geom_altitude_ft", # meters -> ft
 }
 ADDITIONAL_COLUMNS = ["time", "lat", "lon", "callsign"]
-FRESHNESS_COLUMNS = ["lastContact", "lastPosUpdate"]
+FRESHNESS_COLUMNS = ["lastcontact", "lastposupdate"]
 DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS = (
     list(MAP_DICT.keys()) + ADDITIONAL_COLUMNS + FRESHNESS_COLUMNS
 )
+RAW_COLUMN_ALIASES = {
+    "onGround": "onground",
+    "baroAltitude": "baroaltitude",
+    "geoAltitude": "geoaltitude",
+    "lastContact": "lastcontact",
+    "lastPosUpdate": "lastposupdate",
+}
 OPENAIRFRAMES_COLUMNS = [
     "registration",
     "aircraft_type",
@@ -157,11 +174,20 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
     same position update are collapsed, and the output is timestamped with the
     actual position-update time.
     """
+    input_columns = set(df.collect_schema().names())
+    aliases = {
+        old: new
+        for old, new in RAW_COLUMN_ALIASES.items()
+        if old in input_columns and new not in input_columns
+    }
+    if aliases:
+        df = df.rename(aliases)
+
     required_columns = {
         "time",
         "icao24",
-        "lastContact",
-        "lastPosUpdate",
+        "lastcontact",
+        "lastposupdate",
     }
     missing_columns = required_columns.difference(df.collect_schema().names())
     if missing_columns:
@@ -171,16 +197,16 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
         )
 
     contact_age = (
-        pl.col("time").cast(pl.Float64) - pl.col("lastContact")
+        pl.col("time").cast(pl.Float64) - pl.col("lastcontact")
     )
     position_age = (
-        pl.col("time").cast(pl.Float64) - pl.col("lastPosUpdate")
+        pl.col("time").cast(pl.Float64) - pl.col("lastposupdate")
     )
     df = (
         df
         .filter(
-            pl.col("lastContact").is_finite()
-            & pl.col("lastPosUpdate").is_finite()
+            pl.col("lastcontact").is_finite()
+            & pl.col("lastposupdate").is_finite()
             & contact_age.is_between(
                 -MAX_FUTURE_TIMESTAMP_SKEW_SECONDS,
                 MAX_STATE_VECTOR_AGE_SECONDS,
@@ -193,22 +219,24 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
             )
         )
         .unique(
-            subset=["icao24", "lastPosUpdate"],
+            subset=["icao24", "lastposupdate"],
             keep="any",
             maintain_order=False,
         )
     )
 
     return df.select(
-        pl.from_epoch(pl.col("lastPosUpdate"), time_unit="s")
+        pl.from_epoch(pl.col("lastposupdate"), time_unit="s")
         .dt.replace_time_zone(None)
         .cast(pl.Datetime("ms"))
         .alias("time"),
         pl.col("icao24").str.to_lowercase().alias("icao"),
         (pl.col("velocity") * 1.94384).alias("ground_speed_kt"),
         pl.col("heading").alias("track_deg"),
-        pl.col("onGround").alias("on_ground"),
-        (pl.col("baroAltitude") * 3.28084).alias("baro_altitude_ft"),
+        (pl.col("vertrate") * 196.850394).alias("baro_rate_fpm"),
+        pl.col("onground").alias("on_ground"),
+        (pl.col("baroaltitude") * 3.28084).alias("baro_altitude_ft"),
+        (pl.col("geoaltitude") * 3.28084).alias("geom_altitude_ft"),
         *[pl.col(column) for column in ADDITIONAL_COLUMNS if column != "time"],
     )
 
@@ -229,31 +257,100 @@ def write_opensky_state_vectors_cache_for_day(
     current_day: date | datetime | str,
     overwrite: bool = False,
 ) -> Path:
-    output_path = opensky_processed_state_vectors_path(current_day)
-    if output_path.exists() and not overwrite:
-        return output_path
+    """Build a canonical, ICAO-bucketed cache from the 24 raw hour files."""
+    output_dir = opensky_processed_state_vectors_path(current_day)
+    success_path = output_dir / "_SUCCESS"
+    if success_path.exists() and not overwrite:
+        return output_dir
 
     df = scan_normalized_opensky_state_vectors_for_day(current_day)
     df = align_to_adsb_parquet_schema(df)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.sink_parquet(
-        output_path,
-        compression="zstd",
-        maintain_order=False,
+    df = df.with_columns(
+        (
+            pl.col("icao")
+            .str.to_integer(base=16, strict=False)
+            .floordiv(ICAO_BUCKET_SIZE)
+            .clip(0, ICAO_BUCKET_COUNT - 1)
+            .fill_null(ICAO_BUCKET_COUNT - 1)
+            .cast(pl.Int8)
+        ).alias("icao_bucket")
     )
-    return output_path
+
+    temp_dir = output_dir.with_name(f".{output_dir.name}.tmp")
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        df.sink_parquet(
+            pl.PartitionBy(
+                temp_dir,
+                key="icao_bucket",
+                include_key=False,
+            ),
+            compression="zstd",
+            maintain_order=False,
+            mkdir=True,
+        )
+        (temp_dir / "_SUCCESS").touch()
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        temp_dir.replace(output_dir)
+    except BaseException:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        raise
+    return output_dir
+
+
+def _empty_normalized_scan(columns: Sequence[str]) -> pl.LazyFrame:
+    fields = {field.name: field for field in PARQUET_SCHEMA}
+    return pl.DataFrame(
+        schema={
+            column: (
+                _polars_dtype_from_arrow_type(fields[column].type)
+                if column in fields
+                else pl.Null
+            )
+            for column in columns
+        }
+    ).lazy()
+
+
+def _cached_opensky_files(
+    current_day: date | datetime | str,
+    icaos: Sequence[str] | None,
+) -> list[Path]:
+    output_dir = opensky_processed_state_vectors_path(current_day)
+    buckets = query_icao_buckets(icaos)
+    if buckets is None:
+        return sorted(output_dir.glob("icao_bucket=*/*.parquet"))
+    return sorted(
+        path
+        for bucket in buckets
+        for path in (output_dir / f"icao_bucket={bucket}").glob("*.parquet")
+    )
 
 
 def scan_cached_opensky_state_vectors_for_day(
     current_day: date | datetime | str,
     columns: list[str] | None = None,
     overwrite: bool = False,
+    *,
+    icaos: Sequence[str] | None = None,
 ) -> pl.LazyFrame:
-    output_path = write_opensky_state_vectors_cache_for_day(
+    write_opensky_state_vectors_cache_for_day(
         current_day=current_day,
         overwrite=overwrite,
     )
-    df = pl.scan_parquet(output_path)
+    parquet_files = _cached_opensky_files(current_day, icaos)
+    if not parquet_files:
+        if columns is None:
+            columns = [field.name for field in PARQUET_SCHEMA]
+        return _empty_normalized_scan(columns)
+
+    df = pl.scan_parquet(parquet_files, hive_partitioning=False)
+    if icaos is not None:
+        df = df.filter(pl.col("icao").is_in([icao.lower() for icao in icaos]))
     if columns:
         df = df.select(columns)
     return df
@@ -285,8 +382,12 @@ def join_lf_with_openairframes(
 
 
 def get_icaos_in_opensky(current_day: date | datetime | str) -> list[str]:
-    df = scan_opensky_state_vectors_for_day(current_day, columns=["icao24"]).collect()
-    return df.get_column("icao24").drop_nulls().unique().to_list()
+    df = (
+        scan_cached_opensky_state_vectors_for_day(current_day, columns=["icao"])
+        .unique()
+        .collect(engine="streaming")
+    )
+    return df.get_column("icao").drop_nulls().to_list()
 
 
 def scan_opensky_messages_for_range(
@@ -307,16 +408,16 @@ def scan_opensky_messages_for_range(
     """
     from data_engineering.openairframes.read import scan_latest_icao_info_for_join
 
-    df = scan_cached_opensky_state_vectors_for_day(start_dt.date())
+    df = scan_cached_opensky_state_vectors_for_day(
+        start_dt.date(),
+        icaos=icaos,
+    )
     df = df.filter(
         (pl.col("time") >= start_dt)
         & (pl.col("time") < end_dt)
         & pl.col("lat").is_not_null()
         & pl.col("lon").is_not_null()
     )
-    if icaos is not None:
-        df = df.filter(pl.col("icao").is_in(list(icaos)))
-
     df_openairframes = scan_latest_icao_info_for_join().with_columns(
         pl.col("icao").str.to_lowercase()
     )

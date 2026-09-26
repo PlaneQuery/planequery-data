@@ -3,14 +3,23 @@
 # flight takeoff_time, landing_time fixed, 
 
 from datetime import date, datetime, time, timedelta
-from data_engineering.flights.flight_type import Flight
-from flights.flights_comparison import Match, df_flights_comparision, df_flights_comparison_stats, flights_comparison
+from types import SimpleNamespace
+from flights.flight_type import Flight
+from flights.flights_comparison import Match, df_flights_comparison, df_flights_comparison_stats, flights_comparison
 import polars as pl
 import pytest
 
 def create_flight(takeoff_time: datetime):
     landing_time = takeoff_time + timedelta(hours=1)
-    flight = Flight("a", takeoff_time,landing_time, "A", "B")
+    flight = Flight(
+        "a",
+        takeoff_time,
+        landing_time,
+        "A",
+        "B",
+        takeoff_airport_id=1,
+        landing_airport_id=2,
+    )
     return flight
 
 flights_0 = [
@@ -48,6 +57,12 @@ flights_5 = [
 
 start_dt = datetime.combine(date(2026,1,1), time.min)
 end_dt = datetime.combine(date(2026,1,2), time.min)
+airport_catalog = SimpleNamespace(
+    airports=(
+        SimpleNamespace(id=1, lat=0.0, lon=0.0),
+        SimpleNamespace(id=2, lat=1.0, lon=1.0),
+    )
+)
 flights_comparison(flights_0,flights_0, start_dt, end_dt)
 
 def test_flights_comparison():
@@ -89,7 +104,9 @@ def test_df_flights_comparision_with_icao_only_in_one_df():
             "icao": ["a"],
             "takeoff_time": [datetime(2026, 1, 1, 3)],
             "landing_time": [datetime(2026, 1, 1, 4)],
+            "takeoff_airport_id": [1],
             "takeoff_airport_ident": ["A"],
+            "landing_airport_id": [2],
             "landing_airport_ident": ["B"],
         }
     )
@@ -98,12 +115,20 @@ def test_df_flights_comparision_with_icao_only_in_one_df():
             "icao": ["b"],
             "takeoff_time": [datetime(2026, 1, 1, 3)],
             "landing_time": [datetime(2026, 1, 1, 4)],
+            "takeoff_airport_id": [1],
             "takeoff_airport_ident": ["A"],
+            "landing_airport_id": [2],
             "landing_airport_ident": ["B"],
         }
     )
 
-    comparison = df_flights_comparision(df_0, df_1, start_dt, end_dt)
+    comparison = df_flights_comparison(
+        df_0,
+        df_1,
+        start_dt,
+        end_dt,
+        airport_catalog,
+    )
 
     assert sorted(comparison.get_column("match_status").to_list()) == ["df0_only", "df1_only"]
 
@@ -111,9 +136,9 @@ def test_df_flights_comparison_stats():
     comparison = pl.DataFrame(
         {
             "match_status": ["both", "both", "df0_only", "df1_only", "df1_only"],
-            "same_takeoff_airport_ident": [True, False, False, False, False],
-            "same_landing_airport_ident": [True, False, False, False, False],
-            "same_airport_ident": [True, False, False, False, False],
+            "same_takeoff_airport_id": [True, False, False, False, False],
+            "same_landing_airport_id": [True, False, False, False, False],
+            "same_airport_id": [True, False, False, False, False],
         }
     )
 
@@ -125,13 +150,13 @@ def test_df_flights_comparison_stats():
     assert stats["precision"] == pytest.approx(2 / 3)
     assert stats["recall"] == pytest.approx(1 / 2)
     assert stats["f1"] == pytest.approx(4 / 7)
-    assert stats["takeoff_airport_ident_total_count"] == 2
-    assert stats["takeoff_airport_ident_match_count"] == 1
-    assert stats["takeoff_airport_ident_incorrect_match_count"] == 1
-    assert stats["landing_airport_ident_total_count"] == 2
-    assert stats["landing_airport_ident_match_count"] == 1
-    assert stats["landing_airport_ident_incorrect_match_count"] == 1
-    assert stats["airport_ident_total_count"] == 2
-    assert stats["airport_ident_match_count"] == 1
-    assert stats["airport_ident_incorrect_match_count"] == 1
-    assert stats["airport_ident_match_pct"] == pytest.approx(1 / 2)
+    assert stats["takeoff_airport_id_total_count"] == 2
+    assert stats["takeoff_airport_id_match_count"] == 1
+    assert stats["takeoff_airport_id_incorrect_match_count"] == 1
+    assert stats["landing_airport_id_total_count"] == 2
+    assert stats["landing_airport_id_match_count"] == 1
+    assert stats["landing_airport_id_incorrect_match_count"] == 1
+    assert stats["airport_id_total_count"] == 2
+    assert stats["airport_id_match_count"] == 1
+    assert stats["airport_id_incorrect_match_count"] == 1
+    assert stats["airport_id_match_pct"] == pytest.approx(1 / 2)

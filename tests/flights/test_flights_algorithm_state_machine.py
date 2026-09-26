@@ -1,15 +1,80 @@
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from flights_algorithm.main import (
+import polars as pl
+
+from airports.models import (
+    Airport,
+    AirportMatch,
+    AirportMatchProvenance,
+    AirportType,
+)
+from flights.segmentation import algorithm
+from flights.segmentation.algorithm import (
     AdsbPositionMessage,
     _segments_to_flights_df,
     identify_flight_segments,
 )
-from flights_algorithm.readsb_legs import mark_leg_indexes
+from flights.segmentation.readsb_legs import mark_leg_indexes
 
 
 ICAO = "abc123"
 START = datetime(2026, 3, 1)
+
+
+@dataclass(frozen=True)
+class FakeAirportMatcher:
+    airport: Airport
+
+    def _match(self, lat: float, lon: float) -> AirportMatch:
+        return AirportMatch(
+            id=self.airport.id,
+            ident=self.airport.ident,
+            distance_km=self.airport.distance_to(lat, lon),
+            provenance=AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE,
+            source_commit_sha="test-commit",
+            airport=self.airport,
+        )
+
+    def nearest(self, lat: float, lon: float) -> AirportMatch:
+        return self._match(lat, lon)
+
+    def within_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float,
+    ) -> tuple[AirportMatch, ...]:
+        return (self._match(lat, lon),)
+
+
+@dataclass(frozen=True)
+class FakeAirportCatalog:
+    airport: Airport
+    matcher: FakeAirportMatcher
+
+    @property
+    def id_index(self) -> dict[int, Airport]:
+        return {self.airport.id: self.airport}
+
+    def get_airport_by_ident(self, ident: str) -> Airport | None:
+        return self.airport if ident == self.airport.ident else None
+
+    def get_airport_by_id(self, airport_id: int) -> Airport | None:
+        return self.airport if airport_id == self.airport.id else None
+
+
+def fake_airport_catalog() -> FakeAirportCatalog:
+    airport = Airport(
+        id=101,
+        ident="TEST",
+        type=AirportType.SMALL_AIRPORT,
+        name="Test Airport",
+        lat=0.0,
+        lon=0.0,
+        elevation_ft=100,
+    )
+    return FakeAirportCatalog(airport, FakeAirportMatcher(airport))
 
 
 def message(
@@ -68,6 +133,137 @@ def two_flight_trace() -> list[AdsbPositionMessage]:
         message(index, altitude, on_ground=altitude == 0)
         for index, altitude in enumerate(altitudes)
     ]
+
+
+def test_processes_each_aircraft_group_before_requesting_the_next(monkeypatch):
+    processed = []
+
+    class Groups:
+        def __iter__(self):
+            yield ("aaa111",), "first"
+            assert processed == ["first"]
+            yield ("bbb222",), "second"
+
+    class Frame:
+        def filter(self, expression):
+            return self
+
+        def sort(self, columns):
+            return self
+
+        def group_by(self, column, maintain_order):
+            return Groups()
+
+    monkeypatch.setattr(
+        algorithm,
+        "_rows_to_position_messages",
+        lambda frame: [frame],
+    )
+    monkeypatch.setattr(
+        algorithm,
+        "identify_flight_segments",
+        lambda messages: processed.append(messages[0]) or [],
+    )
+
+    assert algorithm._segment_adsb_df(Frame()) == []
+    assert processed == ["first", "second"]
+
+
+def test_complete_aircraft_batches_match_one_shot_segmentation():
+    airport_catalog = fake_airport_catalog()
+    messages = two_flight_trace()
+    messages += [replace(message, icao="def456") for message in two_flight_trace()]
+    frame = pl.from_dicts([message.__dict__ for message in messages])
+
+    expected = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        airport_catalog,
+    )
+    actual = pl.concat(
+        [
+            algorithm.create_flights_from_adsb(
+                frame.filter(pl.col("icao") == icao),
+                START.date(),
+                airport_catalog,
+            )
+            for icao in (ICAO, "def456")
+        ]
+    )
+
+    assert actual.equals(expected)
+
+
+def test_combined_segment_counts_match_individual_collectors():
+    messages = [
+        replace(
+            item,
+            pia=index % 2 == 0,
+            callsign=("FIRST" if index < 3 else "SECOND"),
+            registration=("N1" if index % 3 else "N2"),
+            owner=("Owner A" if index < 4 else "Owner B"),
+        )
+        for index, item in enumerate(two_flight_trace()[:8])
+    ]
+
+    assert algorithm._segment_counts_for_messages(messages) == (
+        algorithm._db_flags_counts_for_messages(messages),
+        algorithm._flight_identity_counts_for_messages(messages),
+        algorithm._aircraft_metadata_counts_for_messages(messages),
+    )
+
+
+def test_airport_assignment_does_not_decide_if_a_flight_exists(monkeypatch):
+    messages = two_flight_trace()[:15]
+    frame = pl.from_dicts([message.__dict__ for message in messages])
+    same_airport_catalog = object()
+    different_airports_catalog = object()
+
+    def airport_guesses(segments, airport_catalog):
+        assert len(segments) == 1
+        takeoff = algorithm.AirportGuess(1, "A", 0.0)
+        landing = (
+            takeoff
+            if airport_catalog is same_airport_catalog
+            else algorithm.AirportGuess(2, "B", 0.0)
+        )
+        return [takeoff], [landing]
+
+    monkeypatch.setattr(
+        algorithm,
+        "_airport_guesses_for_segments",
+        airport_guesses,
+    )
+
+    same_airport = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        same_airport_catalog,
+    )
+    different_airports = algorithm.create_flights_from_adsb(
+        frame,
+        START.date(),
+        different_airports_catalog,
+    )
+
+    airport_columns = [
+        "takeoff_airport_id",
+        "takeoff_airport_ident",
+        "landing_airport_id",
+        "landing_airport_ident",
+    ]
+    assert same_airport.height == different_airports.height == 1
+    assert same_airport.drop(airport_columns).equals(
+        different_airports.drop(airport_columns)
+    )
+    assert same_airport.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (1, 1)
+    assert different_airports.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (1, 2)
 
 
 def test_marks_new_leg_during_ground_interval_between_descent_and_climb():
@@ -170,7 +366,7 @@ def test_uses_geometric_altitude_when_baro_altitude_is_missing():
     assert mark_leg_indexes(messages) == [16]
 
 
-def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
+def test_flight_identity_uses_the_mode_of_messages_in_its_sequence():
     messages = [
         message(
             index,
@@ -185,9 +381,17 @@ def test_flight_identity_uses_the_mode_of_messages_in_its_sequence(monkeypatch):
     ]
 
     segments = identify_flight_segments(messages)
-    monkeypatch.setattr("flights_algorithm.main._get_airport_lookup", lambda: None)
-
-    flights = _segments_to_flights_df(segments)
+    flights = _segments_to_flights_df(segments, fake_airport_catalog())
 
     assert flights.select("callsign").item() == "TEST123"
     assert flights.select("registration").item() == "N123AB"
+    assert flights.select(
+        "takeoff_airport_id",
+        "landing_airport_id",
+    ).row(0) == (101, 101)
+
+
+def test_default_worker_count_is_capped_at_eight(monkeypatch):
+    monkeypatch.setattr(algorithm, "default_worker_count", lambda: 32)
+
+    assert algorithm._number_of_workers_default() == 8

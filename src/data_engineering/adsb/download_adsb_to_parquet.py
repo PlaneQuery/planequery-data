@@ -510,7 +510,7 @@ def write_daily_pipeline_manifest(processed_days: list[date | datetime]) -> None
                 "job_name": f"flights-{day:%Y-%m-%d}",
                 "command": [
                     "python",
-                    "/app/src/data_engineering/flights/flights_from_algorithm.py",
+                    "/app/src/data_engineering/flights/publish.py",
                     day.isoformat(),
                     next_day.isoformat(),
                     "--write-to-s3",
