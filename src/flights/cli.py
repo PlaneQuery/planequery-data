@@ -189,6 +189,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.airport_nn_model is not None:
         assert isinstance(source, AlgorithmNNFlightSource)
         source = replace(source, model_path=args.airport_nn_model)
+    if isinstance(source, ADSBFlightSource) and args.adsb_source is ADSBSource.ADSBLOL:
+        from data_engineering.adsblol.check_for_new_release import (
+            prepare_releases_for_run,
+        )
+
+        prepare_releases_for_run(
+            {day.year for day in date_range(args.start_date, args.end_date)}
+        )
     kwargs = {
         "adsb_source": args.adsb_source,
     }
