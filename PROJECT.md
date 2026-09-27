@@ -30,7 +30,8 @@ Tasks that directly advance the current milestone.
 - [ ] **Calculate how long 1 year flights run will take.** 
 - [ ] **Do basic numerical checks on number of flights per day**
 - [ ] Start 1 year flights run.
-- [ ] Figure out how to deal with any missing ADS-B days
+- [ x ] Figure out how to deal with any missing ADS-B days
+- [ ] Check this June/July flights cause I think there may have been indications of something wronge before? 
 - [ ] Determine which days have less flights because of missing ADS-B data
 - [ ] Write github readme which will be condensed to the posts.
 - [ ] Do sanity checks on the data
