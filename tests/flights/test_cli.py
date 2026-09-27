@@ -218,11 +218,19 @@ def test_main_passes_flight_source_object(monkeypatch):
 
 
 def test_main_passes_explicit_worker_override(monkeypatch):
+    from data_engineering.adsblol import check_for_new_release
+
     calls = []
+    prepared_years = []
     monkeypatch.setattr(
         cli,
         "write_flights_range",
         lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        check_for_new_release,
+        "prepare_releases_for_run",
+        lambda years: prepared_years.append(set(years)),
     )
 
     cli.main(
@@ -239,6 +247,7 @@ def test_main_passes_explicit_worker_override(monkeypatch):
         "adsb_source": ADSBSource.ADSBLOL,
         "workers": 3,
     }
+    assert prepared_years == [{2026}]
 
 
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])

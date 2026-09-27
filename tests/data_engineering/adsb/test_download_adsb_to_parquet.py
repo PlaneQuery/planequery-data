@@ -1,0 +1,158 @@
+import io
+import tarfile
+import threading
+import time
+from pathlib import Path
+
+from data_engineering.adsb import download_adsb_to_parquet as download
+
+
+class FakeResponse:
+    def __init__(self, body: bytes, content_length: int | None):
+        self._stream = io.BytesIO(body)
+        self.status = 200
+        self.reason = "OK"
+        self.headers = {}
+        if content_length is not None:
+            self.headers["Content-Length"] = str(content_length)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
+
+
+def test_download_asset_rejects_truncated_response(monkeypatch, tmp_path):
+    destination = tmp_path / "release.tar.aa"
+    monkeypatch.setattr(
+        download.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: FakeResponse(b"partial", content_length=100),
+    )
+    monkeypatch.setattr(download.time, "sleep", lambda _: None)
+
+    assert not download.download_asset("https://example.test/release", destination)
+    assert not destination.exists()
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_download_asset_atomically_replaces_wrong_sized_file(monkeypatch, tmp_path):
+    destination = tmp_path / "release.tar.aa"
+    destination.write_bytes(b"old")
+    body = b"complete release asset"
+    monkeypatch.setattr(
+        download.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: FakeResponse(body, content_length=len(body)),
+    )
+
+    assert download.download_asset("https://example.test/release", destination)
+    assert destination.read_bytes() == body
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_download_asset_requires_content_length(monkeypatch, tmp_path):
+    destination = tmp_path / "release.tar.aa"
+    monkeypatch.setattr(
+        download.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: FakeResponse(b"unverifiable", content_length=None),
+    )
+    monkeypatch.setattr(download.time, "sleep", lambda _: None)
+
+    assert not download.download_asset("https://example.test/release", destination)
+    assert not destination.exists()
+
+
+def test_release_download_slots_limit_concurrency(monkeypatch, tmp_path):
+    monkeypatch.setattr(download, "LOCKS_DIR", tmp_path / "locks")
+    (tmp_path / "locks").mkdir()
+    state_lock = threading.Lock()
+    first_two_entered = threading.Event()
+    release_workers = threading.Event()
+    active = 0
+    maximum_active = 0
+    completed = 0
+
+    def worker():
+        nonlocal active, maximum_active, completed
+        with download._release_download_slot():
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                if active == download.DOWNLOAD_CONCURRENCY:
+                    first_two_entered.set()
+            release_workers.wait(timeout=2)
+            with state_lock:
+                active -= 1
+                completed += 1
+
+    threads = [threading.Thread(target=worker) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+
+    assert first_two_entered.wait(timeout=2)
+    time.sleep(0.05)
+    with state_lock:
+        assert active == 2
+        assert maximum_active == 2
+
+    release_workers.set()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    assert completed == 3
+    assert maximum_active == 2
+
+
+def _write_split_tar(tmp_path: Path) -> tuple[list[Path], int]:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "first.txt").write_text("first", encoding="utf-8")
+    (source_dir / "second.bin").write_bytes(b"x" * (1024 * 1024))
+
+    archive = tmp_path / "release.tar"
+    with tarfile.open(archive, "w") as tar:
+        tar.add(source_dir / "first.txt", arcname="release/first.txt")
+        tar.add(source_dir / "second.bin", arcname="release/second.bin")
+
+    with tarfile.open(archive) as tar:
+        second_data_offset = tar.getmember("release/second.bin").offset_data
+
+    contents = archive.read_bytes()
+    split_at = len(contents) // 2
+    first_part = tmp_path / "release.tar.aa"
+    second_part = tmp_path / "release.tar.ab"
+    first_part.write_bytes(contents[:split_at])
+    second_part.write_bytes(contents[split_at:])
+    return [first_part, second_part], second_data_offset
+
+
+def test_extract_split_archive_is_atomic_and_marked(tmp_path):
+    parts, _ = _write_split_tar(tmp_path)
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+    (extract_dir / "partial.txt").write_text("stale", encoding="utf-8")
+
+    assert download.extract_split_archive(parts, extract_dir)
+    assert (extract_dir / "first.txt").read_text(encoding="utf-8") == "first"
+    assert (extract_dir / "second.bin").stat().st_size == 1024 * 1024
+    assert (extract_dir / download.EXTRACTION_COMPLETE_MARKER).is_file()
+    assert not (extract_dir / "partial.txt").exists()
+
+
+def test_extract_split_archive_rejects_partial_output(tmp_path):
+    parts, second_data_offset = _write_split_tar(tmp_path)
+    truncated_part = tmp_path / "truncated.tar.aa"
+    complete_archive = b"".join(path.read_bytes() for path in parts)
+    truncated_part.write_bytes(complete_archive[: second_data_offset + 100])
+    extract_dir = tmp_path / "extract"
+
+    assert not download.extract_split_archive([truncated_part], extract_dir)
+    assert not extract_dir.exists()
+    assert not list(tmp_path.glob(".extract.extract-*"))
