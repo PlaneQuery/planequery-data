@@ -165,6 +165,12 @@ def main() -> int:
             print("No adsb.lol releases to process.")
             return 0
 
+        from data_engineering.adsblol.check_for_new_release import (
+            prepare_releases_for_run,
+        )
+
+        prepare_releases_for_run({day.year for day in adsb_days})
+
         print("ADS-B release days:", ", ".join(fmt(day) for day in adsb_days))
         print("Flight days:", ", ".join(fmt(day) for day in adsb_days))
 

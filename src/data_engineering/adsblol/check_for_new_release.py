@@ -1,5 +1,11 @@
+import fcntl
+import os
 import re
+import tempfile
+from collections.abc import Iterable
+from contextlib import contextmanager
 from datetime import datetime, date, timedelta, timezone
+from pathlib import Path
 
 import urllib.request
 import time
@@ -10,23 +16,67 @@ CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
 LATEST_PROD_ADSB_DATE_CACHE = ADSBLOL_DIR / "LATEST_PROD_ADSB_DATE.txt"
 DEFAULT_LATEST_PROD_ADSB_DATE = date(2026, 6, 4)
 MIN_DAILY_ADSB_ROWS = 1_000
+PREPARED_RELEASE_YEARS_ENV = "PLANEQUERY_PREPARED_RELEASE_YEARS"
+_RUN_RELEASES_CACHE: dict[str, str] = {}
 RELEASE_TAG_RE = re.compile(
     r"v\d{4}\.\d{2}\.\d{2}-planes-readsb-(?:prod|staging|mlatonly)-\d+(?:tmp)?"
 )
 
 
-def _cache_created_at(cache_path) -> float:
-    stat = cache_path.stat()
-    return getattr(stat, "st_birthtime", stat.st_ctime)
+def _cache_is_fresh(cache_path: str | Path) -> bool:
+    return time.time() - Path(cache_path).stat().st_mtime <= CACHE_MAX_AGE_SECONDS
 
 
-def _cache_is_fresh(cache_path: str) -> bool:
-    return time.time() - _cache_created_at(cache_path) <= CACHE_MAX_AGE_SECONDS
+@contextmanager
+def _cache_lock(cache_path: Path):
+    """Serialize refreshes so parallel day workers do not race on the cache."""
+    lock_path = cache_path.with_name(f".{cache_path.name}.lock")
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Publish a complete cache file without exposing a partially written one."""
+    fd, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _request_text(url: str) -> str:
     with urllib.request.urlopen(url, timeout=30) as response:
         return response.read().decode("utf-8")
+
+
+def _prepared_release_years() -> set[str]:
+    return {
+        year
+        for year in os.getenv(PREPARED_RELEASE_YEARS_ENV, "").split(",")
+        if year
+    }
+
+
+def prepare_releases_for_run(years: Iterable[str | int]) -> None:
+    """Refresh each release catalog once, before spawning any day workers."""
+    prepared_years = _prepared_release_years()
+    for year in sorted({str(year) for year in years}):
+        load_releases_txt(year)
+        prepared_years.add(year)
+    os.environ[PREPARED_RELEASE_YEARS_ENV] = ",".join(sorted(prepared_years))
 
 
 def _extract_release_tags_from_atom(content: str) -> list[str]:
@@ -53,8 +103,7 @@ def _merge_atom_releases_into_cache(year: str, cache_path: str, content: str) ->
     new_content = "\n".join(_release_line_from_tag(year, tag) for tag in missing_tags)
     updated_content = f"{new_content}\n{content.rstrip()}\n"
 
-    with cache_path.open("w", encoding="utf-8") as f:
-        f.write(updated_content)
+    _atomic_write_text(cache_path, updated_content)
     print(f"[CACHE] Added {len(missing_tags)} releases from releases.atom to ALL_RELEASES_{year}.txt")
     return updated_content
 
@@ -68,21 +117,33 @@ def load_releases_txt(year: str) -> str:
     ADSBLOL_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = ADSBLOL_DIR / f"ALL_RELEASES_{year}.txt"
 
-    cache_exists = cache_path.exists()
-    if cache_exists and _cache_is_fresh(cache_path):
-        print(f"[CACHE] Using cached ALL_RELEASES_{year}.txt")
-        with cache_path.open("r", encoding="utf-8") as f:
-            content = f.read()
-    else:
-        if cache_exists:
-            print(f"[CACHE] Cached ALL_RELEASES_{year}.txt is older than 12 hours; redownloading")
-        txt_url = f"https://raw.githubusercontent.com/adsblol/globe_history_{year}/refs/heads/main/ALL_RELEASES.txt"
-        content = _request_text(txt_url)
-        with cache_path.open("w", encoding="utf-8") as f:
-            f.write(content)
-        print(f"Downloaded and cached ALL_RELEASES_{year}.txt")
+    if year in _RUN_RELEASES_CACHE:
+        return _RUN_RELEASES_CACHE[year]
 
-    return _merge_atom_releases_into_cache(year, cache_path, content)
+    # Spawned workers inherit this run-scoped marker from their parent. The
+    # parent already refreshed and augmented the snapshot before starting them.
+    if year in _prepared_release_years() and cache_path.exists():
+        content = cache_path.read_text(encoding="utf-8")
+        _RUN_RELEASES_CACHE[year] = content
+        return content
+
+    with _cache_lock(cache_path):
+        # Recheck after taking the lock: another worker may just have refreshed it.
+        cache_exists = cache_path.exists()
+        if cache_exists and _cache_is_fresh(cache_path):
+            print(f"[CACHE] Using cached ALL_RELEASES_{year}.txt")
+            content = cache_path.read_text(encoding="utf-8")
+        else:
+            if cache_exists:
+                print(f"[CACHE] Cached ALL_RELEASES_{year}.txt is older than 12 hours; redownloading")
+            txt_url = f"https://raw.githubusercontent.com/adsblol/globe_history_{year}/refs/heads/main/ALL_RELEASES.txt"
+            content = _request_text(txt_url)
+            _atomic_write_text(cache_path, content)
+            print(f"Downloaded and cached ALL_RELEASES_{year}.txt")
+
+        content = _merge_atom_releases_into_cache(year, cache_path, content)
+        _RUN_RELEASES_CACHE[year] = content
+        return content
 
 
 def _extract_prod_version_dates_from_text(content: str) -> set[str]:
