@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[2]))
 
-from data_profiling.cli import find_outliers
+from data_profiling.cli import find_outliers, split_date_range
 
 
 def test_find_outliers() -> None:
@@ -20,3 +20,17 @@ def test_find_outliers() -> None:
     assert outliers == [(date(2026, 1, 4), 0)]
     assert lower == 96
     assert upper == 104
+
+
+def test_split_date_range_into_three_month_periods() -> None:
+    assert split_date_range(date(2026, 1, 1), date(2026, 8, 15)) == [
+        (date(2026, 1, 1), date(2026, 4, 1)),
+        (date(2026, 4, 1), date(2026, 7, 1)),
+        (date(2026, 7, 1), date(2026, 8, 15)),
+    ]
+
+
+def test_exactly_three_months_is_one_period() -> None:
+    assert split_date_range(date(2026, 1, 1), date(2026, 4, 1)) == [
+        (date(2026, 1, 1), date(2026, 4, 1))
+    ]
