@@ -5,19 +5,25 @@ This file contains utility functions for downloading and processing adsb.lol tra
 Used by the historical ADS-B processing pipeline.
 """
 import datetime as dt
-import glob
+import fcntl
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 import time
 from pathlib import Path
-from data_engineering.adsblol.check_for_new_release import get_adsblol_releases_to_process, load_releases_txt
+from data_engineering.adsblol.check_for_new_release import (
+    get_adsblol_releases_to_process,
+    load_releases_txt,
+    prepare_releases_for_run,
+)
 from data_engineering.adsb.trace_files_to_parquet import process_trace_files
 
 
@@ -29,8 +35,12 @@ ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" /"adsblol"
 RELEASES_DIR = ADSBLOL_DIR / "releases"
 EXTRACT_DIR = ADSBLOL_DIR / "extract"
 PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v6"
-for _dir in (RELEASES_DIR, EXTRACT_DIR, PARQUET_DIR):
+LOCKS_DIR = ADSBLOL_DIR / ".locks"
+for _dir in (RELEASES_DIR, EXTRACT_DIR, PARQUET_DIR, LOCKS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
+
+DOWNLOAD_CONCURRENCY = 2
+EXTRACTION_COMPLETE_MARKER = ".extraction-complete.json"
 
 TOKEN = os.environ.get('GITHUB_TOKEN')  # Optional: kept for authenticated asset downloads
 HEADERS = {"Authorization": f"token {TOKEN}"} if TOKEN else {}
@@ -70,6 +80,49 @@ class DownloadTimeoutException(Exception):
 
 def timeout_handler(signum, frame):
     raise DownloadTimeoutException("Download timed out after 40 seconds")
+
+
+@contextmanager
+def _exclusive_file_lock(lock_path: Path):
+    """Hold an advisory lock shared by all local pipeline processes."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _release_download_slot():
+    """Limit concurrent GitHub release downloads across local processes."""
+    announced_wait = False
+    while True:
+        for slot in range(DOWNLOAD_CONCURRENCY):
+            lock_path = LOCKS_DIR / f"download-slot-{slot}.lock"
+            lock_file = lock_path.open("a", encoding="utf-8")
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock_file.close()
+                continue
+
+            try:
+                yield slot + 1
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+            return
+
+        if not announced_wait:
+            print(
+                f"Both GitHub download slots are busy; waiting "
+                f"(limit={DOWNLOAD_CONCURRENCY})",
+                flush=True,
+            )
+            announced_wait = True
+        time.sleep(0.25)
 
 def _fetch_release_urls_from_txt(year: str, version_date: str) -> list[str]:
     """Fetch download URLs from ALL_RELEASES.txt for a given year's adsblol repo."""
@@ -113,7 +166,7 @@ def fetch_release_urls(version_date: str) -> list[str]:
 
 
 def download_asset(asset_url: str, file_path: str | Path, expected_size: int | None = None) -> bool:
-    """Download a single release asset with size verification.
+    """Atomically download a release asset with mandatory size verification.
     
     Args:
         asset_url: URL to download from
@@ -123,61 +176,80 @@ def download_asset(asset_url: str, file_path: str | Path, expected_size: int | N
     Returns:
         True if download succeeded and size matches (if provided), False otherwise
     """
-    os.makedirs(os.path.dirname(file_path) or ADSBLOL_DIR, exist_ok=True)
-    
-    # Check if file exists and has correct size
-    if os.path.exists(file_path):
-        if expected_size is not None:
-            actual_size = os.path.getsize(file_path)
-            if actual_size == expected_size:
-                print(f"[SKIP] {file_path} already downloaded and verified ({actual_size} bytes).")
-                return True
-            else:
-                print(f"[WARN] {file_path} exists but size mismatch (expected {expected_size}, got {actual_size}). Re-downloading.")
-                os.remove(file_path)
-        else:
-            print(f"[SKIP] {file_path} already downloaded.")
-            return True
-    
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
     max_retries = 2
     retry_delay = 30
     timeout_seconds = 140
-    
+
     for attempt in range(1, max_retries + 1):
         print(f"Downloading {asset_url} (attempt {attempt}/{max_retries})")
+        temporary_path: Path | None = None
         try:
             req = urllib.request.Request(asset_url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                if response.status == 200:
-                    with open(file_path, "wb") as file:
-                        while True:
-                            chunk = response.read(8192)
-                            if not chunk:
-                                break
-                            file.write(chunk)
-                    
-                    # Verify file size if expected_size was provided
-                    if expected_size is not None:
-                        actual_size = os.path.getsize(file_path)
-                        if actual_size != expected_size:
-                            print(f"[ERROR] Size mismatch for {file_path}: expected {expected_size} bytes, got {actual_size} bytes")
-                            os.remove(file_path)
-                            if attempt < max_retries:
-                                print(f"Waiting {retry_delay} seconds before retry")
-                                time.sleep(retry_delay)
-                                continue
-                            return False
-                        print(f"Saved {file_path} ({actual_size} bytes, verified)")
-                    else:
-                        print(f"Saved {file_path}")
-                    return True
-                else:
-                    print(f"Failed to download {asset_url}: {response.status} {response.msg}")
-                    if attempt < max_retries:
-                        print(f"Waiting {retry_delay} seconds before retry")
-                        time.sleep(retry_delay)
-                    else:
-                        return False
+                if response.status != 200:
+                    raise OSError(
+                        f"unexpected HTTP response: {response.status} {response.reason}"
+                    )
+
+                content_length = response.headers.get("Content-Length")
+                response_size = int(content_length) if content_length is not None else None
+                if expected_size is not None and response_size is not None:
+                    if expected_size != response_size:
+                        raise OSError(
+                            f"server size changed: expected {expected_size} bytes, "
+                            f"server reports {response_size}"
+                        )
+                verified_size = expected_size if expected_size is not None else response_size
+                if verified_size is None:
+                    raise OSError("server did not provide Content-Length; refusing unverified download")
+
+                if file_path.exists():
+                    actual_size = file_path.stat().st_size
+                    if actual_size == verified_size:
+                        print(
+                            f"[SKIP] {file_path} already downloaded and verified "
+                            f"({actual_size} bytes)."
+                        )
+                        return True
+                    print(
+                        f"[WARN] {file_path} exists but size mismatch "
+                        f"(expected {verified_size}, got {actual_size}). Re-downloading."
+                    )
+
+                fd, temporary_name = tempfile.mkstemp(
+                    dir=file_path.parent,
+                    prefix=f".{file_path.name}.",
+                    suffix=".part",
+                )
+                temporary_path = Path(temporary_name)
+                bytes_written = 0
+                with os.fdopen(fd, "wb") as file:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        file.write(chunk)
+                        bytes_written += len(chunk)
+                        if bytes_written > verified_size:
+                            raise OSError(
+                                f"download exceeded expected size of {verified_size} bytes"
+                            )
+                    file.flush()
+                    os.fsync(file.fileno())
+
+                if bytes_written != verified_size:
+                    raise OSError(
+                        f"incomplete download: expected {verified_size} bytes, "
+                        f"received {bytes_written}"
+                    )
+
+                os.replace(temporary_path, file_path)
+                temporary_path = None
+                print(f"Saved {file_path} ({bytes_written} bytes, verified)")
+                return True
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 print(f"404 Not Found: {asset_url}")
@@ -203,19 +275,15 @@ def download_asset(asset_url: str, file_path: str | Path, expected_size: int | N
                 time.sleep(retry_delay)
             else:
                 return False
-    
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
     return False
 
 
-def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
-    """
-    Extracts a split archive by concatenating the parts using 'cat'
-    and then extracting with 'tar' in one pipeline.
-    """
-    if os.path.isdir(extract_dir):
-        print(f"[SKIP] Extraction directory already exists: {extract_dir}")
-        return True
-    
+def extract_split_archive(file_paths: list[str | Path], extract_dir: str | Path) -> bool:
+    """Strictly extract split tar parts into an atomically published directory."""
     def sort_key(path: str):
         base = os.path.basename(path)
         parts = base.rsplit('.', maxsplit=1)
@@ -227,16 +295,29 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
                 return (1, suffix)
         return (2, base)
     
-    file_paths = sorted(file_paths, key=sort_key)
-    os.makedirs(extract_dir, exist_ok=True)
-    
+    file_paths = [Path(path) for path in sorted(file_paths, key=sort_key)]
+    extract_dir = Path(extract_dir)
+    completion_marker = extract_dir / EXTRACTION_COMPLETE_MARKER
+    if extract_dir.is_dir() and completion_marker.is_file():
+        print(f"[SKIP] Verified extraction already exists: {extract_dir}")
+        return True
+
+    extract_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(
+        tempfile.mkdtemp(
+            dir=extract_dir.parent,
+            prefix=f".{extract_dir.name}.extract-",
+        )
+    )
+    cat_proc: subprocess.Popen | None = None
+
     try:
         cat_proc = subprocess.Popen(
-            ["cat"] + file_paths,
+            ["cat", *map(str, file_paths)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        tar_cmd = ["tar", "xf", "-", "-C", extract_dir, "--strip-components=1"]
+        tar_cmd = ["tar", "xf", "-", "-C", str(staging_dir), "--strip-components=1"]
         result = subprocess.run(
             tar_cmd,
             stdin=cat_proc.stdout,
@@ -250,36 +331,46 @@ def extract_split_archive(file_paths: list, extract_dir: str) -> bool:
         
         if cat_stderr:
             print(f"cat stderr: {cat_stderr}")
-        
+
         tar_stderr = result.stderr.decode() if result.stderr else ""
+        if cat_proc.returncode != 0:
+            raise RuntimeError(f"cat exited {cat_proc.returncode}: {cat_stderr.strip()}")
         if result.returncode != 0:
-            # GNU tar exits non-zero for format issues that BSD tar silently
-            # tolerates (e.g. trailing junk after the last valid entry).
-            # Check whether files were actually extracted before giving up.
-            extracted_items = os.listdir(extract_dir)
-            if extracted_items:
-                print(f"[WARN] tar exited {result.returncode} but extracted "
-                      f"{len(extracted_items)} items — treating as success")
-                if tar_stderr:
-                    print(f"tar stderr: {tar_stderr}")
-            else:
-                print(f"Failed to extract split archive (tar exit {result.returncode})")
-                if tar_stderr:
-                    print(f"tar stderr: {tar_stderr}")
-                shutil.rmtree(extract_dir, ignore_errors=True)
-                return False
-        
+            raise RuntimeError(f"tar exited {result.returncode}: {tar_stderr.strip()}")
+        if not any(path.is_file() for path in staging_dir.rglob("*")):
+            raise RuntimeError("archive contained no files")
+
+        marker_payload = {
+            "parts": [
+                {"name": path.name, "size": path.stat().st_size}
+                for path in file_paths
+            ]
+        }
+        (staging_dir / EXTRACTION_COMPLETE_MARKER).write_text(
+            json.dumps(marker_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        if extract_dir.exists():
+            print(f"Removing unverified extraction directory: {extract_dir}")
+            shutil.rmtree(extract_dir)
+        os.replace(staging_dir, extract_dir)
+
         print(f"Successfully extracted archive to {extract_dir}")
-        
+
         disk = shutil.disk_usage('.')
         free_gb = disk.free / (1024**3)
         print(f"Disk space after extraction: {free_gb:.1f}GB free")
-        
+
         return True
     except Exception as e:
         print(f"Failed to extract split archive: {e}")
-        shutil.rmtree(extract_dir, ignore_errors=True)
         return False
+    finally:
+        if cat_proc is not None and cat_proc.poll() is None:
+            cat_proc.terminate()
+            cat_proc.wait()
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 OS_CPU_COUNT = os.cpu_count() or 1
@@ -295,52 +386,48 @@ def _day_date(day: date | datetime) -> date:
 
 def download_and_extract(version_date: str) -> str | None:
     """Download and extract tar files, return extract directory path."""
+    lock_path = LOCKS_DIR / f"{version_date}.lock"
+    with _exclusive_file_lock(lock_path):
+        return _download_and_extract_locked(version_date)
+
+
+def _download_and_extract_locked(version_date: str) -> str | None:
     release_dir = _release_dir(version_date)
     extract_dir = _extract_dir(version_date)
     release_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Check if already extracted
-    if os.path.isdir(extract_dir):
-        print(f"[SKIP] Already extracted: {extract_dir}")
+
+    completion_marker = extract_dir / EXTRACTION_COMPLETE_MARKER
+    if extract_dir.is_dir() and completion_marker.is_file():
+        print(f"[SKIP] Verified extraction already exists: {extract_dir}")
         return str(extract_dir)
-    
-    # Check for existing tar files
-    pattern = str(release_dir / f"{version_date}-planes-readsb-prod-*")
-    matches = [p for p in glob.glob(pattern) if os.path.isfile(p)]
-    
-    if matches:
-        print(f"Found existing tar files for {version_date}")
-        normal_matches = [
-            p for p in matches
-            if "tmp" not in os.path.basename(p)
-        ]
-        downloaded_files = normal_matches if normal_matches else matches
-    else:
-        # Download via ALL_RELEASES.txt
-        print(f"Fetching release URLs for {version_date}...")
-        all_urls = fetch_release_urls(version_date)
-        if not all_urls:
-            print(f"No releases found for {version_date}")
-            return None
 
-        # Prefer non-tmp URLs; only use tmp if no normal URLs exist
-        normal_urls = [u for u in all_urls if "tmp" not in u]
-        tmp_urls = [u for u in all_urls if "tmp" in u]
-        use_urls = normal_urls if normal_urls else tmp_urls
-        print(f"Using {'normal' if normal_urls else 'tmp'} releases ({len(use_urls)} URLs)")
+    print(f"Fetching release URLs for {version_date}...")
+    all_urls = fetch_release_urls(version_date)
+    if not all_urls:
+        print(f"No releases found for {version_date}")
+        return None
 
-        downloaded_files = []
+    # Prefer non-tmp URLs; only use tmp if no normal URLs exist.
+    normal_urls = [u for u in all_urls if "tmp" not in u]
+    tmp_urls = [u for u in all_urls if "tmp" in u]
+    use_urls = normal_urls if normal_urls else tmp_urls
+    print(f"Using {'normal' if normal_urls else 'tmp'} releases ({len(use_urls)} URLs)")
+
+    downloaded_files = []
+    with _release_download_slot() as slot:
+        print(
+            f"Using GitHub download slot {slot}/{DOWNLOAD_CONCURRENCY} "
+            f"for {version_date}",
+            flush=True,
+        )
         for url in use_urls:
             asset_name = url.rstrip('/').split('/')[-1]
             file_path = release_dir / asset_name
-            if download_asset(url, file_path):
-                downloaded_files.append(str(file_path))
-    
-    if not downloaded_files:
-        print(f"No files downloaded for {version_date}")
-        return None
-    
-    # Extract
+            if not download_asset(url, file_path):
+                print(f"Failed to download every archive part for {version_date}")
+                return None
+            downloaded_files.append(str(file_path))
+
     if extract_split_archive(downloaded_files, str(extract_dir)):
         return str(extract_dir)
     return None
@@ -582,6 +669,8 @@ if __name__ == '__main__':
         while current < end:
             days.append(current)
             current += dt.timedelta(days=1)
+
+    prepare_releases_for_run({_day_date(day).year for day in days})
 
     processed_days = []
     for day in days:
