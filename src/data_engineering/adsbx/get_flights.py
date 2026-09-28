@@ -30,7 +30,7 @@ def _adsbx_raw_flights_path(current_date: date) -> Path:
         OUTPUT_DIR
         / "data"
         / "raw"
-        / "adsb-exchange"
+        / "adsbx"
         / "flights-ax-v2"
         / f"flights-ax-v2_ax_arrivals_{current_date_str}.csv"
     )

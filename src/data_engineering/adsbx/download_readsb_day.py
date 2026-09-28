@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download ADSBExchange readsb-hist snapshots for a specific UTC day."""
+"""Download ADSBX readsb-hist snapshots for a specific UTC day."""
 
 import argparse
 import concurrent.futures
@@ -15,7 +15,7 @@ from data_engineering.utils import OUTPUT_DIR
 
 
 BASE_URL = "https://samples.adsbexchange.com/readsb-hist"
-DEFAULT_OUT_DIR = OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "readsb-hist"
+DEFAULT_OUT_DIR = OUTPUT_DIR / "data" / "raw" / "adsbx" / "readsb-hist"
 
 
 def iter_times(step_seconds: int):
@@ -85,7 +85,7 @@ def download_one(url: str, target: pathlib.Path, timeout: int, retries: int):
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(
-		description="Download ADSBExchange readsb-hist snapshots for one UTC day.",
+		description="Download ADSBX readsb-hist snapshots for one UTC day.",
 	)
 	parser.add_argument("date", help="UTC date in YYYY-MM-DD format")
 	parser.add_argument(
