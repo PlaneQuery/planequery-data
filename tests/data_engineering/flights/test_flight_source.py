@@ -416,27 +416,29 @@ def test_algorithm_nn_ignores_nearest_flights_from_a_stale_catalog(
     assert reads == [(True, None), (False, ["abc123"])]
 
 
-def test_get_flights_handles_empty_batched_adsb_day(monkeypatch, tmp_path):
+def test_get_flights_rejects_empty_batched_adsb_day(monkeypatch, tmp_path):
     monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
 
     def read_adsb(start, end, *, source, columns=None, lazy=False, icaos=None):
         frame = pl.DataFrame(schema={"icao": pl.String})
-        if lazy:
-            return frame.lazy()
-        assert icaos == []
-        return frame
+        assert lazy
+        assert icaos is None
+        return frame.lazy()
 
     monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
 
-    result = get_flights(
-        DummyBatchedADSBFlightSource(),
-        date(2026, 3, 1),
-        ADSBSource.ADSBX,
-        use_cache=False,
-    )
-
-    assert result.schema == {"icao": pl.String}
-    assert result.is_empty()
+    with pytest.raises(
+        AssertionError,
+        match=(
+            "No ADS-B ICAOs found for dummy-adsb on 2026-03-01 from adsbx"
+        ),
+    ):
+        get_flights(
+            DummyBatchedADSBFlightSource(),
+            date(2026, 3, 1),
+            ADSBSource.ADSBX,
+            use_cache=False,
+        )
 
 
 def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):

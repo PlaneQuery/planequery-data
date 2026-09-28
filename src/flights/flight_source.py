@@ -422,12 +422,14 @@ def _get_flights_for_catalog_at_path(
             )
         else:
             icaos = sorted(set(source_icaos))
+        assert icaos, (
+            f"No ADS-B ICAOs found for {source.name} on {dt} "
+            f"from {adsb_src.value}"
+        )
         batches = [
             icaos[offset : offset + batch_size]
             for offset in range(0, len(icaos), batch_size)
         ]
-        if not batches:
-            batches = [[]]
 
         tasks = [
             _ADSBBatchTask(batch_index, tuple(icao_batch))
