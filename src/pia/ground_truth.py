@@ -3,6 +3,7 @@ from pathlib import Path
 
 import polars as pl
 
+from data_engineering.adsb.canonical import ADSBSource, adsb_parquet_root
 from data_engineering.ground_control import load_ground_control_mappings
 from data_engineering.openairframes.read import (
     get_openairframes_faa_df,
@@ -168,7 +169,7 @@ def get_ground_truth_mappings(
     return df
 
 
-BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+BASE_PATH = adsb_parquet_root(ADSBSource.ADSBLOL)
 
 
 def get_unique_pia_icaos_from_adsblol(use_cache: bool = True) -> pl.Series:

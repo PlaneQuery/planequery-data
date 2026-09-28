@@ -3,10 +3,13 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+import pyarrow.parquet as pq
 
+from data_engineering.adsb.parquet_schema import PARQUET_SCHEMA
 from data_engineering.opensky import read_opensky_trino_states as opensky_reader
 from data_engineering.opensky.read_opensky_trino_states import (
     MAX_STATE_VECTOR_AGE_SECONDS,
+    OPENAIRFRAMES_COLUMNS,
     normalize_opensky_state_vectors,
     opensky_processed_state_vectors_path,
 )
@@ -84,11 +87,12 @@ def test_normalize_requires_freshness_columns():
         normalize_opensky_state_vectors(raw)
 
 
-def test_processed_cache_uses_v3_partition_path():
+def test_processed_cache_uses_canonical_partition_path():
     path = opensky_processed_state_vectors_path("2026-03-01")
 
     assert path.as_posix().endswith(
-        "data/processed/opensky/v3/year=2026/month=03/day=01"
+        "data/processed/adsb/parquet_output/source=opensky/version=4/"
+        "year=2026/month=03/day=01"
     )
 
 
@@ -134,6 +138,34 @@ def _append_position_update(
     pl.concat([existing, extra]).write_parquet(path)
 
 
+def _stub_openairframes(monkeypatch) -> None:
+    from data_engineering.openairframes import read as openairframes_reader
+
+    metadata = {
+        "icao": ["010000", "f10000"],
+        **{
+            column: (
+                [False, False]
+                if column in {"pia", "ladd", "military", "interesting"}
+                else [None, None]
+            )
+            for column in OPENAIRFRAMES_COLUMNS
+        },
+    }
+    monkeypatch.setattr(
+        openairframes_reader,
+        "scan_latest_icao_info_for_join",
+        lambda: pl.DataFrame(metadata).lazy(),
+    )
+
+
+def _scan_processed_day(processed_day: Path) -> pl.LazyFrame:
+    return pl.scan_parquet(
+        sorted(processed_day.glob("icao_bucket=*/*.parquet")),
+        hive_partitioning=False,
+    )
+
+
 def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
     monkeypatch,
     tmp_path,
@@ -147,9 +179,10 @@ def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
     )
     monkeypatch.setattr(
         opensky_reader,
-        "processed_state_vectors_day_dir",
+        "opensky_processed_state_vectors_path",
         lambda day: processed_day,
     )
+    _stub_openairframes(monkeypatch)
 
     start = datetime(2024, 6, 1, tzinfo=timezone.utc)
     for hour in range(24):
@@ -158,11 +191,13 @@ def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
             start + timedelta(hours=hour),
         )
 
-    result = opensky_reader.scan_cached_opensky_state_vectors_for_day(
-        date(2024, 6, 1),
-        columns=["time", "icao", "geom_altitude_ft", "baro_rate_fpm"],
-        icaos=["010000"],
-    ).collect()
+    opensky_reader.write_opensky_state_vectors_cache_for_day(date(2024, 6, 1))
+    result = (
+        _scan_processed_day(processed_day)
+        .filter(pl.col("icao") == "010000")
+        .select("time", "icao", "geom_altitude_ft", "baro_rate_fpm")
+        .collect()
+    )
 
     assert result.height == 24
     assert result.get_column("icao").unique().to_list() == ["010000"]
@@ -173,8 +208,13 @@ def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
         "icao_bucket=0",
         "icao_bucket=7",
     ]
-    assert len(list((processed_day / "icao_bucket=0").glob("*.parquet"))) == 24
-    assert len(list((processed_day / "icao_bucket=7").glob("*.parquet"))) == 24
+    assert len(list((processed_day / "icao_bucket=0").glob("*.parquet"))) == 1
+    assert len(list((processed_day / "icao_bucket=7").glob("*.parquet"))) == 1
+    assert not (processed_day / "_normalized").exists()
+    assert all(
+        pq.read_schema(path).equals(PARQUET_SCHEMA)
+        for path in processed_day.glob("icao_bucket=*/*.parquet")
+    )
 
 
 def test_hourly_cache_deduplicates_position_update_across_hour_boundary(
@@ -190,9 +230,10 @@ def test_hourly_cache_deduplicates_position_update_across_hour_boundary(
     )
     monkeypatch.setattr(
         opensky_reader,
-        "processed_state_vectors_day_dir",
+        "opensky_processed_state_vectors_path",
         lambda day: processed_day,
     )
+    _stub_openairframes(monkeypatch)
 
     start = datetime(2024, 6, 1, tzinfo=timezone.utc)
     for hour in range(24):
@@ -214,11 +255,13 @@ def test_hourly_cache_deduplicates_position_update_across_hour_boundary(
         position_time=position_time,
     )
 
-    result = opensky_reader.scan_cached_opensky_state_vectors_for_day(
-        date(2024, 6, 1),
-        columns=["time", "icao", "callsign"],
-        icaos=["010000"],
-    ).collect()
+    opensky_reader.write_opensky_state_vectors_cache_for_day(date(2024, 6, 1))
+    result = (
+        _scan_processed_day(processed_day)
+        .filter(pl.col("icao") == "010000")
+        .select("time", "icao", "callsign")
+        .collect()
+    )
 
     boundary_time = datetime(2024, 6, 1, 0, 59, 59, 500_000)
     assert result.filter(pl.col("time") == boundary_time).height == 1

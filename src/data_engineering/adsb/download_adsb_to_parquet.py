@@ -25,6 +25,12 @@ from data_engineering.adsblol.check_for_new_release import (
     prepare_releases_for_run,
 )
 from data_engineering.adsb.trace_files_to_parquet import process_trace_files
+from data_engineering.adsb.canonical import (
+    ADSBSource,
+    SUCCESS_MARKER,
+    adsb_day_dir,
+    adsb_parquet_root,
+)
 
 
 # ============================================================================
@@ -34,9 +40,9 @@ from data_engineering.utils import S3_BUCKET, OUTPUT_DIR
 ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" /"adsblol"
 RELEASES_DIR = ADSBLOL_DIR / "releases"
 EXTRACT_DIR = ADSBLOL_DIR / "extract"
-PARQUET_DIR = ADSBLOL_DIR / "parquet_output" / "v6"
 LOCKS_DIR = ADSBLOL_DIR / ".locks"
-for _dir in (RELEASES_DIR, EXTRACT_DIR, PARQUET_DIR, LOCKS_DIR):
+PARQUET_DIR = adsb_parquet_root(ADSBSource.ADSBLOL)
+for _dir in (RELEASES_DIR, EXTRACT_DIR, LOCKS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 DOWNLOAD_CONCURRENCY = 2
@@ -63,11 +69,11 @@ def _extract_dir(version_date: str) -> Path:
 
 
 def _parquet_partition_dir(day: date | datetime) -> Path:
-    return PARQUET_DIR / f"year={day.year}" / f"month={day.month:02d}" / f"day={day.day:02d}"
+    return adsb_day_dir(ADSBSource.ADSBLOL, day)
 
 
 def _parquet_partition_has_data(partition_dir: Path) -> bool:
-    return any(partition_dir.glob("icao_bucket=*/data.parquet"))
+    return (partition_dir / "_SUCCESS").is_file()
 
 
 # ============================================================================
@@ -436,7 +442,6 @@ def _download_and_extract_locked(version_date: str) -> str | None:
 def process_version_date(
     version_date: str,
     keep_folders: bool = True,
-    pia_or_american_ladd_only: bool = False,
 ) -> int:
     """Process a version date: download, extract, and write to parquet.
     
@@ -466,7 +471,6 @@ def process_version_date(
         folder_path=extract_dir,
         output_root=PARQUET_DIR,
         max_workers=MAX_WORKERS,
-        pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
     
     print(f"\nTotal rows written: {total_rows}")
@@ -511,7 +515,6 @@ def ingest_parquet_to_iceberg(parquet_path: Path, target_date: date):
 def create_parquet_for_day(
     day,
     keep_folders: bool = True,
-    pia_or_american_ladd_only: bool = False,
 ):
     """Create parquet output for a single day.
     
@@ -540,7 +543,6 @@ def create_parquet_for_day(
     rows_processed = process_version_date(
         version_date,
         keep_folders,
-        pia_or_american_ladd_only,
     )
 
     if rows_processed > 0 and _parquet_partition_has_data(partition_dir):
@@ -554,7 +556,9 @@ def upload_to_s3(parquet_path: Path):
     s3 = boto3.client('s3')
     paths = sorted(parquet_path.rglob("*.parquet"))
     assert len(paths) == 8, f"Expected 8 parquet files under {parquet_path}, found {len(paths)}"
-    for path in paths:
+    success_path = parquet_path / SUCCESS_MARKER
+    assert success_path.is_file(), f"Missing completion marker: {success_path}"
+    for path in [*paths, success_path]:
         s3_key = str(path.relative_to(OUTPUT_DIR))
         s3.upload_file(str(path), S3_BUCKET, s3_key)
         print(f"Uploaded {path} to s3://{S3_BUCKET}/{s3_key}")
@@ -649,11 +653,6 @@ if __name__ == '__main__':
         action='store_true',
         help='Ingest the created parquet files into Iceberg'
     )
-    parser.add_argument(
-        '--pia-or-american-ladd-only',
-        action='store_true',
-        help='Only write PIA ICAOs and American LADD aircraft'
-    )
     parser.set_defaults(keep_folders=True)
     
     args = parser.parse_args()
@@ -681,7 +680,6 @@ if __name__ == '__main__':
         result = create_parquet_for_day(
             day,
             keep_folders=args.keep_folders,
-            pia_or_american_ladd_only=args.pia_or_american_ladd_only,
         )
         if result:
             print(f"\n✓ Success! Parquet output created: {result}")
