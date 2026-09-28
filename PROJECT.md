@@ -22,24 +22,15 @@ Publish flights from 2024-01-01 -> 2026-09-24
 ## Now
 
 Tasks that directly advance the current milestone.
-
-- [ x ] Hookup 8TB harddrive
-- [ x ] Figure out Ourairports.com changes over time
-- [ x ] Change flights run to no logner delete ADS-B files downloaded. 
-- [   ] See that tests/flights/evaluation/test_flights_algorithm.py works again. 
 - [   ] **End to end test suite so I can make performance changes.** 
+    - [   ] See that tests/flights/evaluation/test_flights_algorithm.py works again. 
 - [ ] **Calculate how long 1 year flights run will take.** 
-- [ ] **Do basic numerical checks on number of flights per day**
-- [ ] Start 1 year flights run.
+    - [   ] Start 1 year flights run.
+- [ x ] **Do basic numerical checks on number of flights per day**
+    - [ ] Determine which days have less flights because of missing ADS-B data
 - [ x ] Figure out how to deal with any missing ADS-B days
-- [ ] Check this June/July flights cause I think there may have been indications of something wronge before? 
-- [ ] Determine which days have less flights because of missing ADS-B data
-- [ ] Write github readme which will be condensed to the posts.
-- [ ] Do sanity checks on the data
 - [ ] Write Discord Post
 - [ ] Organize repo for release
-- [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality. 
-- [ ] I shoudl really add as many regression tests as possible 
 
 ---
 
@@ -50,6 +41,8 @@ Important tasks once the current work is complete.
 - [ Next Milestone will be doing analysis of algorihtms comapred with OpenSky ] <Task>
 - [ Training on OpenSky data ? ] <Task>
 - [ Investigate OpenSky coverage, is it acutally worse? ]
+- [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality. 
+
 - [ ] <Task>
 
 ---
