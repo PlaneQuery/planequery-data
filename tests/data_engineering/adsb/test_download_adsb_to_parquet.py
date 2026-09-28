@@ -1,7 +1,9 @@
 import io
+import sys
 import tarfile
 import threading
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 from data_engineering.adsb import download_adsb_to_parquet as download
@@ -156,3 +158,26 @@ def test_extract_split_archive_rejects_partial_output(tmp_path):
     assert not download.extract_split_archive([truncated_part], extract_dir)
     assert not extract_dir.exists()
     assert not list(tmp_path.glob(".extract.extract-*"))
+
+
+def test_upload_includes_success_marker(monkeypatch, tmp_path):
+    output_dir = tmp_path / "output"
+    parquet_day = output_dir / "data/processed/adsb/parquet_output/day=01"
+    for bucket in range(8):
+        path = parquet_day / f"icao_bucket={bucket}/data.parquet"
+        path.parent.mkdir(parents=True)
+        path.touch()
+    (parquet_day / "_SUCCESS").touch()
+
+    uploads = []
+    fake_s3 = SimpleNamespace(
+        upload_file=lambda path, bucket, key: uploads.append((path, bucket, key))
+    )
+    fake_boto3 = SimpleNamespace(client=lambda service: fake_s3)
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+    monkeypatch.setattr(download, "OUTPUT_DIR", output_dir)
+
+    download.upload_to_s3(parquet_day)
+
+    assert len(uploads) == 9
+    assert uploads[-1][2].endswith("/day=01/_SUCCESS")

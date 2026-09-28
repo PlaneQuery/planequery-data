@@ -5,6 +5,23 @@ Febuary 28th -> March 4th. So I can test March 1, 2, 3
 # Setup
 pip install -e .
 
+# Canonical ADS-B Parquet
+
+Downloaded provider files remain under `data/raw`. All ADS-B readers consume
+the same derived layout:
+
+```text
+data/processed/adsb/parquet_output/
+  source=adsblol/version=6/year=YYYY/month=MM/day=DD/icao_bucket=N/*.parquet
+  source=adsbx/version=1/year=YYYY/month=MM/day=DD/icao_bucket=N/*.parquet
+  source=opensky/version=4/year=YYYY/month=MM/day=DD/icao_bucket=N/*.parquet
+```
+
+Every completed day contains `_SUCCESS`, uses the shared ADS-B schema, and uses
+the unchanged eight-bucket ICAO partitioning scheme (`icao_bucket=0` through
+`icao_bucket=7`). `read_adsb()` creates a missing provider/day partition and
+then uses the common scanner.
+
 # Historical OurAirports data
 
 Airport data is resolved through an immutable `AirportCatalogView` for each

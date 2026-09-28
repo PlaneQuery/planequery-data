@@ -6,11 +6,12 @@ from pathlib import Path
 
 import polars as pl
 
+from data_engineering.adsb.canonical import ADSBSource, adsb_parquet_root
 from data_engineering.openairframes.read import scan_latest_icao_info_for_join
 from data_engineering.utils import OUTPUT_DIR
 
 
-BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+BASE_PATH = adsb_parquet_root(ADSBSource.ADSBLOL)
 DEFAULT_START_DATE = date(2025, 1, 1)
 DEFAULT_END_DATE = date(2026, 7, 1)
 DEFAULT_TIME_TOLERANCE = timedelta(minutes=200)

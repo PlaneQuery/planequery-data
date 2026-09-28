@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -6,15 +7,20 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from data_engineering.adsb.canonical import (
+    ADSBSource,
+    adsb_parquet_root,
+    mark_adsb_day_complete,
+)
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
+from data_engineering.adsb.partitions import (
+    ICAO_BUCKET_COUNT,
+    icao_bucket,
+)
 from data_engineering.adsb.process_trace_file import process_file
-from data_engineering.utils import OUTPUT_DIR
 
 
-ADSBLOL_DIR = OUTPUT_DIR / "data" / "raw" / "adsblol"
-DEFAULT_OUTPUT_ROOT = ADSBLOL_DIR / "parquet_output" / "v6"
-ICAO_BUCKET_COUNT = 8
-ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
+DEFAULT_OUTPUT_ROOT = adsb_parquet_root(ADSBSource.ADSBLOL)
 DEFAULT_MAX_WORKERS = min(os.cpu_count() or 1, 32)
 PROGRESS_INTERVAL_FILES = 1_000
 
@@ -35,13 +41,6 @@ def _parse_date_from_trace_folder(folder_path: Path) -> tuple[str, str, str]:
     return year, month, day
 
 
-def _icao_bucket(icao: str) -> int:
-    if icao.startswith("~"):
-        return ICAO_BUCKET_COUNT - 1
-    icao_int = int(icao.lower(), 16)
-    return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
-
-
 def _icao_from_trace_file(path: Path) -> str:
     filename = path.name
     if filename.endswith(".json"):
@@ -53,7 +52,7 @@ def _icao_from_trace_file(path: Path) -> str:
 
 def _trace_file_sort_key(path: Path) -> tuple[int, str, str]:
     icao = _icao_from_trace_file(path).lower()
-    return _icao_bucket(icao), icao, str(path)
+    return icao_bucket(icao), icao, str(path)
 
 
 def _empty_cols() -> dict[str, list]:
@@ -97,11 +96,10 @@ def _trace_files(folder_path: Path) -> list[Path]:
     )
 
 
-def _process_file_for_parquet(file: Path, pia_or_american_ladd_only: bool):
+def _process_file_for_parquet(file: Path):
     return process_file(
         file,
         log_dedupes=False,
-        pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
 
 
@@ -109,11 +107,10 @@ def _processed_trace_files(
     files: list[Path],
     max_workers: int,
     submit_chunk_size: int,
-    pia_or_american_ladd_only: bool,
 ):
     if max_workers == 1:
         for file in files:
-            yield file, _process_file_for_parquet(file, pia_or_american_ladd_only)
+            yield file, _process_file_for_parquet(file)
         return
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -123,7 +120,6 @@ def _processed_trace_files(
                 executor.submit(
                     _process_file_for_parquet,
                     file,
-                    pia_or_american_ladd_only,
                 )
                 for file in chunk
             ]
@@ -137,7 +133,6 @@ def process_trace_files(
     batch_size: int = 100_000,
     max_workers: int = DEFAULT_MAX_WORKERS,
     submit_chunk_size: int | None = None,
-    pia_or_american_ladd_only: bool = False,
 ) -> int:
     start_time = time.perf_counter()
     if submit_chunk_size is None:
@@ -146,8 +141,17 @@ def process_trace_files(
     output_root = Path(output_root)
     year, month, day = _parse_date_from_trace_folder(folder_path)
 
+    day_dir = (
+        output_root
+        / f"year={year}"
+        / f"month={month}"
+        / f"day={day}"
+    )
+    if day_dir.exists():
+        shutil.rmtree(day_dir)
+
     bucket_dirs = {
-        bucket: output_root / f"year={year}" / f"month={month}" / f"day={day}" / f"icao_bucket={bucket}"
+        bucket: day_dir / f"icao_bucket={bucket}"
         for bucket in range(ICAO_BUCKET_COUNT)
     }
     parquet_paths = {bucket: bucket_dirs[bucket] / "data.parquet" for bucket in range(ICAO_BUCKET_COUNT)}
@@ -171,18 +175,16 @@ def process_trace_files(
         files,
         max_workers,
         submit_chunk_size,
-        pia_or_american_ladd_only,
     ):
         processed_file_count += 1
         if processed_file_count % PROGRESS_INTERVAL_FILES == 0:
             print(f"Processed {processed_file_count}/{len(files)} trace files")
         if cols is None:
-            if not pia_or_american_ladd_only:
-                print(f"No valid data in {file}")
+            print(f"No valid data in {file}")
             continue
 
         cols = _sort_cols_by_icao_time(cols)
-        bucket = _icao_bucket(cols["icao"][0])
+        bucket = icao_bucket(cols["icao"][0])
         if current_bucket is not None and bucket != current_bucket and batch_count_by_bucket[current_bucket]:
             writers[current_bucket] = _write_cols(
                 writers[current_bucket],
@@ -231,6 +233,8 @@ def process_trace_files(
         if writer is not None:
             writer.close()
 
+    mark_adsb_day_complete(day_dir)
+
     total_rows = sum(total_rows_by_bucket.values())
     print(f"Total rows written: {total_rows}")
     for bucket, row_count in total_rows_by_bucket.items():
@@ -248,7 +252,6 @@ if __name__ == "__main__":
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--batch-size", type=int, default=100_000)
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
-    parser.add_argument("--pia-or-american-ladd-only", action="store_true")
     args = parser.parse_args()
 
     process_trace_files(
@@ -256,5 +259,4 @@ if __name__ == "__main__":
         output_root=args.output_root,
         batch_size=args.batch_size,
         max_workers=args.max_workers,
-        pia_or_american_ladd_only=args.pia_or_american_ladd_only,
     )
