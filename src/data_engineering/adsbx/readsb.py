@@ -22,7 +22,7 @@ from data_engineering.adsb.partitions import ICAO_BUCKET_COUNT, icao_bucket
 from data_engineering.utils import OUTPUT_DIR
 
 
-DEFAULT_INPUT_ROOT = OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "readsb-hist"
+DEFAULT_INPUT_ROOT = OUTPUT_DIR / "data" / "raw" / "adsbx" / "readsb-hist"
 DEFAULT_INPUT_PATH = DEFAULT_INPUT_ROOT / "2026" / "03" / "01"
 DEFAULT_BUCKETED_OUTPUT_ROOT = adsb_parquet_root(ADSBSource.ADSBX)
 FILENAME_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})Z\.json\.gz$")

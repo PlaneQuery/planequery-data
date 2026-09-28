@@ -84,7 +84,7 @@ def _create_provider_parquet(source: ADSBSource, day: date) -> None:
     if source is ADSBSource.ADSBX:
         if day.day != 1:
             raise FileNotFoundError(
-                "ADSBExchange sample readsb-hist data is only available for "
+                "ADSBX sample readsb-hist data is only available for "
                 f"the first day of each month; no source data is expected for {day}."
             )
         from data_engineering.adsbx.readsb import (
