@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from typing import Iterator
 
 import polars as pl
 
@@ -34,6 +37,19 @@ def _repository_refresh_due(checked_at: datetime, now: datetime) -> bool:
         checked_at.date() < now.date()
         or now - checked_at >= REPOSITORY_REFRESH_INTERVAL
     )
+
+
+@contextmanager
+def _history_lock(paths: HistoryPaths) -> Iterator[None]:
+    """Serialize repository and history updates across local processes."""
+    lock_path = paths.history_dir.parent / f".{paths.history_dir.name}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _record_repository_check(history: "AirportHistory", checked_at: datetime) -> None:
@@ -83,34 +99,37 @@ class AirportHistory:
                 )
             ),
         )
-        history_exists = all(path.exists() for path in paths.required_files)
-        schema_is_current = history_exists and (
-            json.loads(paths.metadata.read_text(encoding="utf-8"))[
-                "schema_version"
-            ]
-            == SCHEMA_VERSION
-        )
-        if not schema_is_current:
-            build_history(
-                paths,
-                baseline_date=baseline_date,
-                repository_url=repository_url,
+        with _history_lock(paths):
+            # Read freshness only after acquiring the lock: another worker may
+            # have refreshed the shared checkout while this worker was waiting.
+            history_exists = all(path.exists() for path in paths.required_files)
+            schema_is_current = history_exists and (
+                json.loads(paths.metadata.read_text(encoding="utf-8"))[
+                    "schema_version"
+                ]
+                == SCHEMA_VERSION
             )
-        history = cls(paths)
-        checked_at = datetime.fromisoformat(
-            str(history.metadata["repository_checked_at"])
-        )
-        now = _utc_now()
-        if _repository_refresh_due(checked_at, now):
-            refresh_repository(paths.repository)
-            if (
-                latest_airports_commit(paths.repository)
-                != history.latest_available_commit
-            ):
-                update_history(paths)
-                history = cls(paths)
-            _record_repository_check(history, now)
-        return history
+            if not schema_is_current:
+                build_history(
+                    paths,
+                    baseline_date=baseline_date,
+                    repository_url=repository_url,
+                )
+            history = cls(paths)
+            checked_at = datetime.fromisoformat(
+                str(history.metadata["repository_checked_at"])
+            )
+            now = _utc_now()
+            if _repository_refresh_due(checked_at, now):
+                refresh_repository(paths.repository)
+                if (
+                    latest_airports_commit(paths.repository)
+                    != history.latest_available_commit
+                ):
+                    update_history(paths)
+                    history = cls(paths)
+                _record_repository_check(history, now)
+            return history
 
     @property
     def metadata(self) -> dict[str, object]:
