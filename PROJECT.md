@@ -26,6 +26,7 @@ Tasks that directly advance the current milestone.
 - [ x ] Hookup 8TB harddrive
 - [ x ] Figure out Ourairports.com changes over time
 - [ x ] Change flights run to no logner delete ADS-B files downloaded. 
+- [   ] See that tests/flights/evaluation/test_flights_algorithm.py works again. 
 - [   ] **End to end test suite so I can make performance changes.** 
 - [ ] **Calculate how long 1 year flights run will take.** 
 - [ ] **Do basic numerical checks on number of flights per day**
