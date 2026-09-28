@@ -57,9 +57,10 @@ def get_daily_flight_counts(
 
 def find_outliers(
     counts: dict[date, int],
-    sigma: float = 2.0,
+    low_sigma: float = 2.0,
+    high_sigma: float = 3.0,
 ) -> tuple[list[tuple[date, int]], float, float]:
-    """Return days outside mean +/- ``sigma`` standard deviations.
+    """Return unusually low days and exceptionally high days.
 
     Empty days are tested as zero-count outliers but are excluded from the fit,
     so missing-data placeholders cannot pull the normal range toward zero.
@@ -70,8 +71,8 @@ def find_outliers(
 
     mean = statistics.mean(normal_counts)
     stddev = statistics.stdev(normal_counts)
-    lower = mean - sigma * stddev
-    upper = mean + sigma * stddev
+    lower = mean - low_sigma * stddev
+    upper = mean + high_sigma * stddev
     outliers = sorted(
         (day, count)
         for day, count in counts.items()
@@ -90,7 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--sigma",
         type=float,
         default=2.0,
-        help="Standard deviations from the mean (default: 2.0).",
+        help="Standard deviations for low-count outliers (default: 2.0).",
+    )
+    parser.add_argument(
+        "--high-sigma",
+        type=float,
+        default=3.0,
+        help="Standard deviations for exceptionally high counts (default: 3.0).",
     )
     return parser
 
@@ -101,6 +108,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("end_date must be after start_date")
     if args.sigma <= 0:
         raise SystemExit("sigma must be positive")
+    if args.high_sigma <= 0:
+        raise SystemExit("high-sigma must be positive")
 
     periods = split_date_range(args.start_date, args.end_date)
     for index, (period_start, period_end) in enumerate(periods):
@@ -110,12 +119,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         counts = get_daily_flight_counts(period_start, period_end)
         try:
-            outliers, lower, upper = find_outliers(counts, args.sigma)
+            outliers, lower, upper = find_outliers(
+                counts,
+                low_sigma=args.sigma,
+                high_sigma=args.high_sigma,
+            )
         except ValueError as exc:
             print(f"Unable to assess: {exc}")
             continue
 
-        print(f"Normal range: {lower:,.0f} to {upper:,.0f} flights")
+        print(f"Low-count threshold: below {lower:,.0f} flights")
+        print(f"Exceptional high-count threshold: above {upper:,.0f} flights")
         for day, count in outliers:
             print(f"{day}: {count:,} flights")
     return 0
