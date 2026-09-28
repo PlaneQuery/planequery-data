@@ -877,13 +877,31 @@ def create_flights_for_day(
     print(f"number of workers: {max_workers}")
 
     day_start, day_end = _day_bounds(target_date)
-    created_parquet_days = ensure_adsb_source_data(
+    ensure_adsb_source_data(
         day_start,
         day_end,
         source=source,
-        pia_or_american_ladd_only=pia_or_american_ladd_only,
     )
-    available_icaos = sorted(get_icaos_in_adsb(target_date, source=source))
+    if pia_or_american_ladd_only:
+        available_icaos = (
+            read_adsb(
+                target_date,
+                columns=["icao"],
+                source=source,
+                pia_or_american_ladd_only=True,
+                lazy=True,
+            )
+            .drop_nulls()
+            .unique()
+            .collect(engine="streaming")
+            .get_column("icao")
+            .sort()
+            .to_list()
+        )
+    else:
+        available_icaos = sorted(
+            get_icaos_in_adsb(target_date, source=source)
+        )
     if icaos is None:
         icaos = available_icaos
     else:

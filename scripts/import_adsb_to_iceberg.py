@@ -2,7 +2,10 @@ from pyspark.sql import SparkSession
 
 DATABASE = "planequery_lake_dev"
 TABLE = "adsb_messages"
-BASE_INPUT = "s3://planequery-dev-planequery-data/data/raw/adsblol/parquet_output/v5"
+BASE_INPUT = (
+    "s3://planequery-dev-planequery-data/data/processed/adsb/parquet_output/"
+    "source=adsblol/version=6"
+)
 TARGET = f"glue_catalog.{DATABASE}.{TABLE}"
 
 spark = SparkSession.builder.getOrCreate()

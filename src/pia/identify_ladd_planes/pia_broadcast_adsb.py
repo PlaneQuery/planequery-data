@@ -2,6 +2,7 @@ from pathlib import Path
 
 import polars as pl
 
+from data_engineering.adsb.canonical import ADSBSource, adsb_parquet_root
 from data_engineering.openairframes.read import get_openairframes_faa_df
 from data_engineering.utils import OUTPUT_DIR
 
@@ -13,7 +14,7 @@ Checks that a pia icao isen't assigned to multiple N-numbers
 
 ACCIDENTAL_CALLSIGNS = ["N12345", "N123AB"]
 
-BASE_PATH = OUTPUT_DIR / "data/raw/adsblol/parquet_output/v6"
+BASE_PATH = adsb_parquet_root(ADSBSource.ADSBLOL)
 PIA_BROADCAST_CACHE_PATH = Path("resources/pia/pia_broadcast_adsb.csv")
 
 def longest_period_between_icao_usage(df):
