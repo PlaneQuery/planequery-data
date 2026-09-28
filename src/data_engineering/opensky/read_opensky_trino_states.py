@@ -1,5 +1,5 @@
 import shutil
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -15,6 +15,7 @@ from data_engineering.adsb.partitions import (
 from data_engineering.opensky.paths import (
     OPENSKY_PROCESSED_STATE_VECTORS_ROOT,
     OPENSKY_RAW_STATE_VECTORS_ROOT,
+    coerce_date,
     processed_state_vectors_day_dir,
     raw_state_vectors_day_dir,
 )
@@ -43,6 +44,28 @@ def opensky_state_vector_files(
     return sorted(state_vectors_dir.glob("hour=*/data.parquet"))
 
 
+def _complete_opensky_state_vector_files(
+    current_day: date | datetime | str,
+) -> list[Path]:
+    parquet_files = opensky_state_vector_files(current_day)
+    if not parquet_files:
+        raise FileNotFoundError(
+            f"No OpenSky state vector parquet files found under "
+            f"{opensky_state_vectors_dir(current_day)}"
+        )
+
+    files_by_hour = {path.parent.name: path for path in parquet_files}
+    expected_hours = [f"hour={hour:02d}" for hour in range(24)]
+    missing_hours = [hour for hour in expected_hours if hour not in files_by_hour]
+    if missing_hours:
+        raise FileNotFoundError(
+            f"OpenSky raw day is incomplete under "
+            f"{opensky_state_vectors_dir(current_day)}; missing "
+            f"{', '.join(missing_hours)}"
+        )
+    return [files_by_hour[hour] for hour in expected_hours]
+
+
 def opensky_processed_state_vectors_path(
     current_day: date | datetime | str,
 ) -> Path:
@@ -56,22 +79,16 @@ def scan_opensky_state_vectors_for_day(
     *,
     require_complete: bool = True,
 ) -> pl.LazyFrame:
-    parquet_files = opensky_state_vector_files(current_day)
+    parquet_files = (
+        _complete_opensky_state_vector_files(current_day)
+        if require_complete
+        else opensky_state_vector_files(current_day)
+    )
     if not parquet_files:
         raise FileNotFoundError(
             f"No OpenSky state vector parquet files found under "
             f"{opensky_state_vectors_dir(current_day)}"
         )
-    if require_complete:
-        found_hours = {path.parent.name for path in parquet_files}
-        expected_hours = {f"hour={hour:02d}" for hour in range(24)}
-        missing_hours = sorted(expected_hours - found_hours)
-        if missing_hours:
-            raise FileNotFoundError(
-                f"OpenSky raw day is incomplete under "
-                f"{opensky_state_vectors_dir(current_day)}; missing "
-                f"{', '.join(missing_hours)}"
-            )
 
     df = pl.scan_parquet(
         parquet_files,
@@ -165,15 +182,7 @@ def align_to_adsb_parquet_schema(df: pl.LazyFrame) -> pl.LazyFrame:
     return df
 
 
-def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
-    """Convert fresh OpenSky state vectors to canonical ADS-B-like rows.
-
-    OpenSky's ``time`` is the state-vector snapshot time. Position values may
-    have been carried forward from an older update, whose actual timestamp is
-    ``lastPosUpdate``. Stale snapshots are removed, repeated snapshots of the
-    same position update are collapsed, and the output is timestamped with the
-    actual position-update time.
-    """
+def _prepare_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
     input_columns = set(df.collect_schema().names())
     aliases = {
         old: new
@@ -195,6 +204,12 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
         raise ValueError(
             f"OpenSky normalization requires freshness columns: {missing}"
         )
+
+    return df
+
+
+def _fresh_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
+    df = _prepare_opensky_state_vectors(df)
 
     contact_age = (
         pl.col("time").cast(pl.Float64) - pl.col("lastcontact")
@@ -225,6 +240,12 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
         )
     )
 
+    return df
+
+
+def _normalize_fresh_opensky_state_vectors(
+    df: pl.LazyFrame,
+) -> pl.LazyFrame:
     return df.select(
         pl.from_epoch(pl.col("lastposupdate"), time_unit="s")
         .dt.replace_time_zone(None)
@@ -238,6 +259,20 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
         (pl.col("baroaltitude") * 3.28084).alias("baro_altitude_ft"),
         (pl.col("geoaltitude") * 3.28084).alias("geom_altitude_ft"),
         *[pl.col(column) for column in ADDITIONAL_COLUMNS if column != "time"],
+    )
+
+
+def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
+    """Convert fresh OpenSky state vectors to canonical ADS-B-like rows.
+
+    OpenSky's ``time`` is the state-vector snapshot time. Position values may
+    have been carried forward from an older update, whose actual timestamp is
+    ``lastPosUpdate``. Stale snapshots are removed, repeated snapshots of the
+    same position update are collapsed, and the output is timestamped with the
+    actual position-update time.
+    """
+    return _normalize_fresh_opensky_state_vectors(
+        _fresh_opensky_state_vectors(df)
     )
 
 
@@ -257,23 +292,26 @@ def write_opensky_state_vectors_cache_for_day(
     current_day: date | datetime | str,
     overwrite: bool = False,
 ) -> Path:
-    """Build a canonical, ICAO-bucketed cache from the 24 raw hour files."""
+    """Build a canonical, ICAO-bucketed cache one raw hour at a time.
+
+    The raw OpenSky day can contain hundreds of millions of rows. Keeping the
+    normalization and deduplication query bounded to one hour prevents Polars
+    from retaining a day-wide hash table. A state vector can only remain fresh
+    for ``MAX_STATE_VECTOR_AGE_SECONDS``, so retaining that small tail of exact
+    deduplication keys is sufficient to remove repeats across hour boundaries.
+    """
     output_dir = opensky_processed_state_vectors_path(current_day)
     success_path = output_dir / "_SUCCESS"
     if success_path.exists() and not overwrite:
         return output_dir
 
-    df = scan_normalized_opensky_state_vectors_for_day(current_day)
-    df = align_to_adsb_parquet_schema(df)
-    df = df.with_columns(
-        (
-            pl.col("icao")
-            .str.to_integer(base=16, strict=False)
-            .floordiv(ICAO_BUCKET_SIZE)
-            .clip(0, ICAO_BUCKET_COUNT - 1)
-            .fill_null(ICAO_BUCKET_COUNT - 1)
-            .cast(pl.Int8)
-        ).alias("icao_bucket")
+    parquet_files = _complete_opensky_state_vector_files(current_day)
+    target_day = coerce_date(current_day)
+    day_start = datetime(
+        target_day.year,
+        target_day.month,
+        target_day.day,
+        tzinfo=timezone.utc,
     )
 
     temp_dir = output_dir.with_name(f".{output_dir.name}.tmp")
@@ -281,16 +319,75 @@ def write_opensky_state_vectors_cache_for_day(
         shutil.rmtree(temp_dir)
     temp_dir.parent.mkdir(parents=True, exist_ok=True)
     try:
-        df.sink_parquet(
-            pl.PartitionBy(
-                temp_dir,
-                key="icao_bucket",
-                include_key=False,
-            ),
-            compression="zstd",
-            maintain_order=False,
-            mkdir=True,
+        previous_boundary = pl.DataFrame(
+            schema={"icao24": pl.String, "lastposupdate": pl.Float64}
         )
+        deduplication_columns = ["icao24", "lastposupdate"]
+
+        for hour, parquet_file in enumerate(parquet_files):
+            print(
+                f"Building OpenSky cache for {target_day}: hour {hour:02d}/23",
+                flush=True,
+            )
+            raw = pl.scan_parquet(
+                parquet_file,
+                hive_partitioning=False,
+            ).select(DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS)
+            fresh = _fresh_opensky_state_vectors(raw)
+            if not previous_boundary.is_empty():
+                fresh = fresh.join(
+                    previous_boundary.lazy(),
+                    on=deduplication_columns,
+                    how="anti",
+                )
+
+            next_hour_epoch = (
+                day_start + timedelta(hours=hour + 1)
+            ).timestamp()
+            previous_boundary = (
+                fresh.filter(
+                    pl.col("lastposupdate")
+                    >= next_hour_epoch - MAX_STATE_VECTOR_AGE_SECONDS
+                )
+                .select(deduplication_columns)
+                .collect(engine="streaming")
+            )
+
+            normalized = _normalize_fresh_opensky_state_vectors(fresh)
+            normalized = align_to_adsb_parquet_schema(normalized)
+            normalized = normalized.with_columns(
+                (
+                    pl.col("icao")
+                    .str.to_integer(base=16, strict=False)
+                    .floordiv(ICAO_BUCKET_SIZE)
+                    .clip(0, ICAO_BUCKET_COUNT - 1)
+                    .fill_null(ICAO_BUCKET_COUNT - 1)
+                    .cast(pl.Int8)
+                ).alias("icao_bucket")
+            )
+
+            def hourly_output_path(args, current_hour=hour):
+                bucket = args.partition_keys.get_column("icao_bucket").item()
+                return (
+                    temp_dir
+                    / f"icao_bucket={bucket}"
+                    / (
+                        f"hour={current_hour:02d}-"
+                        f"part={args.index_in_partition:05d}.parquet"
+                    )
+                )
+
+            normalized.sink_parquet(
+                pl.PartitionBy(
+                    temp_dir,
+                    key="icao_bucket",
+                    include_key=False,
+                    file_path_provider=hourly_output_path,
+                ),
+                compression="zstd",
+                maintain_order=False,
+                mkdir=True,
+            )
         (temp_dir / "_SUCCESS").touch()
         if output_dir.exists():
             shutil.rmtree(output_dir)

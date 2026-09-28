@@ -118,6 +118,22 @@ def _write_raw_hour(path: Path, start: datetime) -> None:
     ).write_parquet(path, mkdir=True)
 
 
+def _append_position_update(
+    path: Path,
+    *,
+    snapshot_time: float,
+    position_time: float,
+) -> None:
+    existing = pl.read_parquet(path)
+    extra = existing.head(1).with_columns(
+        pl.lit(int(snapshot_time), dtype=existing.schema["time"]).alias("time"),
+        pl.lit(position_time).alias("lastposupdate"),
+        pl.lit(snapshot_time).alias("lastcontact"),
+        pl.lit("BOUNDARY").alias("callsign"),
+    )
+    pl.concat([existing, extra]).write_parquet(path)
+
+
 def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
     monkeypatch,
     tmp_path,
@@ -157,3 +173,53 @@ def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
         "icao_bucket=0",
         "icao_bucket=7",
     ]
+    assert len(list((processed_day / "icao_bucket=0").glob("*.parquet"))) == 24
+    assert len(list((processed_day / "icao_bucket=7").glob("*.parquet"))) == 24
+
+
+def test_hourly_cache_deduplicates_position_update_across_hour_boundary(
+    monkeypatch,
+    tmp_path,
+):
+    raw_day = tmp_path / "raw"
+    processed_day = tmp_path / "processed"
+    monkeypatch.setattr(
+        opensky_reader,
+        "raw_state_vectors_day_dir",
+        lambda day: raw_day,
+    )
+    monkeypatch.setattr(
+        opensky_reader,
+        "processed_state_vectors_day_dir",
+        lambda day: processed_day,
+    )
+
+    start = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    for hour in range(24):
+        _write_raw_hour(
+            raw_day / f"hour={hour:02d}" / "data.parquet",
+            start + timedelta(hours=hour),
+        )
+
+    hour_boundary = (start + timedelta(hours=1)).timestamp()
+    position_time = hour_boundary - 0.5
+    _append_position_update(
+        raw_day / "hour=00" / "data.parquet",
+        snapshot_time=hour_boundary - 1,
+        position_time=position_time,
+    )
+    _append_position_update(
+        raw_day / "hour=01" / "data.parquet",
+        snapshot_time=hour_boundary,
+        position_time=position_time,
+    )
+
+    result = opensky_reader.scan_cached_opensky_state_vectors_for_day(
+        date(2024, 6, 1),
+        columns=["time", "icao", "callsign"],
+        icaos=["010000"],
+    ).collect()
+
+    boundary_time = datetime(2024, 6, 1, 0, 59, 59, 500_000)
+    assert result.filter(pl.col("time") == boundary_time).height == 1
+    assert result.height == 25
