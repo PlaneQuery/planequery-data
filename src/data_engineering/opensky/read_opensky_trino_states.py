@@ -1,28 +1,29 @@
 import shutil
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
 
 import polars as pl
-import pyarrow as pa
 
-from data_engineering.adsb.parquet_schema import PARQUET_SCHEMA
+from data_engineering.adsb.canonical import (
+    ADSBSource,
+    adsb_day_dir,
+    canonicalize_adsb_frame,
+    write_canonical_adsb_parquet,
+)
 from data_engineering.adsb.partitions import (
     ICAO_BUCKET_COUNT,
     ICAO_BUCKET_SIZE,
-    query_icao_buckets,
 )
 from data_engineering.opensky.paths import (
-    OPENSKY_PROCESSED_STATE_VECTORS_ROOT,
     OPENSKY_RAW_STATE_VECTORS_ROOT,
     coerce_date,
-    processed_state_vectors_day_dir,
     raw_state_vectors_day_dir,
 )
 
 
 DEFAULT_OPENSKY_TRINO_ROOT = OPENSKY_RAW_STATE_VECTORS_ROOT
-DEFAULT_OPENSKY_PROCESSED_ROOT = OPENSKY_PROCESSED_STATE_VECTORS_ROOT
+OPENSKY_PROCESSING_SHARD_COUNT = 256
+OPENSKY_PROCESSING_SHARD_SIZE = 0x1000000 // OPENSKY_PROCESSING_SHARD_COUNT
 
 # A state-vector row is a snapshot, not necessarily a newly received position.
 # OpenSky may repeat the last known state for minutes. Only retain snapshots
@@ -69,8 +70,8 @@ def _complete_opensky_state_vector_files(
 def opensky_processed_state_vectors_path(
     current_day: date | datetime | str,
 ) -> Path:
-    """Return the generated, ICAO-bucketed cache directory for one day."""
-    return processed_state_vectors_day_dir(current_day)
+    """Return the canonical OpenSky Parquet directory for one day."""
+    return adsb_day_dir(ADSBSource.OPENSKY, current_day)
 
 
 def scan_opensky_state_vectors_for_day(
@@ -135,51 +136,13 @@ OPENAIRFRAMES_COLUMNS = [
     "military",
     "interesting",
 ]
-ADSB_PARQUET_COLUMN_NAMES = set(PARQUET_SCHEMA.names)
-
-
-def _polars_dtype_from_arrow_type(arrow_type: pa.DataType) -> pl.DataType:
-    if pa.types.is_timestamp(arrow_type):
-        return pl.Datetime(arrow_type.unit, arrow_type.tz)
-    if pa.types.is_string(arrow_type):
-        return pl.Utf8
-    if pa.types.is_boolean(arrow_type):
-        return pl.Boolean
-    if pa.types.is_int32(arrow_type):
-        return pl.Int32
-    if pa.types.is_int64(arrow_type):
-        return pl.Int64
-    if pa.types.is_float32(arrow_type):
-        return pl.Float32
-    if pa.types.is_float64(arrow_type):
-        return pl.Float64
-    if pa.types.is_list(arrow_type) and pa.types.is_string(arrow_type.value_type):
-        return pl.List(pl.Utf8)
-    raise TypeError(f"Unsupported ADS-B parquet schema type: {arrow_type}")
 
 
 def align_to_adsb_parquet_schema(df: pl.LazyFrame) -> pl.LazyFrame:
-    """Validate and cast existing columns to the canonical ADS-B parquet schema."""
-    columns = df.collect_schema().names()
-    unknown_columns = sorted(set(columns) - ADSB_PARQUET_COLUMN_NAMES)
-    if unknown_columns:
-        raise ValueError(
-            "OpenSky ADS-B columns are not in PARQUET_SCHEMA: "
-            f"{', '.join(unknown_columns)}"
-        )
-
-    schema_fields = [field for field in PARQUET_SCHEMA if field.name in columns]
-    df = df.select(
-        [
-            pl.col(field.name)
-            .cast(_polars_dtype_from_arrow_type(field.type))
-            .alias(field.name)
-            for field in schema_fields
-        ]
+    """Cast the normalized OpenSky subset to canonical ADS-B types."""
+    return canonicalize_adsb_frame(df, include_missing=False).filter(
+        pl.col("lat").is_not_null() & pl.col("lon").is_not_null()
     )
-    df = df.filter(pl.col("lat").is_not_null())
-    df = df.filter(pl.col("lon").is_not_null())
-    return df
 
 
 def _prepare_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
@@ -276,29 +239,21 @@ def normalize_opensky_state_vectors(df: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def scan_normalized_opensky_state_vectors_for_day(
-    current_day: date | datetime | str,
-) -> pl.LazyFrame:
-    """Scan and normalize one day of raw OpenSky state-vector parquet."""
-    return normalize_opensky_state_vectors(
-        scan_opensky_state_vectors_for_day(
-            current_day,
-            DEFAULT_OPENSKY_STATE_VECTOR_COLUMNS,
-        )
-    )
-
-
 def write_opensky_state_vectors_cache_for_day(
     current_day: date | datetime | str,
     overwrite: bool = False,
 ) -> Path:
-    """Build a canonical, ICAO-bucketed cache one raw hour at a time.
+    """Build cleaned canonical OpenSky Parquet with bounded memory.
 
     The raw OpenSky day can contain hundreds of millions of rows. Keeping the
     normalization and deduplication query bounded to one hour prevents Polars
     from retaining a day-wide hash table. A state vector can only remain fresh
     for ``MAX_STATE_VECTOR_AGE_SECONDS``, so retaining that small tail of exact
-    deduplication keys is sufficient to remove repeats across hour boundaries.
+    deduplication keys removes repeats across hour boundaries.
+
+    Normalized rows are staged in fine-grained processing shards. Each shard
+    contains complete aircraft traces, allowing source cleanup to be applied
+    once without changing the canonical eight-bucket output layout.
     """
     output_dir = opensky_processed_state_vectors_path(current_day)
     success_path = output_dir / "_SUCCESS"
@@ -315,6 +270,7 @@ def write_opensky_state_vectors_cache_for_day(
     )
 
     temp_dir = output_dir.with_name(f".{output_dir.name}.tmp")
+    staging_dir = temp_dir / "_normalized"
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     temp_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -359,18 +315,18 @@ def write_opensky_state_vectors_cache_for_day(
                 (
                     pl.col("icao")
                     .str.to_integer(base=16, strict=False)
-                    .floordiv(ICAO_BUCKET_SIZE)
-                    .clip(0, ICAO_BUCKET_COUNT - 1)
-                    .fill_null(ICAO_BUCKET_COUNT - 1)
-                    .cast(pl.Int8)
-                ).alias("icao_bucket")
+                    .floordiv(OPENSKY_PROCESSING_SHARD_SIZE)
+                    .clip(0, OPENSKY_PROCESSING_SHARD_COUNT - 1)
+                    .fill_null(OPENSKY_PROCESSING_SHARD_COUNT - 1)
+                    .cast(pl.UInt8)
+                ).alias("processing_shard")
             )
 
             def hourly_output_path(args, current_hour=hour):
-                bucket = args.partition_keys.get_column("icao_bucket").item()
+                shard = args.partition_keys.get_column("processing_shard").item()
                 return (
-                    temp_dir
-                    / f"icao_bucket={bucket}"
+                    staging_dir
+                    / f"processing_shard={shard}"
                     / (
                         f"hour={current_hour:02d}-"
                         f"part={args.index_in_partition:05d}.parquet"
@@ -379,8 +335,8 @@ def write_opensky_state_vectors_cache_for_day(
 
             normalized.sink_parquet(
                 pl.PartitionBy(
-                    temp_dir,
-                    key="icao_bucket",
+                    staging_dir,
+                    key="processing_shard",
                     include_key=False,
                     file_path_provider=hourly_output_path,
                 ),
@@ -388,6 +344,48 @@ def write_opensky_state_vectors_cache_for_day(
                 maintain_order=False,
                 mkdir=True,
             )
+
+        from data_engineering.openairframes.read import (
+            scan_latest_icao_info_for_join,
+        )
+        from data_engineering.opensky.preprocess import preprocess_opensky_adsb
+
+        openairframes = (
+            scan_latest_icao_info_for_join()
+            .with_columns(pl.col("icao").str.to_lowercase())
+            .collect(engine="streaming")
+        )
+        shard_dirs = sorted(staging_dir.glob("processing_shard=*"))
+        for shard_number, shard_dir in enumerate(shard_dirs, start=1):
+            processing_shard = int(shard_dir.name.partition("=")[2])
+            print(
+                f"Cleaning OpenSky cache for {target_day}: "
+                f"shard {shard_number}/{len(shard_dirs)}",
+                flush=True,
+            )
+            cleaned = preprocess_opensky_adsb(
+                pl.scan_parquet(
+                    sorted(shard_dir.glob("*.parquet")),
+                    hive_partitioning=False,
+                )
+            )
+            enriched = join_lf_with_openairframes(cleaned, openairframes)
+            canonical = canonicalize_adsb_frame(enriched, include_missing=True)
+
+            icao_bucket = min(
+                processing_shard
+                * OPENSKY_PROCESSING_SHARD_SIZE
+                // ICAO_BUCKET_SIZE,
+                ICAO_BUCKET_COUNT - 1,
+            )
+            write_canonical_adsb_parquet(
+                canonical,
+                temp_dir
+                / f"icao_bucket={icao_bucket}"
+                / f"part={processing_shard:03d}.parquet",
+            )
+
+        shutil.rmtree(staging_dir)
         (temp_dir / "_SUCCESS").touch()
         if output_dir.exists():
             shutil.rmtree(output_dir)
@@ -397,72 +395,6 @@ def write_opensky_state_vectors_cache_for_day(
             shutil.rmtree(temp_dir)
         raise
     return output_dir
-
-
-def _empty_normalized_scan(columns: Sequence[str]) -> pl.LazyFrame:
-    fields = {field.name: field for field in PARQUET_SCHEMA}
-    return pl.DataFrame(
-        schema={
-            column: (
-                _polars_dtype_from_arrow_type(fields[column].type)
-                if column in fields
-                else pl.Null
-            )
-            for column in columns
-        }
-    ).lazy()
-
-
-def _cached_opensky_files(
-    current_day: date | datetime | str,
-    icaos: Sequence[str] | None,
-) -> list[Path]:
-    output_dir = opensky_processed_state_vectors_path(current_day)
-    buckets = query_icao_buckets(icaos)
-    if buckets is None:
-        return sorted(output_dir.glob("icao_bucket=*/*.parquet"))
-    return sorted(
-        path
-        for bucket in buckets
-        for path in (output_dir / f"icao_bucket={bucket}").glob("*.parquet")
-    )
-
-
-def scan_cached_opensky_state_vectors_for_day(
-    current_day: date | datetime | str,
-    columns: list[str] | None = None,
-    overwrite: bool = False,
-    *,
-    icaos: Sequence[str] | None = None,
-) -> pl.LazyFrame:
-    write_opensky_state_vectors_cache_for_day(
-        current_day=current_day,
-        overwrite=overwrite,
-    )
-    parquet_files = _cached_opensky_files(current_day, icaos)
-    if not parquet_files:
-        if columns is None:
-            columns = [field.name for field in PARQUET_SCHEMA]
-        return _empty_normalized_scan(columns)
-
-    df = pl.scan_parquet(parquet_files, hive_partitioning=False)
-    if icaos is not None:
-        df = df.filter(pl.col("icao").is_in([icao.lower() for icao in icaos]))
-    if columns:
-        df = df.select(columns)
-    return df
-
-
-def read_opensky_state_vectors_for_day(
-    current_day: date | datetime | str,
-    columns: list[str] | None = None,
-    overwrite_cache: bool = False,
-) -> pl.DataFrame:
-    return scan_cached_opensky_state_vectors_for_day(
-        current_day=current_day,
-        columns=columns,
-        overwrite=overwrite_cache,
-    ).collect()
 
 
 def join_lf_with_openairframes(
@@ -476,58 +408,3 @@ def join_lf_with_openairframes(
         on="icao",
         how="left",
     )
-
-
-def get_icaos_in_opensky(current_day: date | datetime | str) -> list[str]:
-    df = (
-        scan_cached_opensky_state_vectors_for_day(current_day, columns=["icao"])
-        .unique()
-        .collect(engine="streaming")
-    )
-    return df.get_column("icao").drop_nulls().to_list()
-
-
-def scan_opensky_messages_for_range(
-    start_dt: datetime,
-    end_dt: datetime,
-    icaos: Sequence[str] | None = None,
-    columns: list[str] | None = None,
-) -> pl.LazyFrame:
-    """Scan OpenSky state vectors as ADS-B-like messages for a single day.
-
-    OpenSky state vector parquet is only downloaded one day at a time, so
-    this reads the day of `start_dt` (unlike ADSB.lol/ADSBX, there is no
-    surrounding-day context to look up).
-
-    Joins in OpenAirframes metadata and renames columns to match the ADS-B
-    message schema used elsewhere (see `data_engineering.adsb.read_adsb.read_adsb`),
-    so OpenSky can be used as an `adsb_src` for the flights algorithm.
-    """
-    from data_engineering.openairframes.read import scan_latest_icao_info_for_join
-
-    df = scan_cached_opensky_state_vectors_for_day(
-        start_dt.date(),
-        icaos=icaos,
-    )
-    df = df.filter(
-        (pl.col("time") >= start_dt)
-        & (pl.col("time") < end_dt)
-        & pl.col("lat").is_not_null()
-        & pl.col("lon").is_not_null()
-    )
-    df_openairframes = scan_latest_icao_info_for_join().with_columns(
-        pl.col("icao").str.to_lowercase()
-    )
-    df = df.with_columns(pl.col("icao").str.to_lowercase())
-    df = join_lf_with_openairframes(df, df_openairframes)
-
-    if columns is not None:
-        df = df.select(columns)
-    return df
-
-
-if __name__ == "__main__":
-    df = read_opensky_state_vectors_for_day(
-        "2026-03-01",
-    )
-    print(df)

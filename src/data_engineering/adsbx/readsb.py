@@ -2,6 +2,7 @@ import argparse
 import datetime as dt
 import gzip
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,20 +11,20 @@ import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from data_engineering.adsb.canonical import (
+    ADSBSource,
+    adsb_day_is_complete,
+    adsb_parquet_root,
+    mark_adsb_day_complete,
+)
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
+from data_engineering.adsb.partitions import ICAO_BUCKET_COUNT, icao_bucket
 from data_engineering.utils import OUTPUT_DIR
 
 
 DEFAULT_INPUT_ROOT = OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "readsb-hist"
 DEFAULT_INPUT_PATH = DEFAULT_INPUT_ROOT / "2026" / "03" / "01"
-DEFAULT_OUTPUT_ROOT = Path(
-    OUTPUT_DIR / "data" / "processed" / "adsb-exchange" / "readsb-hist" / "parquet"
-)
-DEFAULT_BUCKETED_OUTPUT_ROOT = (
-    OUTPUT_DIR / "data" / "raw" / "adsb-exchange" / "traces_parquet"
-)
-ICAO_BUCKET_COUNT = 8
-ICAO_BUCKET_SIZE = 0x1000000 // ICAO_BUCKET_COUNT
+DEFAULT_BUCKETED_OUTPUT_ROOT = adsb_parquet_root(ADSBSource.ADSBX)
 FILENAME_RE = re.compile(r"^(\d{2})(\d{2})(\d{2})Z\.json\.gz$")
 
 
@@ -102,18 +103,6 @@ def readsb_snapshot_files(
     if start_after is not None:
         sampled_files = [path for path in sampled_files if path.name > start_after]
     return sampled_files
-
-
-def default_output_path(input_path: Path) -> Path:
-    day_dir = input_path.parent if input_path.is_file() else input_path
-    year, month, day = day_dir.parts[-3:]
-    return (
-        DEFAULT_OUTPUT_ROOT
-        / f"year={year}"
-        / f"month={month}"
-        / f"day={day}"
-        / "part-00000.parquet"
-    )
 
 
 def _db_flags(raw):
@@ -231,15 +220,6 @@ def read_snapshot(path: Path) -> dict[str, list]:
     return cols
 
 
-def _extend_cols(target: dict[str, list], source: dict[str, list]) -> int:
-    row_count = len(source["time"])
-    if not row_count:
-        return 0
-    for col in COLUMNS:
-        target[col].extend(source[col])
-    return row_count
-
-
 def _write_batch(writer: pq.ParquetWriter, cols: dict[str, list]) -> int:
     row_count = len(cols["time"])
     arrays = [pa.array(cols[col], type=PARQUET_SCHEMA.field(col).type) for col in COLUMNS]
@@ -250,13 +230,6 @@ def _write_batch(writer: pq.ParquetWriter, cols: dict[str, list]) -> int:
 
 def _empty_cols() -> dict[str, list]:
     return {col: [] for col in COLUMNS}
-
-
-def _icao_bucket(icao: str) -> int:
-    if icao.startswith("~"):
-        return ICAO_BUCKET_COUNT - 1
-    icao_int = int(icao.lower(), 16)
-    return min(icao_int // ICAO_BUCKET_SIZE, ICAO_BUCKET_COUNT - 1)
 
 
 def _bucketed_output_paths(input_path: Path, output_root: Path) -> dict[int, Path]:
@@ -281,7 +254,7 @@ def _extend_bucket_cols(
 ) -> dict[int, int]:
     row_counts_by_bucket = {bucket: 0 for bucket in range(ICAO_BUCKET_COUNT)}
     for row_idx, icao in enumerate(snapshot_cols["icao"]):
-        bucket = _icao_bucket(icao)
+        bucket = icao_bucket(icao)
         for col in COLUMNS:
             batch_cols_by_bucket[bucket][col].append(snapshot_cols[col][row_idx])
         row_counts_by_bucket[bucket] += 1
@@ -309,56 +282,6 @@ def _write_bucket_batch(
     return row_count
 
 
-def write_readsb_day_to_parquet(
-    input_path: Path = DEFAULT_INPUT_PATH,
-    output_path: Path | None = None,
-    batch_size: int = 250_000,
-    start_after: str | None = None,
-) -> Path:
-    input_path = Path(input_path)
-    output_path = Path(output_path) if output_path else default_output_path(input_path)
-    files = readsb_snapshot_files(input_path, start_after=start_after)
-    if not files:
-        raise FileNotFoundError(f"No 15-second readsb snapshots found under {input_path}")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    batch_cols = {col: [] for col in COLUMNS}
-    batch_count = 0
-    total_rows = 0
-    skipped_files = []
-
-    with pq.ParquetWriter(output_path, PARQUET_SCHEMA, compression="zstd") as writer:
-        for index, path in enumerate(files, start=1):
-            try:
-                snapshot_cols = read_snapshot(path)
-            except (EOFError, OSError, orjson.JSONDecodeError) as exc:
-                skipped_files.append((path.name, exc))
-                print(f"skipping {path.name}: {type(exc).__name__}: {exc}")
-                continue
-
-            batch_count += _extend_cols(batch_cols, snapshot_cols)
-            if batch_count >= batch_size:
-                written_rows = _write_batch(writer, batch_cols)
-                total_rows += written_rows
-                print(f"wrote {written_rows:,} rows ({total_rows:,} total) at {path.name}")
-                batch_cols = {col: [] for col in COLUMNS}
-                batch_count = 0
-            if index % 500 == 0:
-                print(f"processed {index:,}/{len(files):,} files")
-
-        if batch_count:
-            written_rows = _write_batch(writer, batch_cols)
-            total_rows += written_rows
-            print(f"wrote {written_rows:,} final rows ({total_rows:,} total)")
-
-    if skipped_files:
-        print("skipped files:")
-        for name, exc in skipped_files:
-            print(f"  {name}: {type(exc).__name__}: {exc}")
-    print(f"wrote parquet: {output_path}")
-    return output_path
-
-
 def write_readsb_day_to_bucketed_parquet(
     input_path: Path,
     output_root: Path = DEFAULT_BUCKETED_OUTPUT_ROOT,
@@ -371,6 +294,9 @@ def write_readsb_day_to_bucketed_parquet(
     if not files:
         raise FileNotFoundError(f"No 15-second readsb snapshots found under {input_path}")
 
+    day_dir = next(iter(_bucketed_output_paths(input_path, output_root).values())).parents[1]
+    if day_dir.exists():
+        shutil.rmtree(day_dir)
     parquet_paths = _bucketed_output_paths(input_path, output_root)
     batch_cols_by_bucket = {
         bucket: _empty_cols()
@@ -442,6 +368,7 @@ def write_readsb_day_to_bucketed_parquet(
             print(f"  {name}: {type(exc).__name__}: {exc}")
 
     total_rows = sum(total_rows_by_bucket.values())
+    mark_adsb_day_complete(day_dir)
     print(f"wrote bucketed parquet under: {output_root}")
     print(f"total rows written: {total_rows:,}")
     return parquet_paths
@@ -451,13 +378,17 @@ def ensure_readsb_day_bucketed_parquet(
     day: dt.date,
     output_root: Path = DEFAULT_BUCKETED_OUTPUT_ROOT,
 ) -> None:
-    partition_dir = (
-        Path(output_root)
-        / f"year={day.year}"
-        / f"month={day.month:02d}"
-        / f"day={day.day:02d}"
-    )
-    if any(partition_dir.glob("icao_bucket=*/data.parquet")):
+    if Path(output_root) == DEFAULT_BUCKETED_OUTPUT_ROOT:
+        complete = adsb_day_is_complete(ADSBSource.ADSBX, day)
+    else:
+        partition_dir = (
+            Path(output_root)
+            / f"year={day.year}"
+            / f"month={day.month:02d}"
+            / f"day={day.day:02d}"
+        )
+        complete = (partition_dir / "_SUCCESS").is_file()
+    if complete:
         return
 
     input_path = _ensure_day_downloaded(day)
@@ -474,7 +405,11 @@ def main() -> None:
         nargs="?",
         help="UTC date in YYYY-MM-DD format. Downloads day if missing.",
     )
-    parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_BUCKETED_OUTPUT_ROOT,
+    )
     parser.add_argument("--batch-size", type=int, default=250_000)
     parser.add_argument("--start-after")
     args = parser.parse_args()
@@ -485,9 +420,9 @@ def main() -> None:
     else:
         input_path = DEFAULT_INPUT_PATH
 
-    write_readsb_day_to_parquet(
+    write_readsb_day_to_bucketed_parquet(
         input_path=input_path,
-        output_path=args.output,
+        output_root=args.output_root,
         batch_size=args.batch_size,
         start_after=args.start_after,
     )

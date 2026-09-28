@@ -12,7 +12,8 @@ import polars as pl
 
 from airports.models import FIXED_WING_AIRPORT_TYPES
 from airports.runtime import airport_catalog_for_date, ensure_airport_history
-from data_engineering.adsb.read_adsb import ADSBSource, _parquet_day_dir, read_adsb
+from data_engineering.adsb.canonical import adsb_day_dir
+from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.utils import OUTPUT_DIR
 from flights.airport_nn.features import COLUMNS, clean_messages, pack, trajectories
 from flights.flight_source import (
@@ -341,7 +342,7 @@ def prepare(days, output=CACHE, workers=None, batch_aircraft=256, parquet_root=N
     for day in days:
         refs, paths = references(day)
         raw_day = (
-            _parquet_day_dir(day)
+            adsb_day_dir(ADSBSource.ADSBLOL, day)
             if parquet_root is None
             else Path(parquet_root)
             / f"year={day.year}/month={day.month:02d}/day={day.day:02d}"

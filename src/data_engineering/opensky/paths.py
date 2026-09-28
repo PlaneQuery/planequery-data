@@ -14,11 +14,6 @@ OPENSKY_RAW_STATE_VECTORS_ROOT = (
     / "trino-downloads"
     / "state_vectors_data4"
 )
-OPENSKY_PROCESSED_STATE_VECTORS_ROOT = (
-    OUTPUT_DIR / "data" / "processed" / "opensky" / "v3"
-)
-
-
 def coerce_date(value: date | datetime | str) -> date:
     if isinstance(value, datetime):
         return value.date()
@@ -46,7 +41,3 @@ def raw_state_vectors_hour_path(
     root: Path = OPENSKY_RAW_STATE_VECTORS_ROOT,
 ) -> Path:
     return partitioned_day_dir(root, start) / f"hour={start.hour:02d}" / "data.parquet"
-
-
-def processed_state_vectors_day_dir(value: date | datetime | str) -> Path:
-    return partitioned_day_dir(OPENSKY_PROCESSED_STATE_VECTORS_ROOT, value)
