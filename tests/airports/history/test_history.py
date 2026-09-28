@@ -4,6 +4,9 @@ import csv
 import json
 import os
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -338,6 +341,45 @@ def test_open_refreshes_stale_repository_and_rebuilds_history(tmp_path):
 
     assert refreshed.latest_available_commit == latest_sha
     assert refreshed.as_of(date(2024, 3, 1))["ident"].to_list() == ["KFINAL"]
+
+
+def test_concurrent_open_refreshes_shared_repository_once(tmp_path, monkeypatch):
+    source, _ = _history_repository(tmp_path)
+    ourairports_dir = tmp_path / "output" / "data" / "raw" / "ourairports"
+    history = AirportHistory.open(
+        ourairports_dir / "history",
+        repository_path=ourairports_dir / "repository",
+        repository_url=str(source),
+    )
+    metadata = history.metadata
+    metadata["repository_checked_at"] = "2024-01-01T00:00:00+00:00"
+    history.paths.metadata.write_text(json.dumps(metadata), encoding="utf-8")
+
+    refresh_count = 0
+    count_lock = threading.Lock()
+    refresh_repository = history_store.refresh_repository
+
+    def track_refresh(repository):
+        nonlocal refresh_count
+        with count_lock:
+            refresh_count += 1
+        time.sleep(0.05)
+        refresh_repository(repository)
+
+    monkeypatch.setattr(history_store, "refresh_repository", track_refresh)
+
+    def open_history(_):
+        return AirportHistory.open(
+            ourairports_dir / "history",
+            repository_path=ourairports_dir / "repository",
+            repository_url=str(source),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        histories = list(executor.map(open_history, range(4)))
+
+    assert refresh_count == 1
+    assert len({item.latest_available_commit for item in histories}) == 1
 
 
 @pytest.mark.parametrize(
