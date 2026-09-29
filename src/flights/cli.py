@@ -1,5 +1,6 @@
 import argparse
 import multiprocessing
+import shutil
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from datetime import date
@@ -37,6 +38,43 @@ def default_workers_for_source(source: FlightSource) -> int:
     if isinstance(source, PARALLEL_ALGORITHM_SOURCES):
         return default_worker_count()
     return 1
+
+
+def _downloaded_adsb_paths(
+    source: ADSBSource,
+    target_dates: Sequence[date],
+) -> tuple[Path, ...]:
+    """Return per-day download/cache paths that a flight run may create."""
+    from data_engineering.adsb.canonical import adsb_day_dir
+
+    paths = [adsb_day_dir(source, target_date) for target_date in target_dates]
+    if source is ADSBSource.ADSBLOL:
+        from data_engineering.adsb.download_adsb_to_parquet import (
+            EXTRACT_DIR,
+            RELEASES_DIR,
+        )
+
+        for root in (EXTRACT_DIR, RELEASES_DIR):
+            paths.extend(
+                root
+                / f"year={target_date.year}"
+                / f"month={target_date.month:02d}"
+                / f"day={target_date.day:02d}"
+                for target_date in target_dates
+            )
+    return tuple(dict.fromkeys(paths))
+
+
+def _remove_new_downloaded_adsb_paths(
+    paths: Sequence[Path],
+    preexisting_paths: set[Path],
+) -> None:
+    """Remove run-created ADS-B artifacts without deleting an existing cache."""
+    for path in paths:
+        if path in preexisting_paths or not path.exists():
+            continue
+        print(f"Removing downloaded ADS-B artifact: {path}")
+        shutil.rmtree(path)
 
 
 def _write_flights_day(
@@ -175,6 +213,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Defaults are sized from CPU count and RAM."
         ),
     )
+    parser.add_argument(
+        "--no-save-adsb-downloads",
+        action="store_true",
+        help=(
+            "After the run, remove ADS-B release archives, extracted traces, "
+            "and canonical ADS-B Parquet created by this invocation. Existing "
+            "cached data and the generated flight Parquet are preserved."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -189,25 +236,43 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.airport_nn_model is not None:
         assert isinstance(source, AlgorithmNNFlightSource)
         source = replace(source, model_path=args.airport_nn_model)
-    if isinstance(source, ADSBFlightSource) and args.adsb_source is ADSBSource.ADSBLOL:
-        from data_engineering.adsblol.check_for_new_release import (
-            prepare_releases_for_run,
-        )
+    if args.no_save_adsb_downloads and not isinstance(source, ADSBFlightSource):
+        raise SystemExit("--no-save-adsb-downloads requires an ADS-B flight source")
 
-        prepare_releases_for_run(
-            {day.year for day in date_range(args.start_date, args.end_date)}
+    target_dates = list(date_range(args.start_date, args.end_date))
+    downloaded_paths: tuple[Path, ...] = ()
+    preexisting_paths: set[Path] = set()
+    if args.no_save_adsb_downloads:
+        downloaded_paths = _downloaded_adsb_paths(args.adsb_source, target_dates)
+        preexisting_paths = {path for path in downloaded_paths if path.exists()}
+
+    try:
+        if (
+            isinstance(source, ADSBFlightSource)
+            and args.adsb_source is ADSBSource.ADSBLOL
+        ):
+            from data_engineering.adsblol.check_for_new_release import (
+                prepare_releases_for_run,
+            )
+
+            prepare_releases_for_run({day.year for day in target_dates})
+        kwargs = {
+            "adsb_source": args.adsb_source,
+        }
+        if args.workers is not None:
+            kwargs["workers"] = args.workers
+        write_flights_range(
+            args.start_date,
+            args.end_date,
+            source,
+            **kwargs,
         )
-    kwargs = {
-        "adsb_source": args.adsb_source,
-    }
-    if args.workers is not None:
-        kwargs["workers"] = args.workers
-    write_flights_range(
-        args.start_date,
-        args.end_date,
-        source,
-        **kwargs,
-    )
+    finally:
+        if args.no_save_adsb_downloads:
+            _remove_new_downloaded_adsb_paths(
+                downloaded_paths,
+                preexisting_paths,
+            )
 
 
 if __name__ == "__main__":
