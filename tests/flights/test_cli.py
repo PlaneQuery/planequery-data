@@ -250,6 +250,61 @@ def test_main_passes_explicit_worker_override(monkeypatch):
     assert prepared_years == [{2026}]
 
 
+def test_no_save_adsb_downloads_removes_only_run_created_artifacts(
+    monkeypatch,
+    tmp_path,
+):
+    created_path = tmp_path / "created" / "day=01"
+    existing_path = tmp_path / "existing" / "day=01"
+    existing_path.mkdir(parents=True)
+    (existing_path / "data.parquet").touch()
+
+    monkeypatch.setattr(
+        cli,
+        "_downloaded_adsb_paths",
+        lambda source, target_dates: (created_path, existing_path),
+    )
+    monkeypatch.setattr(
+        cli,
+        "write_flights_range",
+        lambda *args, **kwargs: (
+            created_path.mkdir(parents=True),
+            (created_path / "data.parquet").touch(),
+        ),
+    )
+    from data_engineering.adsblol import check_for_new_release
+
+    monkeypatch.setattr(
+        check_for_new_release,
+        "prepare_releases_for_run",
+        lambda years: None,
+    )
+
+    cli.main(
+        [
+            "2026-03-01",
+            "2026-03-02",
+            "algorithm-nearest",
+            "--no-save-adsb-downloads",
+        ]
+    )
+
+    assert not created_path.exists()
+    assert (existing_path / "data.parquet").exists()
+
+
+def test_no_save_adsb_downloads_rejects_non_adsb_source():
+    with pytest.raises(SystemExit, match="requires an ADS-B flight source"):
+        cli.main(
+            [
+                "2026-03-01",
+                "2026-03-02",
+                "bts",
+                "--no-save-adsb-downloads",
+            ]
+        )
+
+
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
 def test_algorithm_sources_accept_opensky(monkeypatch, source_name):
     calls = []
