@@ -54,8 +54,8 @@ class ADSBFlightSource(FlightSource):
     ) -> tuple[date | datetime, datetime | None]:
         return dt, None
 
-    def reusable_flight_source(self) -> FlightSource | None:
-        """Previously generated flights that can replace source segmentation."""
+    def reusable_flight_source(self) -> ADSBFlightSource | None:
+        """Flights from the same ADS-B provider that can replace segmentation."""
         return None
 
     def adsb_columns_for_reused_flights(self) -> Sequence[str] | None:
@@ -278,15 +278,12 @@ def _reusable_flights_for_source(
     if reusable_source is None:
         return None
 
-    reusable_adsb_src = (
-        adsb_src if isinstance(reusable_source, ADSBFlightSource) else None
-    )
     try:
         flights = _read_cached_flights_for_catalog(
             reusable_source,
             dt,
             airport_catalog,
-            reusable_adsb_src,
+            adsb_src,
         )
     except FileNotFoundError:
         # A data file without its provenance manifest is not a reusable cache.
