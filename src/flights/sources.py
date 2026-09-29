@@ -4,24 +4,32 @@ from flights.ground_truth.source import GroundTruthFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
+from flights.providers.precomputed import (
+    ADSBXPrecomputedFlightSource,
+    OpenSkyPrecomputedFlightSource,
+)
 from flights.providers.sfdps import SFDPSFlightSource
 
 
 ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
 ALGORITHM_NN_SOURCE = AlgorithmNNFlightSource()
+ADSBX_SOURCE = ADSBXPrecomputedFlightSource()
 BTS_SOURCE = BTSFlightSource()
 EUROCONTROL_SOURCE = EurocontrolFlightSource()
 GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
 MIKE_SOURCE = MikeFlightSource()
+OPENSKY_SOURCE = OpenSkyPrecomputedFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
 
 FLIGHT_SOURCES = (
     ALGORITHM_NEAREST_SOURCE,
     ALGORITHM_NN_SOURCE,
+    ADSBX_SOURCE,
     BTS_SOURCE,
     EUROCONTROL_SOURCE,
     GROUND_TRUTH_SOURCE,
     MIKE_SOURCE,
+    OPENSKY_SOURCE,
     SFDPS_SOURCE,
 )
 FLIGHT_SOURCES_BY_NAME = {source.name: source for source in FLIGHT_SOURCES}

@@ -6,7 +6,7 @@ from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation import evaluation
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import BTS_SOURCE
+from flights.sources import ADSBX_SOURCE, BTS_SOURCE, OPENSKY_SOURCE
 
 
 def test_algorithm_nn_source_uses_checkpoint(
@@ -84,6 +84,15 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch, tmp_path):
     assert evaluation.adsb_srcs_for_test_source(
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
+    ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+
+
+@pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE])
+def test_precomputed_source_is_evaluated_once_across_adsb_sources(source):
+    assert evaluation.resolve_source(source.name) is source
+    assert evaluation.adsb_srcs_for_test_source(
+        source,
+        [ADSBSource.ADSBLOL, ADSBSource.OPENSKY, ADSBSource.ADSBX],
     ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
 
 
