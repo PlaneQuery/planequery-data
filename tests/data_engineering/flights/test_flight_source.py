@@ -482,6 +482,22 @@ def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):
     assert result.equals(expected)
 
 
+def test_get_flights_ignores_cache_without_catalog_manifest(
+    monkeypatch,
+    tmp_path,
+):
+    target_date = date(2026, 3, 1)
+    source = DummyNonADSBFlightSource()
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    path = flight_path(source, target_date)
+    path.parent.mkdir(parents=True)
+    pl.DataFrame({"icao": ["cached-without-manifest"]}).write_parquet(path)
+
+    result = get_flights(source, target_date)
+
+    assert result.get_column("icao").to_list() == ["abc123"]
+
+
 def test_get_flights_recomputes_cache_when_knowledge_commit_changes(
     monkeypatch,
     tmp_path,
