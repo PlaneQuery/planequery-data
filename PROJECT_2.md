@@ -18,8 +18,8 @@
 Tasks that directly advance the current milestone.
 
 - [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality.
-- [ ] <Task 2>
-- [ ] <Task 3>
+- [ ] Figure out what days of filghts/states data from OpenSky I need to download.
+- [ ] Make OpenSky downloader better/more relaible.
 
 ---
 
