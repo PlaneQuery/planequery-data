@@ -16,8 +16,8 @@ from flights.flight_source import (
     ADSBFlightSource,
     NonADSBFlightSource,
     get_flights,
-    write_flights,
     flight_path,
+    write_flights,
 )
 from flights.providers.bts import BTSFlightSource
 from flights.airport_catalog_manifest import (
@@ -482,56 +482,76 @@ def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):
     assert result.equals(expected)
 
 
-def test_get_flights_ignores_cache_without_catalog_manifest(
+@pytest.mark.parametrize("cache_state", ["missing-manifest", "stale-manifest"])
+def test_get_flights_persists_rebuilt_invalid_cache(
     monkeypatch,
     tmp_path,
+    cache_state,
 ):
     target_date = date(2026, 3, 1)
     source = DummyNonADSBFlightSource()
+    current_catalog = fake_airport_catalog(target_date)
     monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
-    path = flight_path(source, target_date)
-    path.parent.mkdir(parents=True)
-    pl.DataFrame({"icao": ["cached-without-manifest"]}).write_parquet(path)
-
-    result = get_flights(source, target_date)
-
-    assert result.get_column("icao").to_list() == ["abc123"]
-
-
-def test_get_flights_recomputes_cache_when_knowledge_commit_changes(
-    monkeypatch,
-    tmp_path,
-):
-    target_date = date(2026, 3, 1)
-    source = DummyNonADSBFlightSource()
-    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
-    path = flight_path(source, target_date)
-    path.parent.mkdir(parents=True)
-    pl.DataFrame({"icao": ["stale"]}).write_parquet(path)
-
-    stale_catalog = fake_airport_catalog(target_date)
-    AirportCatalogManifest.from_provenance(stale_catalog.provenance).write(
-        airport_catalog_manifest_path(path)
-    )
-    current_catalog = FakeAirportCatalog(
-        AirportCatalogProvenance(
-            flight_date=target_date,
-            observed_commit_sha="observed-commit",
-            knowledge_cutoff_date=date(2026, 4, 1),
-            knowledge_commit_sha="new-knowledge-commit",
-            catalog_available_date=date(2026, 4, 1),
-            policy_version="test",
-        )
-    )
     monkeypatch.setattr(
         flight_source_module,
         "airport_catalog_for_date",
         lambda _dt: current_catalog,
     )
+    path = flight_path(source, target_date)
+    path.parent.mkdir(parents=True)
+    pl.DataFrame({"icao": ["stale"]}).write_parquet(path)
+    if cache_state == "stale-manifest":
+        stale_catalog = FakeAirportCatalog(
+            AirportCatalogProvenance(
+                flight_date=target_date,
+                observed_commit_sha="stale-observed-commit",
+                knowledge_cutoff_date=date(2026, 4, 1),
+                knowledge_commit_sha="stale-knowledge-commit",
+                catalog_available_date=date(2026, 4, 1),
+                policy_version="test",
+            )
+        )
+        AirportCatalogManifest.from_provenance(stale_catalog.provenance).write(
+            airport_catalog_manifest_path(path)
+        )
+
+    create_calls = []
+
+    def create_day(self, dt, catalog):
+        create_calls.append((dt, catalog))
+        return pl.DataFrame({"icao": ["fresh"]})
+
+    monkeypatch.setattr(
+        DummyNonADSBFlightSource,
+        "create_flights_for_day",
+        create_day,
+    )
 
     result = get_flights(source, target_date)
 
+    assert result.get_column("icao").to_list() == ["fresh"]
+    assert pl.read_parquet(path).get_column("icao").to_list() == ["fresh"]
+    assert AirportCatalogManifest.read(
+        airport_catalog_manifest_path(path)
+    ) == AirportCatalogManifest.from_provenance(current_catalog.provenance)
+    assert create_calls == [(target_date, current_catalog)]
+
+    create_calls.clear()
+    cached_result = get_flights(source, target_date)
+
+    assert cached_result.get_column("icao").to_list() == ["fresh"]
+    assert create_calls == []
+
+
+def test_get_flights_use_cache_false_does_not_persist(monkeypatch, tmp_path):
+    target_date = date(2026, 3, 1)
+    source = DummyNonADSBFlightSource()
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+
+    result = get_flights(source, target_date, use_cache=False)
+
     assert result.get_column("icao").to_list() == ["abc123"]
+    assert not flight_path(source, target_date).exists()
 
 
 def test_flight_path_requires_adsb_source_only_for_adsb_flights(tmp_path, monkeypatch):
