@@ -29,9 +29,11 @@ logical CPUs, is limited to roughly one worker per 4 GiB of RAM while retaining
 20% memory headroom, and can be overridden with `--workers`.
 
 When a matching `algorithm-nearest` day and airport-catalog manifest already
-exist, `algorithm-nn` reuses those flight boundaries and metadata and reads only
-the ADS-B columns needed for airport inference. Missing or stale nearest output
-falls back to normal ADS-B segmentation.
+exist for the same ADS-B provider, `algorithm-nn` reuses those flight boundaries
+and metadata and reads only that provider's ADS-B columns needed for airport
+inference. For example, OpenSky inference reuses only OpenSky segmentation.
+Missing or stale nearest output falls back to normal segmentation of the same
+ADS-B provider.
 
 ## Eurocontrol
 
