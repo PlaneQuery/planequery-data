@@ -340,26 +340,15 @@ def _create_flights_from_reused_flights(
     )
 
 
-def _get_flights_for_catalog_at_path(
+def _create_flights_for_catalog(
     source: FlightSource,
     dt: date,
     airport_catalog: AirportCatalogView,
-    path: Path,
     adsb_src: ADSBSource | None = None,
-    use_cache: bool = True,
     batch_workers: int = 1,
 ) -> pl.DataFrame:
     if batch_workers < 1:
         raise ValueError("batch_workers must be positive")
-    if use_cache:
-        cached_flights = _read_cached_flights_for_catalog(
-            source,
-            dt,
-            airport_catalog,
-            adsb_src,
-        )
-        if cached_flights is not None:
-            return cached_flights
 
     if isinstance(source, ADSBFlightSource):
         assert adsb_src is not None, f"{source.name} requires an ADS-B source"
@@ -448,14 +437,31 @@ def get_flights_for_catalog(
     use_cache: bool = True,
     batch_workers: int = 1,
 ) -> pl.DataFrame:
-    """Read or build a flight day using exactly ``airport_catalog``."""
-    return _get_flights_for_catalog_at_path(
+    """Read a valid cache or build and persist a flight day.
+
+    ``use_cache=False`` skips this source's cache and does not persist the result.
+    """
+    if use_cache:
+        cached_flights = _read_cached_flights_for_catalog(
+            source,
+            dt,
+            airport_catalog,
+            adsb_src,
+        )
+        if cached_flights is not None:
+            return cached_flights
+        return write_flights_for_catalog(
+            source,
+            dt,
+            airport_catalog,
+            adsb_src,
+            batch_workers,
+        )
+    return _create_flights_for_catalog(
         source,
         dt,
         airport_catalog,
-        flight_path(source, dt, adsb_src),
         adsb_src,
-        use_cache,
         batch_workers,
     )
 
@@ -504,14 +510,12 @@ def write_flights_for_catalog(
     """Build and persist a flight day using exactly ``airport_catalog``."""
     path = flight_path(source, dt, adsb_src)
     path.parent.mkdir(parents=True, exist_ok=True)
-    df_flights = _get_flights_for_catalog_at_path(
+    df_flights = _create_flights_for_catalog(
         source,
         dt,
         airport_catalog,
-        path,
         adsb_src,
-        use_cache=False,
-        batch_workers=batch_workers,
+        batch_workers,
     )
     df_flights.write_parquet(path)
     AirportCatalogManifest.from_provenance(
