@@ -254,15 +254,14 @@ def _read_cached_flights_for_catalog(
     adsb_src: ADSBSource | None,
 ) -> pl.DataFrame | None:
     path = flight_path(source, dt, adsb_src)
-    if not path.exists():
+    manifest_path = airport_catalog_manifest_path(path)
+    if not path.is_file() or not manifest_path.is_file():
         return None
 
     current_manifest = AirportCatalogManifest.from_provenance(
         airport_catalog.provenance
     )
-    cached_manifest = AirportCatalogManifest.read(
-        airport_catalog_manifest_path(path)
-    )
+    cached_manifest = AirportCatalogManifest.read(manifest_path)
     if cached_manifest.catalog_cache_key != current_manifest.catalog_cache_key:
         return None
     return pl.read_parquet(path)
@@ -278,16 +277,12 @@ def _reusable_flights_for_source(
     if reusable_source is None:
         return None
 
-    try:
-        flights = _read_cached_flights_for_catalog(
-            reusable_source,
-            dt,
-            airport_catalog,
-            adsb_src,
-        )
-    except FileNotFoundError:
-        # A data file without its provenance manifest is not a reusable cache.
-        return None
+    flights = _read_cached_flights_for_catalog(
+        reusable_source,
+        dt,
+        airport_catalog,
+        adsb_src,
+    )
     if flights is not None:
         print(
             f"Reusing cached {reusable_source.name} flights for {source.name} "
@@ -356,7 +351,7 @@ def _get_flights_for_catalog_at_path(
 ) -> pl.DataFrame:
     if batch_workers < 1:
         raise ValueError("batch_workers must be positive")
-    if use_cache and path.exists():
+    if use_cache:
         cached_flights = _read_cached_flights_for_catalog(
             source,
             dt,
