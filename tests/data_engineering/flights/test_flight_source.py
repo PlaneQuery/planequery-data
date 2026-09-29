@@ -284,9 +284,11 @@ def test_get_flights_reads_only_source_icaos(monkeypatch, tmp_path):
     assert result.get_column("icao").to_list() == ["abc123", "def456"]
 
 
-def test_algorithm_nn_reuses_cached_algorithm_nearest_flights(
+@pytest.mark.parametrize("adsb_source", tuple(ADSBSource))
+def test_algorithm_nn_reuses_cached_algorithm_nearest_flights_from_same_adsb_source(
     monkeypatch,
     tmp_path,
+    adsb_source,
 ):
     target_date = date(2026, 3, 1)
     airport_catalog = fake_airport_catalog(target_date)
@@ -299,16 +301,27 @@ def test_algorithm_nn_reuses_cached_algorithm_nearest_flights(
         }
     )
     monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
-    nearest_path = flight_path(
-        nearest_source,
-        target_date,
-        ADSBSource.ADSBLOL,
-    )
-    nearest_path.parent.mkdir(parents=True)
-    nearest_flights.write_parquet(nearest_path)
-    AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
-        airport_catalog_manifest_path(nearest_path)
-    )
+    for cached_adsb_source in ADSBSource:
+        cached_flights = (
+            nearest_flights
+            if cached_adsb_source is adsb_source
+            else pl.DataFrame(
+                {
+                    "icao": [f"wrong-{cached_adsb_source.value}"],
+                    "takeoff_airport_ident": ["WRONG"],
+                }
+            )
+        )
+        nearest_path = flight_path(
+            nearest_source,
+            target_date,
+            cached_adsb_source,
+        )
+        nearest_path.parent.mkdir(parents=True)
+        cached_flights.write_parquet(nearest_path)
+        AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
+            airport_catalog_manifest_path(nearest_path)
+        )
 
     reads = []
 
@@ -339,14 +352,14 @@ def test_algorithm_nn_reuses_cached_algorithm_nearest_flights(
         nn_source,
         target_date,
         airport_catalog,
-        ADSBSource.ADSBLOL,
+        adsb_source,
         use_cache=False,
     )
 
     assert result.equals(nearest_flights)
     assert reads == [
         (
-            ADSBSource.ADSBLOL,
+            adsb_source,
             ["abc123", "def456"],
             AIRPORT_NN_COLUMNS,
         )
