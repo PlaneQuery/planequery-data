@@ -16,6 +16,11 @@ python -m flights.cli 2026-03-01 2026-03-08 algorithm-nn \
 The start date is inclusive and the end date is exclusive. Run
 `python -m flights.cli --help` to list sources and options.
 
+For ADS-B-backed sources, pass `--no-save-adsb-downloads` to remove release
+archives, extracted traces, and canonical ADS-B Parquet downloaded or generated
+by that invocation after the flight files have been written. ADS-B cache paths
+that existed before the command and the generated flight Parquet are preserved.
+
 `algorithm-nn` and `algorithm-nearest` use the worker budget at the widest
 available level. A one-day range processes complete-aircraft ADS-B batches in
 parallel; a multi-day range processes days in parallel and keeps each day
