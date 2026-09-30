@@ -30,7 +30,7 @@ EXPERIMENT_DIR = (
 
 def make_output_dir() -> Path:
     """Create a timestamped, commit-specific directory for this run."""
-    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M-%S-%f")
+    run_time = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M")
     output_dir = EXPERIMENT_DIR / f"{run_time}_{current_commit_hash()}"
     output_dir.mkdir(parents=True, exist_ok=False)
     return output_dir
