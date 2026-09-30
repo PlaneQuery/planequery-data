@@ -1,15 +1,12 @@
 # get flights that fullfill constraints that can be put straight into resolve.
 # Also, get candiate icaos
 
-from datetime import date, datetime, time, timedelta
-from pathlib import Path
+from datetime import date, datetime, time
 import polars as pl
 
 from data_engineering.filters import pia_or_american_ladd_icao
 from flights.algorithm import get_flights_range
 from flights.flight_type import flights_df_to_flights
-from pia.flight_continuity import make_flights_continuous
-from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 from pia.resolver import resolve_pia_mappings
 
 def keep_start_window_with_prior_anchor(df_flights: pl.DataFrame, start_date: date) -> pl.DataFrame:
