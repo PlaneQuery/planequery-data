@@ -1,7 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
-from pathlib import Path
 BUCKET = "planequery-swim-logs-prod"
 from data_engineering.utils import OUTPUT_DIR
 BASE_DOWNLOAD_DIR = OUTPUT_DIR / "data/raw"

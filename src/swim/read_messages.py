@@ -1,5 +1,4 @@
-from lxml import objectify, etree
-import time
+from lxml import objectify
 from collections import defaultdict
 
 aircraftIdentifications = []

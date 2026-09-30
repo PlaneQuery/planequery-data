@@ -4,9 +4,6 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import List, Literal, Optional
 
-import polars as pl
-
-
 # ---- Enums ----
 
 AircraftCategory = Literal[
@@ -264,76 +261,6 @@ class AdsbMessage:
         return flags
 
 
-def _bool_or_false(value: bool | None) -> bool:
-    return False if value is None else bool(value)
-
-
-def adsb_messages_from_parquet_df(df: "pl.DataFrame") -> list[AdsbMessage]:
-    return [
-        AdsbMessage(
-            time=row["time"],
-            icao=row["icao"],
-            lat=row["lat"],
-            lon=row["lon"],
-            callsign=row.get("callsign"),
-            registration=row.get("registration"),
-            aircraft_type=row.get("aircraft_type"),
-            aircraft_year=row.get("aircraft-year"),
-            radius_of_containment_m=row.get("radius_of_containment_m"),
-            on_ground=_bool_or_false(row.get("on_ground")),
-            baro_altitude_ft=row.get("baro_altitude_ft"),
-            geom_altitude_ft=row.get("geom_altitude_ft"),
-            baro_rate_fpm=row.get("baro_rate_fpm"),
-            geom_rate_fpm=row.get("geom_rate_fpm"),
-            ground_speed_kt=row.get("ground_speed_kt"),
-            indicated_airspeed_kt=row.get("indicated_airspeed_kt"),
-            true_airspeed_kt=row.get("true_airspeed_kt"),
-            mach=row.get("mach"),
-            track_deg=row.get("track_deg"),
-            track_rate_deg_s=row.get("track_rate_deg_s"),
-            roll_deg=row.get("roll_deg"),
-            magnetic_heading_deg=row.get("magnetic_heading_deg"),
-            true_heading_deg=row.get("true_heading_deg"),
-            nav_qnh_hpa=row.get("nav_qnh_hpa"),
-            nav_altitude_mcp_ft=row.get("nav_altitude_mcp_ft"),
-            nav_altitude_fms_ft=row.get("nav_altitude_fms_ft"),
-            nav_heading_deg=row.get("nav_heading_deg"),
-            nav_modes=row.get("nav_modes"),
-            squawk=row.get("squawk"),
-            emergency=row.get("emergency"),
-            alert=_bool_or_false(row.get("alert")),
-            spi=_bool_or_false(row.get("spi")),
-            version=row.get("version"),
-            nic=row.get("nic"),
-            nic_baro=row.get("nic_baro"),
-            nac_p=row.get("nac_p"),
-            nac_v=row.get("nac_v"),
-            sil=row.get("sil"),
-            sil_type=row.get("sil_type"),
-            gva=row.get("gva"),
-            sda=row.get("sda"),
-            type=row.get("type"),
-            flags=row.get("flags"),
-            rssi_dbfs=row.get("rssi_dbfs"),
-            no_reg_data=_bool_or_false(row.get("no_reg_data")),
-            pia=_bool_or_false(row.get("pia")),
-            ladd=_bool_or_false(row.get("ladd")),
-            military=_bool_or_false(row.get("military")),
-            interesting=_bool_or_false(row.get("interesting")),
-            owner=row.get("owner"),
-            aircraft_description=row.get("aircraft_description"),
-            category=row.get("category"),
-            wind_direction_deg=row.get("wind_direction_deg"),
-            wind_speed_kt=row.get("wind_speed_kt"),
-            outside_air_temp_c=row.get("outside_air_temp_c"),
-            total_air_temp_c=row.get("total_air_temp_c"),
-            mlat=row.get("mlat"),
-            tisb=row.get("tisb"),
-        )
-        for row in df.iter_rows(named=True)
-    ]
-
-
 def closest_time_row_idx(adsb_rows: list[AdsbMessage], target_time, lte=True):
     times = [row.time for row in adsb_rows]
 
@@ -347,4 +274,3 @@ def closest_time_row_idx(adsb_rows: list[AdsbMessage], target_time, lte=True):
         return None
 
     return idx
-

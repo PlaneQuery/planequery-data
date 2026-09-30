@@ -1,6 +1,5 @@
-from lxml import objectify, etree
+from lxml import objectify
 import pandas as pd
-from dataclasses import dataclass
 from pathlib import Path
 import os
 import gzip
