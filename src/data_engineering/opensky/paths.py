@@ -1,4 +1,4 @@
-"""Filesystem layout for raw and normalized OpenSky state vectors."""
+"""Filesystem layout for raw OpenSky Trino downloads."""
 
 from datetime import date, datetime
 from pathlib import Path
@@ -14,6 +14,11 @@ OPENSKY_RAW_STATE_VECTORS_ROOT = (
     / "trino-downloads"
     / "state_vectors_data4"
 )
+OPENSKY_RAW_FLIGHTS_ROOT = (
+    OUTPUT_DIR / "data" / "raw" / "opensky" / "trino-downloads" / "flights_data4"
+)
+
+
 def coerce_date(value: date | datetime | str) -> date:
     if isinstance(value, datetime):
         return value.date()
@@ -41,3 +46,10 @@ def raw_state_vectors_hour_path(
     root: Path = OPENSKY_RAW_STATE_VECTORS_ROOT,
 ) -> Path:
     return partitioned_day_dir(root, start) / f"hour={start.hour:02d}" / "data.parquet"
+
+
+def raw_flights_day_path(
+    value: date | datetime | str,
+    root: Path = OPENSKY_RAW_FLIGHTS_ROOT,
+) -> Path:
+    return partitioned_day_dir(root, value) / "data.parquet"

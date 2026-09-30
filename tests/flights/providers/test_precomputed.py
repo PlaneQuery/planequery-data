@@ -4,6 +4,7 @@ import polars as pl
 
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import FLIGHT_POLARS_SCHEMA
+from flights.providers import opensky
 from flights.providers import precomputed
 from flights.sources import ADSBX_SOURCE, FLIGHT_SOURCES_BY_NAME, OPENSKY_SOURCE
 
@@ -41,10 +42,10 @@ def test_adsbx_source_reads_and_normalizes_precomputed_product(monkeypatch):
     assert result["icao"].to_list() == ["abc123"]
 
 
-def test_opensky_source_reads_and_normalizes_precomputed_product(monkeypatch):
+def test_opensky_source_reads_and_normalizes_trino_download(monkeypatch):
     day = date(2026, 3, 1)
     monkeypatch.setattr(
-        precomputed,
+        opensky,
         "read_opensky_flights",
         lambda target_date: _minimal_flights() if target_date == day else None,
     )
