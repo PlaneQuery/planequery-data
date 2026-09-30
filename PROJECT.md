@@ -29,5 +29,6 @@ Tasks that directly advance the current milestone.
 - [ x ] Figure out how to deal with any missing ADS-B days
 - [ ] Write Discord Post
 - [ ] Organize repo for release (wait till end)
+	- [ ]use existing folder /Users/jonahgoode/Documents/PlaneQuery/Code/public/planequery-data that should be work-tree of planequery-data ?? Merge, publish, compress. 
 
 ---
