@@ -1,56 +1,27 @@
 """Download one UTC day of OpenSky state vectors from Trino to parquet."""
 
 import argparse
-import os
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
-import pyarrow as pa
 import pyarrow.parquet as pq
-from trino.auth import OAuth2Authentication
-from trino.dbapi import Connection, connect
+from trino.dbapi import Connection
 
 from data_engineering.opensky.paths import (
     OPENSKY_RAW_STATE_VECTORS_ROOT,
     raw_state_vectors_hour_path,
 )
+from data_engineering.opensky.trino_client import (
+    BATCH_SIZE,
+    DEFAULT_TRINO_USER,
+    create_connection,
+    rows_to_arrow,
+)
 
 
-BATCH_SIZE = 100_000
 QUERY_WINDOW_MINUTES = 10
 DEFAULT_OUTPUT_DIR = OPENSKY_RAW_STATE_VECTORS_ROOT
-DEFAULT_TRINO_USER = os.environ.get("OPENSKY_TRINO_USER", "goodejonah")
-
-
-def rows_to_arrow(
-    rows: list[tuple[Any, ...]],
-    columns: list[str],
-) -> pa.Table:
-    """Convert one batch of Trino DB-API rows into an Arrow table."""
-    if not rows:
-        return pa.table({column: [] for column in columns})
-
-    return pa.Table.from_arrays(
-        [pa.array(values) for values in zip(*rows)],
-        names=columns,
-    )
-
-
-def create_connection(user: str) -> Connection:
-    """Create an OAuth-authenticated connection to OpenSky's Trino service."""
-    return connect(
-        host="trino.opensky-network.org",
-        port=443,
-        user=user,
-        catalog="minio",
-        schema="osky",
-        http_scheme="https",
-        auth=OAuth2Authentication(),
-        timezone="UTC",
-        encoding=["json+zstd", "json"],
-    )
 
 
 def state_vectors_output_path(start: datetime, output_dir: Path) -> Path:
