@@ -34,9 +34,6 @@ dev = [
     "nbformat==5.10.4"
 ]
 
-[tool.setuptools]
-py-modules = ["utils"]
-
 [tool.setuptools.packages.find]
 where = ["src"]
 
