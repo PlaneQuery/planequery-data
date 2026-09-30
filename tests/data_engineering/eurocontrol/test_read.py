@@ -28,19 +28,13 @@ class FakeAirportCatalog:
         *,
         code_priority: tuple[str, ...],
         prioritize_faa_airspace: bool,
-    ) -> FakeAirport:
-        assert code_priority == (
-            "icao_code",
-            "ident",
-            "gps_code",
-            "iata_code",
-            "local_code",
-        )
+    ) -> FakeAirport | None:
+        assert code_priority == eurocontrol_read.EUROCONTROL_AIRPORT_CODE_PRIORITY
         assert prioritize_faa_airspace is False
         return {
             "KJFK": FakeAirport(101, "KJFK"),
             "EGLL": FakeAirport(202, "EGLL"),
-        }[code]
+        }.get(code)
 
 
 def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
@@ -50,6 +44,8 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
         '"ACTUAL OFF BLOCK TIME","ACTUAL ARRIVAL TIME"\n'
         '"N123AB","KJFK","EGLL","GLEX","TST",'
         '"01-08-2025 00:20:00","01-08-2025 07:15:00"\n'
+        '"N123AB","UTAN","EGLL","GLEX","TST",'
+        '"01-08-2025 08:20:00","01-08-2025 15:15:00"\n'
     )
     archive_path = tmp_path / "data/raw/eurocontrol/202508.zip"
     archive_path.parent.mkdir(parents=True)
@@ -94,7 +90,7 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
     )
     assert output_path == (
         tmp_path
-        / "data/flights/source=eurocontrol/version=3"
+        / "data/flights/source=eurocontrol/version=4"
         / "year=2025/month=08/day=01/data.parquet"
     )
     assert output_path.is_file()
@@ -107,5 +103,11 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
         "landing_airport_id",
         "landing_airport_ident",
     ).row(0) == ("abc123", "N123AB", 101, "KJFK", 202, "EGLL")
+    assert result.filter(pl.col("takeoff_airport_id").is_null()).select(
+        "takeoff_airport_id",
+        "takeoff_airport_ident",
+        "landing_airport_id",
+        "landing_airport_ident",
+    ).row(0) == (None, None, 202, "EGLL")
     assert preprocess.eurocontrol_intermediate_path(target_date).is_file()
     assert not preprocess.legacy_eurocontrol_month_dir(target_date).exists()
