@@ -6,8 +6,18 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from data_engineering.eurocontrol.preprocess import prepare_eurocontrol_month_parquet
 from data_engineering.openairframes.read import get_openairframes_snapshot
+from flights.airport_reference import resolve_flight_airport_codes
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
+
+
+EUROCONTROL_AIRPORT_CODE_PRIORITY = (
+    "icao_code",
+    "ident",
+    "gps_code",
+    "iata_code",
+    "local_code",
+)
 
 
 def create_eurocontrol_flights(
@@ -41,68 +51,14 @@ def create_eurocontrol_flights(
         validate="m:1",
     )
 
-    codes = (
-        pl.concat(
-            [
-                df.select(pl.col("takeoff_airport_code").alias("code")),
-                df.select(pl.col("landing_airport_code").alias("code")),
-            ]
-        )
-        .get_column("code")
-        .drop_nulls()
-        .unique()
-        .sort()
-        .to_list()
-    )
-    airports = []
-    for code in codes:
-        airport = airport_catalog.resolve_code(
-            code,
-            code_priority=(
-                "icao_code",
-                "ident",
-                "gps_code",
-                "iata_code",
-                "local_code",
-            ),
-            prioritize_faa_airspace=False,
-        )
-        if airport is None:
-            raise ValueError(f"Unknown Eurocontrol airport code {code!r}")
-        airports.append(airport)
-    mapping = pl.DataFrame(
-        {
-            "code": codes,
-            "airport_id": [airport.id for airport in airports],
-            "airport_ident": [airport.ident for airport in airports],
-        },
-        schema={
-            "code": pl.String,
-            "airport_id": pl.Int64,
-            "airport_ident": pl.String,
-        },
-    )
-    df = df.join(
-        mapping,
-        left_on="takeoff_airport_code",
-        right_on="code",
-        how="left",
-    ).rename(
-        {
-            "airport_id": "takeoff_airport_id",
-            "airport_ident": "takeoff_airport_ident",
-        }
-    )
-    df = df.join(
-        mapping,
-        left_on="landing_airport_code",
-        right_on="code",
-        how="left",
-    ).rename(
-        {
-            "airport_id": "landing_airport_id",
-            "airport_ident": "landing_airport_ident",
-        }
+    df = resolve_flight_airport_codes(
+        df,
+        airport_catalog,
+        takeoff_code_column="takeoff_airport_code",
+        landing_code_column="landing_airport_code",
+        code_priority=EUROCONTROL_AIRPORT_CODE_PRIORITY,
+        allow_unresolved=True,
+        prioritize_faa_airspace=False,
     )
     df = df.select(
         "icao",
@@ -122,7 +78,7 @@ def create_eurocontrol_flights(
 @dataclass(frozen=True)
 class EurocontrolFlightSource(NonADSBFlightSource):
     name: str = "eurocontrol"
-    version: int = 3
+    version: int = 4
 
     def create_flights_for_day(
         self,
