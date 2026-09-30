@@ -2,7 +2,6 @@ from datetime import timedelta
 import os
 from pathlib import Path
 from flights.flight_type import Flight
-from pia.evaluation.pia_graph_0 import flights_0
 import polars as pl
 from data_engineering.utils import OUTPUT_DIR
 os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
@@ -363,7 +362,7 @@ def visualize_graph(G: nx.DiGraph, output_path: Path) -> None:
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
 
-from pia.evaluation.pia_graph_0 import flights_2, flights_3
+from pia.evaluation.pia_graph_0 import flights_3
 def main(flights = flights_3):
     # This legacy graph visualizer depends on the graph-building API, while the
     # evaluation metrics below do not. Keep the dependency local so metrics can

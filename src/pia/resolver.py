@@ -1,12 +1,5 @@
-from collections import defaultdict, deque
-from datetime import timedelta
-import time
-from itertools import combinations
 import networkx as nx
 import polars as pl
-import numpy as np
-from ortools.sat.python import cp_model
-from itertools import groupby
 from datetime import date
 from airports.runtime import airport_catalog_for_date
 from data_engineering.filters import pia_or_american_ladd_icao

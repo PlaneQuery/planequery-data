@@ -80,14 +80,6 @@ def _parquet_partition_has_data(partition_dir: Path) -> bool:
 # Release URL Fetching from ALL_RELEASES.txt
 # ============================================================================
 
-class DownloadTimeoutException(Exception):
-    pass
-
-
-def timeout_handler(signum, frame):
-    raise DownloadTimeoutException("Download timed out after 40 seconds")
-
-
 @contextmanager
 def _exclusive_file_lock(lock_path: Path):
     """Hold an advisory lock shared by all local pipeline processes."""

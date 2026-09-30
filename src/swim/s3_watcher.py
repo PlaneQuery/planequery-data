@@ -4,7 +4,7 @@ import threading
 import boto3
 from pathlib import Path
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+from watchdog.events import FileSystemEventHandler
 
 s3_client = boto3.client("s3")
 
