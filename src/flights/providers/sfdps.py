@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 import polars as pl
 
+from aircraft.registration import is_valid_registration_callsign_expr
 from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import scan_adsb
 from flights.flight_type import with_flight_schema_columns
@@ -23,13 +24,6 @@ ADSB_ICAO_INFO_COLUMNS = [
     "military",
     "interesting",
 ]
-
-REGISTRATION_CALLSIGN_PATTERN = (
-    r"^(?:[A-Z]{1,3}-[A-Z0-9]{2,5}|"
-    r"N(?:[1-9][0-9]{0,4}|"
-    r"[1-9][0-9]{0,3}[A-HJ-NP-Z]|"
-    r"[1-9][0-9]{0,2}[A-HJ-NP-Z]{2}))$"
-)
 
 SFDPS_AIRPORT_IDENT_COLUMNS = (
     "takeoff_airport_ident",
@@ -181,7 +175,7 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
         )
         .with_columns(
             pl.lit(None).cast(pl.String).alias("icao"),
-            pl.when(pl.col("callsign").str.contains(REGISTRATION_CALLSIGN_PATTERN))
+            pl.when(is_valid_registration_callsign_expr("callsign"))
             .then(pl.col("callsign"))
             .otherwise(pl.lit(None))
             .alias("registration"),
