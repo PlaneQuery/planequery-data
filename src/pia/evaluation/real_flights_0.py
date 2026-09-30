@@ -1,10 +1,8 @@
 # See if it can identify the Bezos and Elon
 # 1. did my flights algorihtm get them correct. Will they be in perfect icaos.
 from datetime import date, datetime
-import polars as pl
 from flights.algorithm import get_flights_range
 from flights.flight_type import Flight, flights_df_to_flights
-from pia.ladd_aircraft_pia_candidates import get_ladd_pia_candidates
 
 
 def flight(**kwargs) -> Flight:

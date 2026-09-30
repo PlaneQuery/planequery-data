@@ -1,6 +1,6 @@
 
 from datetime import timedelta
-from enum import Enum, unique
+from enum import Enum
 from airports.catalog import AirportCatalogView
 from flights.flight_type import (
     Flight,
@@ -8,7 +8,6 @@ from flights.flight_type import (
     flights_df_to_flights,
 )
 import polars as pl
-from itertools import zip_longest
 from planequery_data.utils import haversine
 
 

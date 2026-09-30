@@ -1,9 +1,7 @@
 from pathlib import Path
 import polars as pl
-from datetime import date
 
 from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
-from data_engineering.utils import OUTPUT_DIR
 
 MAPPINGS_PATH = Path("resources/pia/groundcontrol_mappings.csv")
 def load_ground_control_mappings():
