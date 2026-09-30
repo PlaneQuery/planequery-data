@@ -23,8 +23,14 @@ def resolve_flight_airport_codes(
     takeoff_code_column: str,
     landing_code_column: str,
     code_priority: Sequence[str],
+    allow_unresolved: bool = False,
+    prioritize_faa_airspace: bool | None = None,
 ) -> pl.DataFrame:
-    """Replace provider airport codes with stable IDs and canonical identifiers."""
+    """Replace provider airport codes with stable IDs and canonical identifiers.
+
+    When ``allow_unresolved`` is true, unknown or ambiguous non-null codes are
+    mapped to null instead of rejecting the entire provider dataset.
+    """
     code_columns = {
         "takeoff": takeoff_code_column,
         "landing": landing_code_column,
@@ -38,11 +44,25 @@ def resolve_flight_airport_codes(
     )
     resolved = {}
     for code in codes:
-        airport = airport_catalog.resolve_code(
-            code,
-            code_priority=code_priority,
-        )
+        try:
+            if prioritize_faa_airspace is None:
+                airport = airport_catalog.resolve_code(
+                    code,
+                    code_priority=code_priority,
+                )
+            else:
+                airport = airport_catalog.resolve_code(
+                    code,
+                    code_priority=code_priority,
+                    prioritize_faa_airspace=prioritize_faa_airspace,
+                )
+        except ValueError:
+            if not allow_unresolved:
+                raise
+            airport = None
         if airport is None:
+            if allow_unresolved:
+                continue
             raise ValueError(f"Unknown airport code {code!r}")
         resolved[code] = airport
     code_to_id = {code: airport.id for code, airport in resolved.items()}
