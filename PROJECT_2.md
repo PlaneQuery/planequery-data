@@ -19,26 +19,37 @@ Tasks that directly advance the current milestone.
 
 - [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality.
 - [ ] Figure out what days of filghts/states data from OpenSky I need to download.
-- [ ] Make OpenSky downloader better/more relaible.
+- [ ] Make OpenSky downloader better/more reliable.
+- [ ] Need to compare changes in accuracy over time with ADSBlol and OpenSky
+    - [ ] Pick dates
+    - [ ] Need Graph
+- [ ] See what Eurocontrol days I actually have. Try to download all.  
 
+### Now step by step
+
+- [ ] Research Question: I should see how performance changes over time from 2024 -> 2026
+	- [ ] Run evaluations on days for BTS from 2024-02-01 2025-06-01 2026-02-01 2026-06-01]
+		- [ ] Create branch for this
+		- [ ] Create script for this. 
+	- [ ] Find what days I have for eurocontrol 
+		- [ ] Make list of days
 ---
 
 ## Next
 
 Important tasks once the current work is complete.
 
-- [ ] <Task>
-- [ ] <Task>
-- [ ] <Task>
-
+- [ Next Milestone will be doing analysis of algorihtms comapred with OpenSky ] <Task>
+- [ Training on OpenSky data ? ] <Task>
+- [ Investigate OpenSky coverage, is it acutally worse? ]
+- [ ] Need to figure out whether OpenSky or ADSB.lol network is better (produces more accurate flights). Probably 2024 of ADSB.lol has worse network quality. 
 ---
 
 ## Later
 
 Useful but currently non-blocking work.
 
-- [ ] <Task>
-- [ ] <Task>
+- [ ] NEED TO COMPARE THE Downloaded from trino interface 2026-03-01 to what’s on the website.
 
 ---
 
