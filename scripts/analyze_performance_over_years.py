@@ -101,8 +101,8 @@ def save_raw_comparisons(
     raw_data_dir = output_dir / "raw_data"
     raw_data_dir.mkdir()
     for test_date, comparison in zip(test_dates, comparisons, strict=True):
-        comparison.write_csv(
-            raw_data_dir / f"{test_date.isoformat()}_flight_comparison.csv"
+        comparison.write_parquet(
+            raw_data_dir / f"{test_date.isoformat()}_flight_comparison.parquet"
         )
 
 
