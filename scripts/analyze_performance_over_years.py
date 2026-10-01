@@ -14,9 +14,10 @@ from planequery_data.utils import current_commit_hash
 
 
 TEST_DATES = [
-    date(2024, 2, 1),
+    date(2024, 3, 1),
     date(2024, 6, 1),
-    date(2025, 8, 1),
+    date(2025, 3, 1),
+    date(2025, 6, 1),
     date(2026, 3, 1),
     date(2026, 6, 1),
 ]
