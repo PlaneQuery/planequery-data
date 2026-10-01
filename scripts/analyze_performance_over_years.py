@@ -16,10 +16,11 @@ from planequery_data.utils import current_commit_hash
 TEST_DATES = [
     date(2024, 2, 1),
     date(2024, 6, 1),
-    date(2025, 6, 1),
-    date(2026, 2, 1),
+    date(2025, 8, 1),
+    date(2026, 3, 1),
     date(2026, 6, 1),
 ]
+EUROCONTROL_TEST_DATES = TEST_DATES[:-2]  # Exclude 2026 dates, which are outside the EUROCONTROL dataset range.
 EXPERIMENT_DIR = (
     OUTPUT_DIR
     / "data"
