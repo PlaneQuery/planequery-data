@@ -6,6 +6,14 @@ from airports.catalog import AirportCatalogView
 from airports.models import Airport
 
 
+ICAO_AIRPORT_CODE_PRIORITY = (
+    "icao_code",
+    "ident",
+    "gps_code",
+    "local_code",
+)
+
+
 def airport_from_reference(
     airport_catalog: AirportCatalogView,
     airport_id: int | None,

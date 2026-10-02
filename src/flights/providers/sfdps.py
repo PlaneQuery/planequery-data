@@ -7,10 +7,14 @@ import polars as pl
 from aircraft.registration import is_valid_registration_callsign_expr
 from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import scan_adsb
-from flights.flight_type import with_flight_schema_columns
 from data_engineering.swim.read_sfdps import read_sfdps
 from data_engineering.swim.utils import MISSING_SFDPS_DAYS
+from flights.airport_reference import (
+    ICAO_AIRPORT_CODE_PRIORITY,
+    resolve_flight_airport_codes,
+)
 from flights.flight_source import NonADSBFlightSource, get_flights
+from flights.flight_type import with_flight_schema_columns
 
 
 ADSB_ICAO_INFO_COLUMNS = [
@@ -25,16 +29,7 @@ ADSB_ICAO_INFO_COLUMNS = [
     "interesting",
 ]
 
-SFDPS_AIRPORT_IDENT_COLUMNS = (
-    "takeoff_airport_ident",
-    "landing_airport_ident",
-)
-SFDPS_AIRPORT_CODE_PRIORITY = (
-    "icao_code",
-    "ident",
-    "gps_code",
-    "local_code",
-)
+SFDPS_AIRPORT_CODE_PRIORITY = ICAO_AIRPORT_CODE_PRIORITY
 
 
 def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
@@ -50,52 +45,13 @@ def resolve_sfdps_airports(
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
     """Resolve SFDPS point codes, mapping unresolved codes to null."""
-    codes = (
-        pl.concat(
-            df_flights.select(pl.col(column).alias("code"))
-            for column in SFDPS_AIRPORT_IDENT_COLUMNS
-        )
-        .get_column("code")
-        .drop_nulls()
-        .unique()
-        .sort()
-        .to_list()
-    )
-
-    code_to_id: dict[str, int] = {}
-    code_to_ident: dict[str, str] = {}
-    for code in codes:
-        try:
-            airport = airport_catalog.resolve_code(
-                code,
-                code_priority=SFDPS_AIRPORT_CODE_PRIORITY,
-            )
-        except ValueError:
-            airport = None
-        if airport is None:
-            continue
-        code_to_id[code] = airport.id
-        code_to_ident[code] = airport.ident
-
-    return df_flights.with_columns(
-        *[
-            expression
-            for column in SFDPS_AIRPORT_IDENT_COLUMNS
-            for expression in (
-                pl.col(column)
-                .replace_strict(
-                    code_to_id,
-                    default=None,
-                    return_dtype=pl.Int64,
-                )
-                .alias(column.removesuffix("_ident") + "_id"),
-                pl.col(column).replace_strict(
-                    code_to_ident,
-                    default=None,
-                    return_dtype=pl.String,
-                ),
-            )
-        ]
+    return resolve_flight_airport_codes(
+        df_flights,
+        airport_catalog,
+        takeoff_code_column="takeoff_airport_ident",
+        landing_code_column="landing_airport_ident",
+        code_priority=SFDPS_AIRPORT_CODE_PRIORITY,
+        allow_unresolved=True,
     )
 
 
