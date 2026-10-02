@@ -3,8 +3,12 @@ import sys
 import tarfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from types import SimpleNamespace
 from pathlib import Path
+
+import pytest
 
 from data_engineering.adsb import download_adsb_to_parquet as download
 
@@ -181,3 +185,66 @@ def test_upload_includes_success_marker(monkeypatch, tmp_path):
 
     assert len(uploads) == 9
     assert uploads[-1][2].endswith("/day=01/_SUCCESS")
+
+
+def test_concurrent_day_conversion_runs_once(monkeypatch, tmp_path):
+    partition_dir = tmp_path / "parquet"
+    monkeypatch.setattr(download, "LOCKS_DIR", tmp_path / "locks")
+    monkeypatch.setattr(download, "_parquet_partition_dir", lambda day: partition_dir)
+    conversion_started = threading.Event()
+    finish_conversion = threading.Event()
+    second_checked_partition = threading.Event()
+    calls = []
+    has_data = download._parquet_partition_has_data
+
+    def checked_partition(path):
+        if conversion_started.is_set() and not finish_conversion.is_set():
+            second_checked_partition.set()
+        return has_data(path)
+
+    def convert(version_date, keep_folders):
+        calls.append(version_date)
+        conversion_started.set()
+        assert finish_conversion.wait(timeout=5)
+        partition_dir.mkdir(exist_ok=True)
+        (partition_dir / download.SUCCESS_MARKER).touch()
+        return 1
+
+    monkeypatch.setattr(download, "_parquet_partition_has_data", checked_partition)
+    monkeypatch.setattr(download, "process_version_date", convert)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(download.create_parquet_for_day, date(2024, 3, 22))
+        try:
+            assert conversion_started.wait(timeout=5)
+            second = executor.submit(download.create_parquet_for_day, date(2024, 3, 22))
+            assert second_checked_partition.wait(timeout=5)
+        finally:
+            finish_conversion.set()
+        assert first.result(timeout=5) == partition_dir
+        assert second.result(timeout=5) == partition_dir
+
+    assert calls == ["v2024.03.22"]
+
+
+@pytest.mark.parametrize("failure", ["missing_release", "download", "extraction"])
+def test_release_failure_identifies_stage(monkeypatch, tmp_path, failure):
+    monkeypatch.setattr(download, "RELEASES_DIR", tmp_path / "releases")
+    monkeypatch.setattr(download, "EXTRACT_DIR", tmp_path / "extract")
+    monkeypatch.setattr(download, "LOCKS_DIR", tmp_path / "locks")
+    url = "https://example.test/v2024.03.22.tar.aa"
+    monkeypatch.setattr(
+        download, "fetch_release_urls",
+        lambda version: [] if failure == "missing_release" else [url],
+    )
+    monkeypatch.setattr(download, "download_asset", lambda *args: failure != "download")
+    monkeypatch.setattr(download, "extract_split_archive", lambda *args: False)
+
+    messages = {
+        "missing_release": "No adsblol production releases found for v2024.03.22",
+        "download": "Failed to download adsblol archive for v2024.03.22",
+        "extraction": "Failed to extract adsblol archives for v2024.03.22",
+    }
+    with pytest.raises((FileNotFoundError, RuntimeError), match=messages[failure]) as exc:
+        download.download_and_extract("v2024.03.22")
+    if failure == "download":
+        assert url in str(exc.value)
