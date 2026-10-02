@@ -5,7 +5,7 @@ from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
-from flights.providers.precomputed import ADSBXPrecomputedFlightSource
+from flights.providers.adsbx import ADSBXPrecomputedFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 
 
