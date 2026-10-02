@@ -300,6 +300,22 @@ def extract_split_archive(file_paths: list[str | Path], extract_dir: str | Path)
         print(f"[SKIP] Verified extraction already exists: {extract_dir}")
         return True
 
+    split_archives: dict[Path, list[Path]] = {}
+    for path in file_paths:
+        match = re.fullmatch(r"(.+\.tar)\.(?:[a-zA-Z]+|\d+)", path.name)
+        if match:
+            archive = path.with_name(match.group(1))
+            split_archives.setdefault(archive, []).append(path)
+
+    for archive, parts in split_archives.items():
+        print(f"Using split archive parts for {archive.name}: {[part.name for part in parts]}")
+        if archive in file_paths:
+            print(f"Ignoring standalone tar because split parts are available: {archive}")
+    file_paths = [path for path in file_paths if path not in split_archives]
+    for path in file_paths:
+        if path.suffix == ".tar":
+            print(f"Using standalone tar because no split parts are available: {path}")
+
     extract_dir.parent.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(
         tempfile.mkdtemp(
