@@ -16,6 +16,7 @@ from data_engineering.utils import OUTPUT_DIR
 
 BASE_URL = "https://samples.adsbexchange.com/readsb-hist"
 DEFAULT_OUT_DIR = OUTPUT_DIR / "data" / "raw" / "adsbx" / "readsb-hist"
+DEFAULT_RETRY_PASSES = 3
 
 
 def iter_times(step_seconds: int):
@@ -34,6 +35,10 @@ def validate_gzip_json(path: pathlib.Path) -> bool:
 			return handle.read(2) == b"\x1f\x8b"
 	except OSError:
 		return False
+
+
+def download_complete_path(out_dir: pathlib.Path, step_seconds: int = 5) -> pathlib.Path:
+	return out_dir / f".download-complete-{step_seconds}s"
 
 
 def download_one(url: str, target: pathlib.Path, timeout: int, retries: int):
@@ -83,6 +88,66 @@ def download_one(url: str, target: pathlib.Path, timeout: int, retries: int):
 	return "failed", f"{url} :: unexpected error"
 
 
+def download_tasks(
+	tasks: list[tuple[str, pathlib.Path]],
+	workers: int,
+	timeout: int,
+	retries: int,
+	retry_passes: int,
+) -> tuple[dict[str, int], list[str]]:
+	"""Download tasks, then make delayed passes over only the failures."""
+	counts = {"downloaded": 0, "skipped": 0, "failed": 0}
+	pending = tasks
+	failures: list[str] = []
+	started = time.time()
+
+	for pass_index in range(max(0, retry_passes) + 1):
+		if pass_index:
+			delay = min(120, 15 * 2 ** (pass_index - 1))
+			print(
+				f"Retry pass {pass_index}/{retry_passes} for "
+				f"{len(pending)} failed download(s) in {delay}s",
+				flush=True,
+			)
+			time.sleep(delay)
+
+		next_pending: list[tuple[str, pathlib.Path]] = []
+		failures = []
+		with concurrent.futures.ThreadPoolExecutor(
+			max_workers=min(workers, len(pending)),
+		) as executor:
+			future_tasks = {
+				executor.submit(download_one, url, target, timeout, retries): (url, target)
+				for url, target in pending
+			}
+			for index, future in enumerate(
+				concurrent.futures.as_completed(future_tasks),
+				start=1,
+			):
+				status, detail = future.result()
+				if status == "failed":
+					next_pending.append(future_tasks[future])
+					failures.append(detail)
+				else:
+					counts[status] += 1
+				if index % 250 == 0 or index == len(future_tasks):
+					elapsed = time.time() - started
+					print(
+						f"Pass {pass_index + 1}: {index}/{len(future_tasks)} complete "
+						f"(downloaded={counts['downloaded']}, "
+						f"skipped={counts['skipped']}, "
+						f"pending={len(next_pending)}, elapsed={elapsed:.0f}s)",
+						flush=True,
+					)
+
+		pending = next_pending
+		if not pending:
+			break
+
+	counts["failed"] = len(pending)
+	return counts, failures
+
+
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(
 		description="Download ADSBX readsb-hist snapshots for one UTC day.",
@@ -101,6 +166,15 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--workers", type=int, default=12)
 	parser.add_argument("--timeout", type=int, default=60)
 	parser.add_argument("--retries", type=int, default=3)
+	parser.add_argument(
+		"--retry-passes",
+		type=int,
+		default=DEFAULT_RETRY_PASSES,
+		help=(
+			"Additional delayed passes over only the downloads that still failed; "
+			f"default: {DEFAULT_RETRY_PASSES}"
+		),
+	)
 	return parser.parse_args()
 
 
@@ -113,6 +187,9 @@ def main() -> int:
 	day_str = f"{day.day:02d}"
 
 	out_dir = args.out_dir / year / month / day_str
+	out_dir.mkdir(parents=True, exist_ok=True)
+	completion_path = download_complete_path(out_dir, args.step_seconds)
+	completion_path.unlink(missing_ok=True)
 	tasks = []
 	for label in iter_times(args.step_seconds):
 		filename = f"{label}.json.gz"
@@ -120,35 +197,22 @@ def main() -> int:
 		tasks.append((url, out_dir / filename))
 
 	print(f"Downloading {len(tasks)} files to {out_dir}", flush=True)
-	counts = {"downloaded": 0, "skipped": 0, "failed": 0}
-	failures = []
-	started = time.time()
+	counts, failures = download_tasks(
+		tasks,
+		workers=args.workers,
+		timeout=args.timeout,
+		retries=args.retries,
+		retry_passes=args.retry_passes,
+	)
 
-	with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
-		futures = [
-			executor.submit(download_one, url, target, args.timeout, args.retries)
-			for url, target in tasks
-		]
-		for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
-			status, detail = future.result()
-			counts[status] += 1
-			if status == "failed":
-				failures.append(detail)
-			if index % 250 == 0 or index == len(futures):
-				elapsed = time.time() - started
-				print(
-					f"{index}/{len(futures)} complete "
-					f"(downloaded={counts['downloaded']}, skipped={counts['skipped']}, "
-					f"failed={counts['failed']}, elapsed={elapsed:.0f}s)",
-					flush=True,
-				)
-
+	failure_path = out_dir / "failed-downloads.txt"
 	if failures:
-		failure_path = out_dir / "failed-downloads.txt"
 		failure_path.write_text("\n".join(failures) + "\n", encoding="utf-8")
 		print(f"Wrote {len(failures)} failures to {failure_path}", file=sys.stderr)
 		return 1
 
+	failure_path.unlink(missing_ok=True)
+	completion_path.write_text(f"{day.isoformat()}\n", encoding="utf-8")
 	print(
 		f"Done: downloaded={counts['downloaded']}, skipped={counts['skipped']}, failed=0",
 		flush=True,
