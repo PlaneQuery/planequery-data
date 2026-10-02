@@ -29,7 +29,7 @@ Tasks that directly advance the current milestone.
 
 - [ ] Research Question: I should see how performance changes over time from 2024 -> 2026
 	- [ ] Run evaluations on days for BTS from 2024-02-01 2025-06-01 2026-02-01 2026-06-01]
-		- [ ] Create branch for this
+		- [ ] ~~Create branch for this~~
 		- [ ] Create script for this. 
 	- [ ] Find what days I have for eurocontrol 
 		- [ ] Make list of days
