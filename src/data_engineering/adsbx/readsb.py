@@ -19,6 +19,7 @@ from data_engineering.adsb.canonical import (
 )
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
 from data_engineering.adsb.partitions import ICAO_BUCKET_COUNT, icao_bucket
+from data_engineering.adsbx.download_readsb_day import download_complete_path
 from data_engineering.utils import OUTPUT_DIR
 
 
@@ -38,7 +39,8 @@ def _has_snapshot_files(input_path: Path) -> bool:
 
 def _ensure_day_downloaded(day: dt.date) -> Path:
     day_dir = _day_dir(day)
-    if _has_snapshot_files(day_dir):
+    completion_path = download_complete_path(day_dir)
+    if completion_path.is_file() and _has_snapshot_files(day_dir):
         return day_dir
 
     downloader = Path(__file__).with_name("download_readsb_day.py")
@@ -49,12 +51,12 @@ def _ensure_day_downloaded(day: dt.date) -> Path:
         "--out-dir",
         str(DEFAULT_INPUT_ROOT),
     ]
-    print(f"No snapshots found for {day.isoformat()}, downloading to {day_dir}")
+    print(f"Download for {day.isoformat()} is incomplete; downloading to {day_dir}")
     subprocess.run(cmd, check=True)
 
-    if not _has_snapshot_files(day_dir):
-        raise FileNotFoundError(
-            f"Download finished but no snapshot files were found under {day_dir}"
+    if not completion_path.is_file() or not _has_snapshot_files(day_dir):
+        raise RuntimeError(
+            f"Download finished without marking a complete snapshot day under {day_dir}"
         )
     return day_dir
 
