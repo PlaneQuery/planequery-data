@@ -402,8 +402,7 @@ def _download_and_extract_locked(version_date: str) -> str | None:
     print(f"Fetching release URLs for {version_date}...")
     all_urls = fetch_release_urls(version_date)
     if not all_urls:
-        print(f"No releases found for {version_date}")
-        return None
+        raise FileNotFoundError(f"No adsblol production releases found for {version_date}")
 
     # Prefer non-tmp URLs; only use tmp if no normal URLs exist.
     normal_urls = [u for u in all_urls if "tmp" not in u]
@@ -422,13 +421,18 @@ def _download_and_extract_locked(version_date: str) -> str | None:
             asset_name = url.rstrip('/').split('/')[-1]
             file_path = release_dir / asset_name
             if not download_asset(url, file_path):
-                print(f"Failed to download every archive part for {version_date}")
-                return None
+                raise RuntimeError(
+                    f"Failed to download adsblol archive for {version_date}: "
+                    f"{url} -> {file_path}"
+                )
             downloaded_files.append(str(file_path))
 
     if extract_split_archive(downloaded_files, str(extract_dir)):
         return str(extract_dir)
-    return None
+    raise RuntimeError(
+        f"Failed to extract adsblol archives for {version_date} into {extract_dir}: "
+        f"{downloaded_files}. See extraction output for the tar error."
+    )
 
 
 def process_version_date(
@@ -467,8 +471,7 @@ def process_version_date(
     
     print(f"\nTotal rows written: {total_rows}")
     print(f"Partition dir: {partition_dir}")
-    # The automatic ADS-B reader sets keep_folders=False so temporary source
-    # artifacts do not remain after their parquet partition has been written.
+    # Only remove temporary source artifacts when explicitly requested.
     if not keep_folders:
         for artifact_dir in (Path(extract_dir), _release_dir(version_date)):
             if artifact_dir.exists():
@@ -531,16 +534,24 @@ def create_parquet_for_day(
         print(f"Parquet partition already exists: {partition_dir}")
         return partition_dir
 
-    print(f"Creating parquet for {version_date}")
-    rows_processed = process_version_date(
-        version_date,
-        keep_folders,
-    )
+    # Concurrent runs can request the same ADS-B partition. Hold this lock
+    # through conversion and cleanup, not just download/extraction, so another
+    # converter cannot remove a partition while it is being written or read.
+    # Use a separate lock because download_and_extract takes the release lock.
+    with _exclusive_file_lock(LOCKS_DIR / f"{version_date}.parquet.lock"):
+        if _parquet_partition_has_data(partition_dir):
+            return partition_dir
 
-    if rows_processed > 0 and _parquet_partition_has_data(partition_dir):
-        return partition_dir
-    else:
-        return None
+        print(f"Creating parquet for {version_date}")
+        rows_processed = process_version_date(
+            version_date,
+            keep_folders,
+        )
+
+        if rows_processed > 0 and _parquet_partition_has_data(partition_dir):
+            return partition_dir
+        else:
+            return None
 
 
 def upload_to_s3(parquet_path: Path):
