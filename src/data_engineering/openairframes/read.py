@@ -310,14 +310,31 @@ def scan_latest_icao_info_for_join(
     return df
 
 
-def add_latest_icao_info(
+def scan_icao_info_as_of_for_join(
+    at_date: date,
+    path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
+) -> pl.LazyFrame:
+    """Return the latest OpenAirframes row per ICAO available by a date."""
+    end = datetime.combine(at_date + timedelta(days=1), datetime.min.time())
+    return (
+        scan_icao_info(path)
+        .filter(pl.col("time") < end)
+        .sort(["icao", "time"])
+        .group_by("icao", maintain_order=True)
+        .last()
+        .select(["icao", *ICAO_INFO_COLUMNS])
+    )
+
+
+def add_icao_info_as_of(
     df: pl.DataFrame,
+    at_date: date,
     path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
 ) -> pl.DataFrame:
     info_columns = ["pia", "ladd", "military", "interesting"]
     df = df.drop([col for col in info_columns if col in df.columns])
     df_openairframes = (
-        scan_latest_icao_info_for_join(path)
+        scan_icao_info_as_of_for_join(at_date, path)
         .select(["icao", *info_columns])
         .with_columns(pl.col("icao").str.to_lowercase())
     )

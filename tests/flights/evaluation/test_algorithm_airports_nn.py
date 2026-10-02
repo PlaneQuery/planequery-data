@@ -78,13 +78,13 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
     assert evaluation.adsb_srcs_for_test_source(
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
-    ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+    ) == [None]
 
 
 @pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE])
-def test_precomputed_source_is_evaluated_once_across_adsb_sources(source):
+def test_independent_source_is_evaluated_once_across_adsb_sources(source):
     assert evaluation.resolve_source(source.name) is source
     assert evaluation.adsb_srcs_for_test_source(
         source,
         [ADSBSource.ADSBLOL, ADSBSource.OPENSKY, ADSBSource.ADSBX],
-    ) == [evaluation.DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+    ) == [None]

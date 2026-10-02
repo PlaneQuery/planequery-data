@@ -1,17 +1,17 @@
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn import AlgorithmNNFlightSource
 from flights.ground_truth.source import GroundTruthFlightSource
+from flights.providers.adsbx import ADSBXPublishedFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
-from flights.providers.adsbx import ADSBXPrecomputedFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 
 
 ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
 ALGORITHM_NN_SOURCE = AlgorithmNNFlightSource()
-ADSBX_SOURCE = ADSBXPrecomputedFlightSource()
+ADSBX_SOURCE = ADSBXPublishedFlightSource()
 BTS_SOURCE = BTSFlightSource()
 EUROCONTROL_SOURCE = EurocontrolFlightSource()
 GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
