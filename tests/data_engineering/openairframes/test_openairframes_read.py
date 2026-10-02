@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 import json
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import urllib.error
 
 import pytest
+import polars as pl
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
@@ -190,3 +191,37 @@ def test_existing_asset_from_latest_release_is_reused(monkeypatch, tmp_path):
     )
 
     assert read._resolve_default_snapshot("faa") == cached
+
+
+def test_add_icao_info_as_of_excludes_later_aircraft_state(monkeypatch):
+    history = pl.DataFrame(
+        {
+            "icao": ["abc123", "abc123"],
+            "time": [datetime(2026, 3, 1, 20), datetime(2026, 3, 2, 1)],
+            "registration": ["N123AB", "N123AB"],
+            "aircraft_type": ["A320", "A320"],
+            "owner": ["Owner", "Owner"],
+            "aircraft_description": ["Airliner", "Airliner"],
+            "category": ["A3", "A3"],
+            "pia": [True, False],
+            "ladd": [False, True],
+            "military": [False, False],
+            "interesting": [False, False],
+        }
+    )
+    monkeypatch.setattr(read, "scan_icao_info", lambda _path: history.lazy())
+    flights = pl.DataFrame({"icao": ["ABC123"]})
+
+    result = read.add_icao_info_as_of(
+        flights,
+        date(2026, 3, 1),
+        path="ignored.csv",
+    )
+
+    assert result.select(
+        "icao",
+        "pia",
+        "ladd",
+        "military",
+        "interesting",
+    ).row(0) == ("abc123", True, False, False, False)
