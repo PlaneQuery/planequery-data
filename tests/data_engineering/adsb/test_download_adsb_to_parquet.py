@@ -164,6 +164,33 @@ def test_extract_split_archive_rejects_partial_output(tmp_path):
     assert not list(tmp_path.glob(".extract.extract-*"))
 
 
+def test_extract_prefers_split_parts_over_standalone_tar(tmp_path, capsys):
+    parts, _ = _write_split_tar(tmp_path)
+    archive = tmp_path / "release.tar"
+    # The standalone version must not be read, even if it is invalid.
+    archive.write_bytes(b"invalid standalone archive" * 100_000)
+    extract_dir = tmp_path / "extract"
+
+    assert download.extract_split_archive([archive, *reversed(parts)], extract_dir)
+    assert (extract_dir / "first.txt").read_text() == "first"
+    assert (extract_dir / "second.bin").read_bytes() == b"x" * (1024 * 1024)
+    output = capsys.readouterr().out
+    assert "Using split archive parts for release.tar" in output
+    assert "Ignoring standalone tar because split parts are available:" in output
+    marker = (extract_dir / download.EXTRACTION_COMPLETE_MARKER).read_text()
+    assert '"name": "release.tar"' not in marker
+
+
+def test_extract_uses_standalone_tar_without_split_parts(tmp_path, capsys):
+    _write_split_tar(tmp_path)
+    extract_dir = tmp_path / "extract"
+
+    assert download.extract_split_archive([tmp_path / "release.tar"], extract_dir)
+    assert (extract_dir / "first.txt").read_text() == "first"
+    assert (extract_dir / "second.bin").read_bytes() == b"x" * (1024 * 1024)
+    assert "Using standalone tar because no split parts are available:" in capsys.readouterr().out
+
+
 def test_upload_includes_success_marker(monkeypatch, tmp_path):
     output_dir = tmp_path / "output"
     parquet_day = output_dir / "data/processed/adsb/parquet_output/day=01"
