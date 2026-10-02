@@ -1,7 +1,7 @@
 import math
 import subprocess
-from datetime import date, timedelta
 from collections.abc import Iterator
+from datetime import date, timedelta
 
 def haversine(lat1, lon1, lat2, lon2):
     '''Returned distance in km'''
@@ -56,3 +56,21 @@ def date_range(start_date: date, end_date: date) -> Iterator[date]:
     while current_date < end_date:
         yield current_date
         current_date += timedelta(days=1)
+
+
+def month_start_range(start_date: date, end_date: date) -> Iterator[date]:
+    """Yield first-of-month dates in ``[start_date, end_date)``."""
+    assert end_date > start_date
+    current_date = start_date.replace(day=1)
+    if current_date < start_date:
+        current_date = _next_month_start(current_date)
+
+    while current_date < end_date:
+        yield current_date
+        current_date = _next_month_start(current_date)
+
+
+def _next_month_start(day: date) -> date:
+    if day.month == 12:
+        return date(day.year + 1, 1, 1)
+    return date(day.year, day.month + 1, 1)
