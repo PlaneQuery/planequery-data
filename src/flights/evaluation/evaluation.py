@@ -83,12 +83,15 @@ def resolve_source(source: FlightSource | str) -> FlightSource:
 
 def source_flights_reader(
     source: FlightSource | str,
-    adsb_src: ADSBSource = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
+    adsb_src: ADSBSource | None = DEFAULT_ADSB_SRC_FOR_FLIGHTS,
 ):
     source = resolve_source(source)
-    source_adsb = (
-        ADSBSource(adsb_src) if isinstance(source, ADSBFlightSource) else None
-    )
+    if isinstance(source, ADSBFlightSource):
+        if adsb_src is None:
+            raise ValueError(f"{source.name} requires an ADS-B source")
+        source_adsb = ADSBSource(adsb_src)
+    else:
+        source_adsb = None
 
     def read_source(target_date: date) -> pl.DataFrame:
         if (
@@ -107,10 +110,10 @@ def source_flights_reader(
 def adsb_srcs_for_test_source(
     source: FlightSource | str,
     adsb_srcs: list[ADSBSource],
-) -> list[ADSBSource]:
+) -> list[ADSBSource | None]:
     if isinstance(resolve_source(source), ADSBFlightSource):
         return adsb_srcs
-    return [DEFAULT_ADSB_SRC_FOR_FLIGHTS]
+    return [None]
 
 
 def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:

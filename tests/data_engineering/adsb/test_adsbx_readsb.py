@@ -7,7 +7,7 @@ import pyarrow.parquet as pq
 
 from data_engineering.adsb.parquet_schema import PARQUET_SCHEMA
 from data_engineering.adsbx.download_readsb_day import DEFAULT_OUT_DIR
-from data_engineering.adsbx.get_flights import _adsbx_raw_flights_path
+from data_engineering.adsbx.published_flights import _adsbx_raw_arrivals_path
 from data_engineering.adsbx.readsb import (
     DEFAULT_INPUT_ROOT,
     write_readsb_day_to_bucketed_parquet,
@@ -15,7 +15,7 @@ from data_engineering.adsbx.readsb import (
 
 
 def test_adsbx_raw_paths_use_one_source_name():
-    raw_flights_path = _adsbx_raw_flights_path(date(2024, 6, 1))
+    raw_flights_path = _adsbx_raw_arrivals_path(date(2024, 6, 1))
 
     assert DEFAULT_INPUT_ROOT == DEFAULT_OUT_DIR
     assert "adsbx" in DEFAULT_INPUT_ROOT.parts
