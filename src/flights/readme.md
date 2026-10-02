@@ -35,6 +35,27 @@ inference. For example, OpenSky inference reuses only OpenSky segmentation.
 Missing or stale nearest output falls back to normal segmentation of the same
 ADS-B provider.
 
+## ADS-B Exchange published flights
+
+The `adsbx` flight source is ADS-B Exchange's published flight product, not
+the ADSBX state-vector source used by ADS-B-backed algorithms. The upstream
+files are partitioned by arrival date, and only the first day of each month is
+available. The provider therefore creates the complete same-day cohort from
+that one file: flights whose takeoff and landing both occur on date `D`.
+Evaluation applies the same restriction to every source, so overnight flights
+are excluded consistently rather than counted as missing ADSBX flights.
+
+Normalized arrival artifacts are stored under:
+
+```text
+$OUTPUT_DIR/data/intermediate/adsbx/published-arrivals/version=1/
+```
+
+Older artifacts under `data/flights/adsbx/v1/` remain readable as a migration
+fallback. New artifacts are written only to the intermediate-data location.
+Aircraft flags and canonical airport IDs are added by the versioned `adsbx`
+flight provider and are not persisted in the normalized arrivals artifact.
+
 ## Eurocontrol
 
 Place each raw monthly archive at:

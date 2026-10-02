@@ -1,7 +1,6 @@
 
 from datetime import date, datetime, time, timedelta
 from flights.flight_type import Flight, FlightIndex
-from flights.flights_comparison import Match, df_flights_comparison, df_flights_comparison_stats, flights_comparison
 import polars as pl
 
 from pia.graph import FlightLinkCandidate
