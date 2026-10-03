@@ -154,9 +154,12 @@ def iata_airport_mapping(
     )
 
 
-def get_registration_to_icao() -> pl.DataFrame:
+def get_registration_to_icao(at_date: date | None = None) -> pl.DataFrame:
     return (
-        scan_latest_faa_registration_icao_for_join(real_icao_column="icao")
+        scan_latest_faa_registration_icao_for_join(
+            real_icao_column="icao",
+            at_date=at_date,
+        )
         .collect()
     )
 
@@ -185,6 +188,7 @@ def _create_flights_from_bts_month(
     year: int,
     month: int,
     airport_catalog: AirportCatalogView,
+    openairframes_date: date | None = None,
 ) -> pl.DataFrame:
     '''
     On 2025, 10 for example some flights from UTC day 2025-11-01 and 2025-09-30 are included
@@ -206,7 +210,9 @@ def _create_flights_from_bts_month(
     df = df.filter((pl.col("cancelled") == 0) & (pl.col("diverted") == 0))
     df = df.filter(pl.col("air_time") > 30)
     df = df.rename({"tail_num": "registration"})
-    mapping = get_registration_to_icao()
+    mapping = get_registration_to_icao(
+        at_date=openairframes_date or date(year, month, 1)
+    )
     df = df.join(mapping, on="registration", how="inner")
     airport_codes = pl.concat(
         [df.get_column("origin"), df.get_column("dest")]
@@ -292,6 +298,7 @@ def create_flights_from_bts(
         target_date.year,
         target_date.month,
         airport_catalog,
+        openairframes_date=target_date,
     )
     daily_df = monthly_df.filter(
         pl.col("takeoff_time").dt.date() == target_date
