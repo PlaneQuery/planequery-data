@@ -351,7 +351,7 @@ def write_opensky_state_vectors_cache_for_day(
         from data_engineering.opensky.preprocess import preprocess_opensky_adsb
 
         openairframes = (
-            scan_latest_icao_info_for_join()
+            scan_latest_icao_info_for_join(at_date=target_day)
             .with_columns(pl.col("icao").str.to_lowercase())
             .collect(engine="streaming")
         )
