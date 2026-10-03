@@ -193,6 +193,48 @@ def test_existing_asset_from_latest_release_is_reused(monkeypatch, tmp_path):
     assert read._resolve_default_snapshot("faa") == cached
 
 
+def test_old_date_reuses_covering_local_snapshot_without_remote_lookup(
+    monkeypatch, tmp_path
+):
+    older = tmp_path / "openairframes_adsb_2024-01-01_2026-09-28.csv.gz"
+    older.write_text("snapshot", encoding="utf-8")
+
+    monkeypatch.setattr(read, "OPENAIRFRAMES_DIR", tmp_path)
+    monkeypatch.setattr(
+        read,
+        "_remote_snapshot_assets",
+        lambda _dataset: (_ for _ in ()).throw(
+            AssertionError("old covered dates must not check for a newer release")
+        ),
+    )
+
+    assert read._resolve_default_snapshot("adsb", date(2024, 3, 1)) == older
+
+
+def test_old_date_downloads_when_no_local_snapshot_covers_it(
+    monkeypatch, tmp_path
+):
+    local = tmp_path / "openairframes_adsb_2024-01-01_2024-02-01.csv.gz"
+    local.write_text("snapshot", encoding="utf-8")
+    asset = read._SnapshotAsset(
+        release_date=date(2026, 9, 29),
+        snapshot_date=date(2026, 9, 28),
+        name="openairframes_adsb_2024-01-01_2026-09-28.csv.gz",
+        download_url="https://example.test/adsb",
+    )
+
+    def fake_download(_asset, destination):
+        destination.write_text("downloaded", encoding="utf-8")
+
+    monkeypatch.setattr(read, "OPENAIRFRAMES_DIR", tmp_path)
+    monkeypatch.setattr(read, "_remote_snapshot_assets", lambda _dataset: [asset])
+    monkeypatch.setattr(read, "_download_snapshot", fake_download)
+
+    assert read._resolve_default_snapshot("adsb", date(2024, 3, 1)) == (
+        tmp_path / asset.name
+    )
+
+
 def test_add_icao_info_as_of_excludes_later_aircraft_state(monkeypatch):
     history = pl.DataFrame(
         {
@@ -209,7 +251,11 @@ def test_add_icao_info_as_of_excludes_later_aircraft_state(monkeypatch):
             "interesting": [False, False],
         }
     )
-    monkeypatch.setattr(read, "scan_icao_info", lambda _path: history.lazy())
+    monkeypatch.setattr(
+        read,
+        "scan_icao_info",
+        lambda _path, **_kwargs: history.lazy(),
+    )
     flights = pl.DataFrame({"icao": ["ABC123"]})
 
     result = read.add_icao_info_as_of(

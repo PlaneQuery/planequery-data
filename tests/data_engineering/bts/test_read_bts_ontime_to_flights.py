@@ -145,9 +145,10 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     )
     airport_catalog = FakeAirportCatalog()
 
-    def create_month(year, month, catalog):
+    def create_month(year, month, catalog, openairframes_date=None):
         assert (year, month) == (2026, 3)
         assert catalog is airport_catalog
+        assert openairframes_date == date(2026, 3, 1)
         return df
 
     monkeypatch.setattr(bts_module, "_create_flights_from_bts_month", create_month)
