@@ -155,7 +155,7 @@ def _stub_openairframes(monkeypatch) -> None:
     monkeypatch.setattr(
         openairframes_reader,
         "scan_latest_icao_info_for_join",
-        lambda: pl.DataFrame(metadata).lazy(),
+        lambda **_kwargs: pl.DataFrame(metadata).lazy(),
     )
 
 

@@ -22,6 +22,7 @@ OPENAIRFRAMES_DIR = OUTPUT_DIR / "data" / "raw" / "openairframes"
 OPENAIRFRAMES_RELEASE_DATE = datetime.now(timezone.utc).date() - timedelta(days=2)
 OPENAIRFRAMES_FAA_SNAPSHOT_END_DATE = OPENAIRFRAMES_RELEASE_DATE
 OPENAIRFRAMES_ADSB_SNAPSHOT_END_DATE = OPENAIRFRAMES_RELEASE_DATE - timedelta(days=1)
+OPENAIRFRAMES_REFRESH_WINDOW = timedelta(days=30)
 DEFAULT_OPENAIRFRAMES_ADSB_PATH = (
     OPENAIRFRAMES_DIR
     / f"openairframes_adsb_2024-01-01_{OPENAIRFRAMES_ADSB_SNAPSHOT_END_DATE.isoformat()}.csv.gz"
@@ -176,9 +177,22 @@ def _download_snapshot(asset: _SnapshotAsset, destination: Path) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def _is_recent_snapshot_date(at_date: date | None) -> bool:
+    if at_date is None:
+        return True
+    today = datetime.now(timezone.utc).date()
+    return at_date >= today - OPENAIRFRAMES_REFRESH_WINDOW
+
+
 @lru_cache(maxsize=None)
-def _resolve_default_snapshot(dataset: str) -> Path:
+def _resolve_default_snapshot(dataset: str, at_date: date | None = None) -> Path:
+    is_recent = _is_recent_snapshot_date(at_date)
     local_fallback = _latest_snapshot_path(dataset)
+    if at_date is not None and not is_recent and local_fallback is not None:
+        match = _snapshot_filename_pattern(dataset).fullmatch(local_fallback.name)
+        if match and date.fromisoformat(match.group(1)) >= at_date:
+            return local_fallback
+        local_fallback = None
     try:
         assets = _remote_snapshot_assets(dataset)
     except (OSError, ValueError) as exc:
@@ -235,18 +249,26 @@ def _resolve_default_snapshot(dataset: str) -> Path:
     )
 
 
-def _ensure_default_openairframes_adsb_path(path: str | Path) -> Path:
+def _ensure_default_openairframes_adsb_path(
+    path: str | Path,
+    *,
+    at_date: date | None = None,
+) -> Path:
     resolved_path = Path(path)
     if resolved_path != DEFAULT_OPENAIRFRAMES_ADSB_PATH:
         return resolved_path
-    return _resolve_default_snapshot("adsb")
+    return _resolve_default_snapshot("adsb", at_date)
 
 
-def _ensure_default_openairframes_faa_path(path: str | Path) -> Path:
+def _ensure_default_openairframes_faa_path(
+    path: str | Path,
+    *,
+    at_date: date | None = None,
+) -> Path:
     resolved_path = Path(path)
     if resolved_path != DEFAULT_OPENAIRFRAMES_FAA_PATH:
         return resolved_path
-    return _resolve_default_snapshot("faa")
+    return _resolve_default_snapshot("faa", at_date)
 
 
 def _extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
@@ -258,8 +280,12 @@ def _extract_db_flags(col: str = "db_flags") -> list[pl.Expr]:
     ]
 
 
-def scan_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.LazyFrame:
-    path = _ensure_default_openairframes_adsb_path(path)
+def scan_icao_info(
+    path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
+    *,
+    at_date: date | None = None,
+) -> pl.LazyFrame:
+    path = _ensure_default_openairframes_adsb_path(path, at_date=at_date)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -282,13 +308,15 @@ def scan_icao_info(path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH) -> pl.Laz
 
 def scan_latest_icao_info_for_join(
     path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
+    *,
+    at_date: date | None = None,
 ) -> pl.LazyFrame:
     """Scan one latest OpenAirframes row per ICAO for ADS-B enrichment joins.
 
     The OpenAirframes CSV is chronological, so keeping the last row per ICAO
     avoids a multi-GB time sort before joining.
     """
-    path = _ensure_default_openairframes_adsb_path(path)
+    path = _ensure_default_openairframes_adsb_path(path, at_date=at_date)
     source_columns = ["icao", "r", "t", "ownOp", "desc", "aircraft_category", "dbFlags"]
     df = pl.scan_csv(
         path,
@@ -317,7 +345,7 @@ def scan_icao_info_as_of_for_join(
     """Return the latest OpenAirframes row per ICAO available by a date."""
     end = datetime.combine(at_date + timedelta(days=1), datetime.min.time())
     return (
-        scan_icao_info(path)
+        scan_icao_info(path, at_date=at_date)
         .filter(pl.col("time") < end)
         .sort(["icao", "time"])
         .group_by("icao", maintain_order=True)
@@ -350,9 +378,11 @@ def add_icao_info_as_of(
 def scan_latest_registration_icao_for_join(
     path: str | Path = DEFAULT_OPENAIRFRAMES_ADSB_PATH,
     real_icao_column: str = "real_icao",
+    *,
+    at_date: date | None = None,
 ) -> pl.LazyFrame:
     """Scan one latest OpenAirframes ICAO per registration for tail-number joins."""
-    path = _ensure_default_openairframes_adsb_path(path)
+    path = _ensure_default_openairframes_adsb_path(path, at_date=at_date)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -377,9 +407,11 @@ def scan_latest_registration_icao_for_join(
 def scan_latest_faa_registration_icao_for_join(
     path: str | Path = DEFAULT_OPENAIRFRAMES_FAA_PATH,
     real_icao_column: str = "real_icao",
+    *,
+    at_date: date | None = None,
 ) -> pl.LazyFrame:
     """Scan one latest FAA OpenAirframes ICAO per registration for tail-number joins."""
-    path = _ensure_default_openairframes_faa_path(path)
+    path = _ensure_default_openairframes_faa_path(path, at_date=at_date)
     df = pl.scan_csv(
         path,
         schema_overrides={
@@ -408,9 +440,11 @@ def scan_latest_faa_registration_icao_for_join(
 
 def get_openairframes_faa_df(
     path: str | Path = DEFAULT_OPENAIRFRAMES_FAA_PATH,
+    *,
+    at_date: date | None = None,
 ) -> pl.DataFrame:
     """Return the full FAA OpenAirframes snapshot as a Polars DataFrame."""
-    path = _ensure_default_openairframes_faa_path(path)
+    path = _ensure_default_openairframes_faa_path(path, at_date=at_date)
     return pl.read_csv(
         path,
         schema_overrides={
@@ -434,7 +468,7 @@ def get_openairframes_snapshot(
     at_datetime = datetime.combine(at_date, datetime.min.time())
 
     df =  (
-        scan_icao_info()
+        scan_icao_info(at_date=at_date)
         .with_columns(
             (pl.col("registration").is_null() | pl.col("registration").eq("")).alias("_registration_is_null"),
             (pl.col("time") - at_datetime).abs().alias("_distance_from_at_date"),
