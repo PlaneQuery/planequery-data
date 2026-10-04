@@ -12,7 +12,7 @@ def test_all_sources_share_canonical_layout(monkeypatch, tmp_path):
 
     expected_versions = {
         ADSBSource.ADSBLOL: 6,
-        ADSBSource.ADSBX: 1,
+        ADSBSource.ADSBX: 2,
         ADSBSource.OPENSKY: 4,
     }
     for source, version in expected_versions.items():
