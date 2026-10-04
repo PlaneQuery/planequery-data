@@ -23,7 +23,7 @@ class ADSBSource(StrEnum):
 ADSB_PARQUET_ROOT = OUTPUT_DIR / "data" / "processed" / "adsb" / "parquet_output"
 ADSB_PARQUET_VERSIONS = {
     ADSBSource.ADSBLOL: 6,
-    ADSBSource.ADSBX: 1,
+    ADSBSource.ADSBX: 2,
     ADSBSource.OPENSKY: 4,
 }
 SUCCESS_MARKER = "_SUCCESS"

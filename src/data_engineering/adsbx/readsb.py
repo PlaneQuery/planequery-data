@@ -1,6 +1,7 @@
 import argparse
 import datetime as dt
 import gzip
+import math
 import re
 import shutil
 import subprocess
@@ -78,33 +79,22 @@ def _to_int(value):
         return None
 
 
-def _is_15_second_snapshot(path: Path) -> bool:
-    match = FILENAME_RE.match(path.name)
-    if not match:
-        return False
-    hour, minute, second = (int(part) for part in match.groups())
-    return (hour * 3600 + minute * 60 + second) % 15 == 0
-
-
 def readsb_snapshot_files(
     input_path: Path,
-    cadence_seconds: int = 15,
     start_after: str | None = None,
 ) -> list[Path]:
-    """Return readsb-hist snapshot files sampled from a 5-second archive."""
-    if cadence_seconds != 15:
-        raise ValueError("Only 15-second sampling is currently supported")
-
+    """Return every available readsb-hist snapshot, without cadence sampling."""
     if input_path.is_file():
         input_dir = input_path.parent
     else:
         input_dir = input_path
 
-    files = sorted(input_dir.glob("*.json.gz"))
-    sampled_files = [path for path in files if _is_15_second_snapshot(path)]
+    files = sorted(
+        path for path in input_dir.glob("*.json.gz") if FILENAME_RE.fullmatch(path.name)
+    )
     if start_after is not None:
-        sampled_files = [path for path in sampled_files if path.name > start_after]
-    return sampled_files
+        files = [path for path in files if path.name > start_after]
+    return files
 
 
 def _db_flags(raw):
@@ -129,6 +119,18 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
     if icao is None or seen_pos is None or lat is None or lon is None:
         return False
 
+    # Timestamp the position, not the snapshot or the last non-position message.
+    # Without seen_pos, coordinates may be stale and cannot be timed reliably.
+    try:
+        lat, lon, seen_pos, now = map(float, (lat, lon, seen_pos, now))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not all(math.isfinite(value) for value in (lat, lon, seen_pos, now)):
+        return False
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 0 <= seen_pos <= now):
+        return False
+    position_time = now - seen_pos
+
     altitude = aircraft.get("alt_baro")
     on_ground = altitude == "ground"
     baro_altitude_ft = None if on_ground else _to_int(altitude)
@@ -137,7 +139,7 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
     no_reg_data = bool(no_reg_data_raw) if no_reg_data_raw is not None else None
     military, interesting, pia, ladd = _db_flags(aircraft.get("dbFlags"))
 
-    cols["time"].append(int((now - float(seen_pos)) * 1000))
+    cols["time"].append(int(position_time * 1000))
     cols["icao"].append(icao)
     cols["callsign"].append(_str_or_none(aircraft.get("flight")))
     cols["registration"].append(_str_or_none(aircraft.get("r")))
@@ -215,7 +217,7 @@ def read_snapshot(path: Path) -> dict[str, list]:
     with gzip.open(path, "rb") as f:
         data = orjson.loads(f.read())
 
-    now = float(data["now"])
+    now = data.get("now")
     cols = {col: [] for col in COLUMNS}
     for aircraft in data.get("aircraft", []):
         _append_aircraft(cols, aircraft, now)
@@ -294,7 +296,7 @@ def write_readsb_day_to_bucketed_parquet(
     output_root = Path(output_root)
     files = readsb_snapshot_files(input_path, start_after=start_after)
     if not files:
-        raise FileNotFoundError(f"No 15-second readsb snapshots found under {input_path}")
+        raise FileNotFoundError(f"No readsb snapshots found under {input_path}")
 
     day_dir = next(iter(_bucketed_output_paths(input_path, output_root).values())).parents[1]
     if day_dir.exists():
