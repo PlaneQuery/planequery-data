@@ -134,6 +134,23 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     assert first_stats.row(0, named=True)["precision"] == 1.0
 
 
+def test_cache_listing_only_returns_the_active_cache_version(
+    monkeypatch,
+    tmp_path,
+):
+    test_source = _algorithm_nn_source(tmp_path)
+    cache_root = tmp_path / "cache"
+    old_cache = EvaluationCache(cache_root, cache_version=1)
+    current_cache = EvaluationCache(cache_root, cache_version=2)
+    frame = flights_to_flights_df([_flight()])
+    _patch_inputs(monkeypatch, test_source, lambda source: frame)
+
+    _evaluate(test_source, old_cache)
+
+    assert old_cache.list_entries().height == 1
+    assert current_cache.list_entries().is_empty()
+
+
 def test_two_adsb_providers_are_cached_and_listed_with_filters(
     monkeypatch,
     tmp_path,
