@@ -16,10 +16,6 @@ class EvaluationStats:
     algorithm_source: FlightSource
     gold_source: FlightSource
 
-    use_all_icaos: bool
-    filter_rotorcraft: bool
-    pia_or_american_ladd_only: bool
-
     true_positive: int
     false_positive: int
     false_negative: int
@@ -81,11 +77,6 @@ class EvaluationStats:
             adsb_source=parse_optional_adsb_source(row["adsb_src"]),
             algorithm_source=resolve_flight_source(row["test_src"]),
             gold_source=resolve_flight_source(row["gold_src"]),
-            use_all_icaos=bool(row["use_all_icaos"]),
-            filter_rotorcraft=bool(row["filter_rotorcraft"]),
-            pia_or_american_ladd_only=bool(
-                row["pia_or_american_ladd_only"]
-            ),
             true_positive=parse_count(row["true_positive"]),
             false_positive=parse_count(row["false_positive"]),
             false_negative=parse_count(row["false_negative"]),
@@ -180,4 +171,4 @@ main(sfpds_csv_path)
 print("Eurocontrol")
 main(eurocontrol_csv_path)
 
-# TODO: Write down all dates in this file. I shoudl have 2 days for both. 
+# TODO: Write down all dates in this file. I shoudl have 2 days for both.
