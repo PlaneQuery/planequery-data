@@ -43,14 +43,16 @@ def test_algorithm_nn_source_uses_checkpoint(
     source = AlgorithmNNFlightSource(model_path=checkpoint)
     reader = evaluation.source_flights_reader(
         source,
-        adsb_src=ADSBSource.ADSBLOL,
+        adsb_source=ADSBSource.ADSBLOL,
     )
     result = reader(day)
     assert result["takeoff_airport_ident"].to_list() == ["KAAA", None]
     assert result["landing_airport_ident"].to_list() == ["KBBB", None]
     assert result.columns == segments.columns
-    assert evaluation.adsb_srcs_for_test_source(
-        source, [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
+    assert evaluation.adsb_sources_for_evaluation(
+        source,
+        BTS_SOURCE,
+        [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
     ) == [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
 
 
@@ -75,7 +77,8 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
     evaluation.source_flights_reader(BTS_SOURCE.name)(day)
 
     assert calls == [(BTS_SOURCE, day, None)]
-    assert evaluation.adsb_srcs_for_test_source(
+    assert evaluation.adsb_sources_for_evaluation(
+        BTS_SOURCE,
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
     ) == [None]
@@ -84,7 +87,8 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
 @pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE])
 def test_independent_source_is_evaluated_once_across_adsb_sources(source):
     assert evaluation.resolve_source(source.name) is source
-    assert evaluation.adsb_srcs_for_test_source(
+    assert evaluation.adsb_sources_for_evaluation(
         source,
+        BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.OPENSKY, ADSBSource.ADSBX],
     ) == [None]

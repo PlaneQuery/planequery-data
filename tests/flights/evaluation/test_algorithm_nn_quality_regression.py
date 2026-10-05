@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from data_engineering.adsb.read_adsb import ADSBSource
-from flights.evaluation.evaluation import main
+from flights.evaluation.evaluation import evaluate as run_evaluation
 from flights.flight_source import ADSBFlightSource, flight_path, write_flights
 from flights.sources import FLIGHT_SOURCES_BY_NAME
 
@@ -27,14 +27,9 @@ MAX_METRIC_REGRESSION = 0.001
 CONFIG_COLUMNS = (
     "test_date",
     "adsb_src",
-    "matching_adsb_src",
     "test_src",
-    "gold_src",
-    "use_all_icaos",
-    "filter_rotorcraft",
-    "pia_or_american_ladd_only",
 )
-REQUIRED_COLUMNS = set(CONFIG_COLUMNS) | set(MINIMUM_METRICS)
+REQUIRED_COLUMNS = set(CONFIG_COLUMNS) | {"gold_src"} | set(MINIMUM_METRICS)
 
 
 @dataclass(frozen=True)
@@ -42,10 +37,6 @@ class EvaluationConfig:
     test_date: date
     test_source_name: str
     adsb_source: ADSBSource | None
-    matching_adsb_source: ADSBSource
-    use_all_icaos: bool
-    filter_rotorcraft: bool
-    pia_or_american_ladd_only: bool
 
 
 @dataclass(frozen=True)
@@ -53,13 +44,6 @@ class Baseline:
     config: EvaluationConfig
     gold_source_name: str
     minimum_metrics: tuple[tuple[str, float], ...]
-
-
-def parse_bool(value: str, *, column: str) -> bool:
-    normalized = value.strip().lower()
-    if normalized not in {"true", "false"}:
-        raise ValueError(f"{column} must be 'true' or 'false', got {value!r}")
-    return normalized == "true"
 
 
 def parse_optional_adsb_source(value: str) -> ADSBSource | None:
@@ -86,17 +70,6 @@ def load_baselines(path: Path) -> list[Baseline]:
                 test_date=date.fromisoformat(row["test_date"]),
                 test_source_name=row["test_src"],
                 adsb_source=parse_optional_adsb_source(row["adsb_src"]),
-                matching_adsb_source=ADSBSource(row["matching_adsb_src"]),
-                use_all_icaos=parse_bool(
-                    row["use_all_icaos"], column="use_all_icaos"
-                ),
-                filter_rotorcraft=parse_bool(
-                    row["filter_rotorcraft"], column="filter_rotorcraft"
-                ),
-                pia_or_american_ladd_only=parse_bool(
-                    row["pia_or_american_ladd_only"],
-                    column="pia_or_american_ladd_only",
-                ),
             )
             baselines.append(
                 Baseline(
@@ -149,16 +122,13 @@ def regenerate_flights(config: EvaluationConfig) -> None:
 
 
 def evaluate(config: EvaluationConfig, gold_sources: list[str]):
-    _, stats = main(
-        test_src=source_for(config),
-        gold_src=gold_sources,
+    _, stats = run_evaluation(
+        test_source=source_for(config),
+        gold_source=gold_sources,
         test_dates=config.test_date,
-        adsb_src=config.adsb_source or ADSBSource.ADSBLOL,
-        matching_adsb_src=config.matching_adsb_source,
-        use_all_icaos=config.use_all_icaos,
-        filter_rotorcraft=config.filter_rotorcraft,
-        pia_or_american_ladd_only=config.pia_or_american_ladd_only,
+        adsb_source=config.adsb_source or ADSBSource.ADSBLOL,
         write_outputs=False,
+        refresh_cache=True,
     )
     return {
         row["gold_src"]: row
