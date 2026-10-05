@@ -8,6 +8,7 @@ import pytest
 
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.evaluation.evaluation import evaluate as run_evaluation
+from flights.evaluation.models import EvaluationStats
 from flights.flight_source import ADSBFlightSource, flight_path, write_flights
 from flights.sources import FLIGHT_SOURCES_BY_NAME
 
@@ -122,7 +123,7 @@ def regenerate_flights(config: EvaluationConfig) -> None:
 
 
 def evaluate(config: EvaluationConfig, gold_sources: list[str]):
-    _, stats = run_evaluation(
+    results = run_evaluation(
         test_source=source_for(config),
         gold_source=gold_sources,
         test_dates=config.test_date,
@@ -131,15 +132,14 @@ def evaluate(config: EvaluationConfig, gold_sources: list[str]):
         refresh_cache=True,
     )
     return {
-        row["gold_src"]: row
-        for row in stats.to_dicts()
-        if row["test_date"] != "average"
+        stats.gold_source: stats
+        for stats in results.stats
     }
 
 
 def assert_meets_baseline(
     baseline: Baseline,
-    actual: dict[str, int | float | str | bool | None],
+    actual: EvaluationStats,
     baseline_path: Path,
 ) -> None:
     case = (
@@ -147,7 +147,7 @@ def assert_meets_baseline(
         f"{baseline.config.test_source_name} vs {baseline.gold_source_name}"
     )
     for metric, minimum in baseline.minimum_metrics:
-        measured = float(actual[metric])
+        measured = float(getattr(actual, metric))
         minimum_with_margin = minimum - MAX_METRIC_REGRESSION
         assert measured >= minimum_with_margin, (
             f"{case}: {metric}={measured:.6f} is below the "
