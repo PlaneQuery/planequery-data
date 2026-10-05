@@ -56,9 +56,34 @@ in accuracy denominators but cannot contribute to training cross entropy.
 ```bash
 python -m flights.airport_nn.derive_day 2026-03-01 --source adsblol \
   --model /path/to/new-model/model.pt
-python src/flights/evaluation/evaluation.py \
-  --test-src algorithm-nn --gold-src ground-truth \
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn --gold-source ground-truth \
+  --adsb-source adsblol \
   --test-dates 2026-03-01 --airport-nn-model /path/to/new-model/model.pt
+```
+
+Daily evaluation results are cached under `OUTPUT_DIR/data/cache/evaluation`,
+so the same date and source combination does not need to be recomputed. A
+normal evaluation reads cache hits and creates only the missing entries. Use
+`python -m flights.evaluation.evaluation --list-cache` to list all cached days,
+or add `--test-source`, `--gold-source`, and `--adsb-source` to filter the list.
+Both normal evaluations and cache listings accept `--output-csv`. Add
+`--columns` to choose and order CSV columns; when it is omitted, every
+applicable column is written.
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn --gold-source bts \
+  --adsb-source adsblol adsbx --test-dates 2026-03-01 \
+  --airport-nn-model /path/to/new-model/model.pt \
+  --output-csv /tmp/algorithm-nn-evaluation.csv \
+  --columns test_date adsb_src precision recall
+
+python -m flights.evaluation.evaluation --list-cache \
+  --test-source algorithm-nn --gold-source bts \
+  --adsb-source adsblol adsbx \
+  --output-csv /tmp/cached-algorithm-nn-evaluation.csv \
+  --columns test_date adsb_src precision recall
 ```
 
 Inference supports `adsblol`, `adsbx`, and `opensky`. It preserves the standard Flight schema

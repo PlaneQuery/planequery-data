@@ -8,7 +8,7 @@ from matplotlib.ticker import PercentFormatter
 import polars as pl
 
 from data_engineering.utils import OUTPUT_DIR
-from flights.evaluation.evaluation import main as run_evaluation
+from flights.evaluation.evaluation import evaluate
 from flights.sources import ALGORITHM_NN_SOURCE, BTS_SOURCE
 from planequery_data.utils import current_commit_hash
 
@@ -110,9 +110,9 @@ def save_raw_comparisons(
 
 def main() -> tuple[Path, Path]:
     output_dir = make_output_dir()
-    comparisons, metrics = run_evaluation(
-        test_src=ALGORITHM_NN_SOURCE,
-        gold_src=BTS_SOURCE,
+    comparisons, metrics = evaluate(
+        test_source=ALGORITHM_NN_SOURCE,
+        gold_source=BTS_SOURCE,
         test_dates=TEST_DATES,
         write_outputs=False,
     )
