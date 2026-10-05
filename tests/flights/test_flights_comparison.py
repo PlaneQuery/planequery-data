@@ -8,7 +8,6 @@ import flights.flights_comparison as comparison_module
 from flights.flight_type import Flight
 from flights.flights_comparison import (
     df_flights_comparison,
-    df_flights_comparison_stats,
     flights_comparison,
 )
 import polars as pl
@@ -181,45 +180,3 @@ def test_airport_coordinates_are_added_once_before_icao_partitioning(monkeypatch
     )
 
     assert calls == [2]
-
-def test_df_flights_comparison_stats():
-    comparison = pl.DataFrame(
-        {
-            "match_status": [
-                "both",
-                "both",
-                "both",
-                "both",
-                "df0_only",
-                "df1_only",
-            ],
-            "takeoff_airport_id": [1, 3, None, 1, 1, None],
-            "takeoff_airport_id_df1": [1, 5, 1, None, None, 1],
-            "landing_airport_id": [2, 4, 2, 2, 2, None],
-            "landing_airport_id_df1": [2, 6, 2, 2, None, 2],
-            "same_takeoff_airport_id": [True, False, False, False, False, False],
-            "same_landing_airport_id": [True, False, True, True, False, False],
-            "same_airport_id": [True, False, False, False, False, False],
-        }
-    )
-
-    stats = df_flights_comparison_stats(comparison)
-
-    assert stats["true_positive"] == 4
-    assert stats["false_positive"] == 1
-    assert stats["false_negative"] == 1
-    assert stats["precision"] == pytest.approx(4 / 5)
-    assert stats["recall"] == pytest.approx(4 / 5)
-    assert stats["f1"] == pytest.approx(4 / 5)
-    assert stats["takeoff_airport_id_total_count"] == 4
-    assert stats["takeoff_airport_id_match_count"] == 1
-    assert stats["takeoff_airport_id_incorrect_match_count"] == 3
-    assert stats["takeoff_airport_id_match_pct"] == pytest.approx(1 / 4)
-    assert stats["landing_airport_id_total_count"] == 4
-    assert stats["landing_airport_id_match_count"] == 3
-    assert stats["landing_airport_id_incorrect_match_count"] == 1
-    assert stats["landing_airport_id_match_pct"] == pytest.approx(3 / 4)
-    assert stats["airport_id_total_count"] == 4
-    assert stats["airport_id_match_count"] == 1
-    assert stats["airport_id_incorrect_match_count"] == 3
-    assert stats["airport_id_match_pct"] == pytest.approx(1 / 4)

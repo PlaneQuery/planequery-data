@@ -16,11 +16,14 @@ from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import OUTPUT_DIR
 from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation.cache import EvaluationCache
-from flights.flight_source import ADSBFlightSource, FlightSource, get_flights
-from flights.flights_comparison import (
-    df_flights_comparison,
-    df_flights_comparison_stats,
+from flights.evaluation.models import (
+    EVALUATION_METADATA_COLUMNS,
+    EvaluationResult,
+    EvaluationResults,
+    EvaluationStats,
 )
+from flights.flight_source import ADSBFlightSource, FlightSource, get_flights
+from flights.flights_comparison import df_flights_comparison
 from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
     BTS_SOURCE,
@@ -31,7 +34,6 @@ from planequery_data.utils import current_commit_hash
 
 DEFAULT_TARGET_DATE = date(2026, 3, 1)
 DEFAULT_ADSB_SOURCE = ADSBSource.ADSBLOL
-METADATA_COLUMNS = ("test_date", "adsb_src", "test_src", "gold_src")
 
 SourceInput = FlightSource | str
 
@@ -132,20 +134,6 @@ def adsb_sources_for_evaluation(
     return [None]
 
 
-def add_average_rows(df_stats: pl.DataFrame) -> pl.DataFrame:
-    stats_cols = [
-        column for column in df_stats.columns if column not in METADATA_COLUMNS
-    ]
-    df_stats = df_stats.with_columns(pl.col(stats_cols).cast(pl.Float64))
-    df_average = (
-        df_stats.group_by(["adsb_src", "test_src", "gold_src"])
-        .agg([pl.col(column).mean().alias(column) for column in stats_cols])
-        .with_columns(pl.lit("average").alias("test_date"))
-        .select(df_stats.columns)
-    )
-    return pl.concat([df_stats, df_average])
-
-
 def _as_source_list(value: SourceInput | Sequence[SourceInput]) -> list[FlightSource]:
     if isinstance(value, (FlightSource, str)):
         value = [value]
@@ -187,13 +175,20 @@ def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     )
 
 
+def _assert_no_null_icaos(flights: pl.DataFrame, source_role: str) -> None:
+    null_count = flights.get_column("icao").null_count()
+    assert null_count == 0, (
+        f"{source_role} contains {null_count} null icao value(s)"
+    )
+
+
 def _gold_icao_cohort(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Keep every gold ICAO and restrict test flights to that gold cohort."""
     gold_icaos = set(
-        gold_flights.get_column("icao").drop_nulls().unique().to_list()
+        gold_flights.get_column("icao").unique().to_list()
     )
     return (
         test_flights.filter(pl.col("icao").is_in(sorted(gold_icaos))),
@@ -219,6 +214,8 @@ def _compare_day(
     target_date: date,
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
+    _assert_no_null_icaos(test_flights, "test_source")
+    _assert_no_null_icaos(gold_flights, "gold_source")
     test_flights = _flights_on_date(test_flights, target_date)
     gold_flights = _flights_on_date(gold_flights, target_date)
     test_flights, gold_flights = _gold_icao_cohort(
@@ -239,29 +236,6 @@ def _compare_day(
     )
 
 
-def _daily_stats(
-    comparison: pl.DataFrame,
-    *,
-    target_date: date,
-    adsb_source: ADSBSource | None,
-    test_source: FlightSource,
-    gold_source: FlightSource,
-) -> pl.DataFrame:
-    return pl.DataFrame(
-        [
-            {
-                "test_date": target_date.isoformat(),
-                "adsb_src": (
-                    adsb_source.value if adsb_source is not None else None
-                ),
-                "test_src": test_source.name,
-                "gold_src": gold_source.name,
-                **df_flights_comparison_stats(comparison),
-            }
-        ]
-    )
-
-
 def evaluate(
     test_source: SourceInput | Sequence[SourceInput],
     gold_source: SourceInput | Sequence[SourceInput],
@@ -277,7 +251,7 @@ def evaluate(
     use_cache: bool = True,
     refresh_cache: bool = False,
     evaluation_cache: EvaluationCache | None = None,
-) -> tuple[list[pl.DataFrame], pl.DataFrame]:
+) -> EvaluationResults:
     """Compare flight sources, reusing one persistent cache entry per day.
 
     Each comparison keeps all gold-source ICAOs and restricts test flights to
@@ -311,8 +285,7 @@ def evaluate(
             raise ValueError(f"{parameter} must contain at least one value")
     cache = evaluation_cache or default_evaluation_cache()
 
-    comparisons: list[pl.DataFrame] = []
-    daily_stats: list[pl.DataFrame] = []
+    daily_results: list[EvaluationResult] = []
     airport_catalogs: dict[date, AirportCatalogView] = {}
     flight_frames: dict[
         tuple[FlightSource, ADSBSource | None, date], pl.DataFrame
@@ -367,7 +340,8 @@ def evaluate(
                     if use_cache and not refresh_cache and cache_key is not None:
                         cached = cache.load(cache_key)
                     if cached is not None:
-                        comparison, stats = cached
+                        comparison = cached.result
+                        stats = cached.stats
                         print(
                             "Using cached evaluation for "
                             f"{target_date} {resolved_test_source.name}:"
@@ -389,12 +363,12 @@ def evaluate(
                             target_date,
                             airport_catalog,
                         )
-                        stats = _daily_stats(
+                        stats = EvaluationStats.from_comparison(
                             comparison,
-                            target_date=target_date,
+                            test_date=target_date,
                             adsb_source=selected_adsb_source,
-                            test_source=resolved_test_source,
-                            gold_source=resolved_gold_source,
+                            test_source=resolved_test_source.name,
+                            gold_source=resolved_gold_source.name,
                         )
                         if use_cache and cache_key is not None:
                             cache_path = cache.store(
@@ -406,29 +380,31 @@ def evaluate(
                             if cache_path is not None:
                                 print(f"Cached evaluation at {cache_path}")
 
-                    comparisons.append(comparison)
-                    daily_stats.append(stats)
+                    daily_results.append(
+                        EvaluationResult(
+                            comparison=comparison,
+                            stats=stats,
+                        )
+                    )
                     metrics = {
                         key: value
-                        for key, value in stats.row(0, named=True).items()
-                        if key not in METADATA_COLUMNS
+                        for key, value in stats.to_row().items()
+                        if key not in EVALUATION_METADATA_COLUMNS
                     }
                     print(
                         f"Stats for {resolved_test_source.name}:"
                         f"{resolved_gold_source.name} on {target_date}: {metrics}"
                     )
 
-    stats = pl.concat(daily_stats, how="diagonal_relaxed")
-    if len(dates) > 1:
-        stats = add_average_rows(stats)
+    results = EvaluationResults(entries=tuple(daily_results))
     if write_outputs:
         stats_output = write_evaluation_csv(
-            stats,
+            results.to_frame(),
             output_csv or default_stats_path(),
             columns=output_columns,
         )
         print(f"Stats CSV saved to {stats_output}")
-    return comparisons, stats
+    return results
 
 
 def list_cached_evaluations(
