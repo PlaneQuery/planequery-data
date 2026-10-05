@@ -8,9 +8,9 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
-from flights.airport_catalog_manifest import (
-    AirportCatalogManifest,
-    airport_catalog_manifest_path,
+from flights.flight_manifest import (
+    FlightManifest,
+    flight_manifest_path,
 )
 from flights.flight_source import (
     ADSBFlightSource,
@@ -116,9 +116,10 @@ def write_flights_for_day(
     output_path = flight_path(AlgorithmNearestFlightSource(), target_date, adsb_src)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     flights_df.write_parquet(output_path)
-    AirportCatalogManifest.from_provenance(
-        airport_catalog.provenance
-    ).write(airport_catalog_manifest_path(output_path))
+    FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=adsb_src,
+    ).write(flight_manifest_path(output_path))
     return flights_df
 
 

@@ -9,9 +9,9 @@ import polars as pl
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.airport_catalog_manifest import (
-    AirportCatalogManifest,
-    airport_catalog_manifest_path,
+from flights.flight_manifest import (
+    FlightManifest,
+    flight_manifest_path,
 )
 from flights.airport_nn.features import COLUMNS
 from flights.airport_nn.source import (
@@ -64,9 +64,10 @@ def derive_day(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     result.write_parquet(output)
-    AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
-        airport_catalog_manifest_path(output)
-    )
+    FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=source,
+    ).write(flight_manifest_path(output))
     return output
 
 
