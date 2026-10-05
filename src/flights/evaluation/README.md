@@ -1,8 +1,10 @@
 # Flight evaluation
 
 `flights.evaluation.evaluation` compares each requested test/gold source pair
-using only non-null aircraft ICAOs present in both sources. Daily comparison
-details and metric rows are cached under
+across all aircraft ICAOs in the gold source. Test-source flights are limited
+to non-null ICAOs present in gold, so gold-only aircraft contribute false
+negatives while test-only aircraft are outside the evaluation cohort. Daily
+comparison details and metric rows are cached under
 `OUTPUT_DIR/data/cache/evaluation`.
 
 ## Get or create evaluation data
@@ -39,9 +41,9 @@ that neither reads nor writes the persistent cache.
 
 ## Inspect existing cache entries
 
-`--list-cache` is read-only. With no filters it lists every cached day; source,
-provider, and date options narrow the results. Omit `--columns` to export all
-metric and cache-provenance columns.
+`--list-cache` is read-only. With no filters it lists every day in the active
+cache version; source, provider, and date options narrow the results. Omit
+`--columns` to export all metric and cache-provenance columns.
 
 ```bash
 python -m flights.evaluation.evaluation --list-cache \
