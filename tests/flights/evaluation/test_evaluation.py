@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
+import polars as pl
 import pytest
 
 from flights.evaluation import evaluation
@@ -26,7 +27,7 @@ def _flight(
     )
 
 
-def test_evaluate_compares_only_icaos_present_in_both_sources(monkeypatch):
+def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
     target_date = date(2026, 3, 1)
     noon = datetime(2026, 3, 1, 12)
     source_frames = {
@@ -68,14 +69,25 @@ def test_evaluate_compares_only_icaos_present_in_both_sources(monkeypatch):
     )
 
     assert len(comparisons) == 1
-    assert comparisons[0].get_column("icao").unique().to_list() == ["shared"]
+    comparison = comparisons[0]
+    assert comparison.get_column("icao").unique().sort().to_list() == [
+        "gold-only",
+        "shared",
+    ]
+    assert (
+        comparison.filter(pl.col("icao") == "gold-only")
+        .get_column("match_status")
+        .to_list()
+        == ["df1_only"]
+    )
+    assert "test-only" not in comparison.get_column("icao").to_list()
     expected_metrics = {
         "true_positive": 1,
         "false_positive": 1,
-        "false_negative": 0,
+        "false_negative": 1,
         "precision": 0.5,
-        "recall": 1.0,
-        "f1": 2 / 3,
+        "recall": 0.5,
+        "f1": 0.5,
         "takeoff_airport_id_total_count": 1,
         "takeoff_airport_id_match_count": 1,
         "takeoff_airport_id_incorrect_match_count": 0,

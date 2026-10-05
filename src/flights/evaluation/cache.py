@@ -26,7 +26,7 @@ import polars as pl
 from data_engineering.adsb.canonical import ADSB_PARQUET_VERSIONS, ADSBSource
 
 
-EVALUATION_CACHE_VERSION = 1
+EVALUATION_CACHE_VERSION = 2
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
@@ -897,9 +897,17 @@ class EvaluationCache:
             except Exception:
                 continue
             key = manifest.key
-            if test_sources is not None and key.test_source.name not in test_sources:
+            if key.cache_version != self.cache_version:
                 continue
-            if gold_sources is not None and key.gold_source.name not in gold_sources:
+            if (
+                test_sources is not None
+                and key.test_source.name not in test_sources
+            ):
+                continue
+            if (
+                gold_sources is not None
+                and key.gold_source.name not in gold_sources
+            ):
                 continue
             if adsb_sources is not None and key.adsb_source not in adsb_sources:
                 continue

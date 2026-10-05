@@ -187,21 +187,17 @@ def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     )
 
 
-def _shared_icao_flights(
+def _gold_icao_cohort(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Restrict both inputs to non-null ICAOs represented in both sources."""
-    test_icaos = set(
-        test_flights.get_column("icao").drop_nulls().unique().to_list()
-    )
+    """Keep every gold ICAO and restrict test flights to that gold cohort."""
     gold_icaos = set(
         gold_flights.get_column("icao").drop_nulls().unique().to_list()
     )
-    shared_icaos = sorted(test_icaos & gold_icaos)
     return (
-        test_flights.filter(pl.col("icao").is_in(shared_icaos)),
-        gold_flights.filter(pl.col("icao").is_in(shared_icaos)),
+        test_flights.filter(pl.col("icao").is_in(sorted(gold_icaos))),
+        gold_flights,
     )
 
 
@@ -225,7 +221,7 @@ def _compare_day(
 ) -> pl.DataFrame:
     test_flights = _flights_on_date(test_flights, target_date)
     gold_flights = _flights_on_date(gold_flights, target_date)
-    test_flights, gold_flights = _shared_icao_flights(
+    test_flights, gold_flights = _gold_icao_cohort(
         test_flights,
         gold_flights,
     )
@@ -284,8 +280,9 @@ def evaluate(
 ) -> tuple[list[pl.DataFrame], pl.DataFrame]:
     """Compare flight sources, reusing one persistent cache entry per day.
 
-    Each comparison includes only aircraft ICAOs present in both source frames.
-    Detailed comparisons and their daily stats are cached together. Set
+    Each comparison keeps all gold-source ICAOs and restricts test flights to
+    ICAOs present in gold. Detailed comparisons and their daily stats are
+    cached together. Set
     ``refresh_cache=True`` to recompute and replace matching entries, or
     ``use_cache=False`` to bypass both cache reads and writes. CSV output keeps
     all stats columns unless ``output_columns`` supplies a projection/order.
