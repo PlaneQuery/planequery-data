@@ -487,17 +487,17 @@ def write_fr24_flights(
     target_date: date,
 ) -> pl.DataFrame:
     from airports.runtime import airport_catalog_for_date
-    from flights.airport_catalog_manifest import (
-        AirportCatalogManifest,
-        airport_catalog_manifest_path,
+    from flights.flight_manifest import (
+        FlightManifest,
+        flight_manifest_path,
     )
 
     df_flights = fr24_raw_to_flights(df)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df_flights.write_parquet(output_path)
-    AirportCatalogManifest.from_provenance(
+    FlightManifest.from_provenance(
         airport_catalog_for_date(target_date).provenance
-    ).write(airport_catalog_manifest_path(output_path))
+    ).write(flight_manifest_path(output_path))
     return df_flights
 
 
