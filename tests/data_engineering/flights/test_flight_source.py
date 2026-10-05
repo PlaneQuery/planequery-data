@@ -6,8 +6,9 @@ import polars as pl
 import pytest
 
 from airports.models import AirportCatalogProvenance
-from flights import flight_source as flight_source_module
+from data_engineering.adsb import canonical as adsb_canonical
 from data_engineering.adsb.read_adsb import ADSBSource
+from flights import flight_source as flight_source_module
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn import inference, model
 from flights.airport_nn.features import COLUMNS as AIRPORT_NN_COLUMNS
@@ -20,9 +21,9 @@ from flights.flight_source import (
     write_flights,
 )
 from flights.providers.bts import BTSFlightSource
-from flights.airport_catalog_manifest import (
-    AirportCatalogManifest,
-    airport_catalog_manifest_path,
+from flights.flight_manifest import (
+    FlightManifest,
+    flight_manifest_path,
 )
 
 
@@ -117,9 +118,9 @@ def test_create_flights_writes_single_bts_day_to_canonical_path(
         / "data/flights/source=bts/version=8"
         / "year=2026/month=03/day=01/data.parquet"
     )
-    assert AirportCatalogManifest.read(
-        airport_catalog_manifest_path(path)
-    ) == AirportCatalogManifest.from_provenance(airport_catalog.provenance)
+    assert FlightManifest.read(
+        flight_manifest_path(path)
+    ) == FlightManifest.from_provenance(airport_catalog.provenance)
 
 
 def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
@@ -319,9 +320,10 @@ def test_algorithm_nn_reuses_cached_algorithm_nearest_flights_from_same_adsb_sou
         )
         nearest_path.parent.mkdir(parents=True)
         cached_flights.write_parquet(nearest_path)
-        AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
-            airport_catalog_manifest_path(nearest_path)
-        )
+        FlightManifest.from_provenance(
+            airport_catalog.provenance,
+            adsb_source=cached_adsb_source,
+        ).write(flight_manifest_path(nearest_path))
 
     reads = []
 
@@ -398,9 +400,10 @@ def test_algorithm_nn_ignores_nearest_flights_from_a_stale_catalog(
             policy_version="test",
         )
     )
-    AirportCatalogManifest.from_provenance(stale_catalog.provenance).write(
-        airport_catalog_manifest_path(nearest_path)
-    )
+    FlightManifest.from_provenance(
+        stale_catalog.provenance,
+        adsb_source=ADSBSource.ADSBLOL,
+    ).write(flight_manifest_path(nearest_path))
 
     reads = []
 
@@ -468,9 +471,10 @@ def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):
         "airport_catalog_for_date",
         lambda _dt: airport_catalog,
     )
-    AirportCatalogManifest.from_provenance(airport_catalog.provenance).write(
-        airport_catalog_manifest_path(path)
-    )
+    FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=ADSBSource.ADSBX,
+    ).write(flight_manifest_path(path))
 
     def fail_read(*args, **kwargs):
         raise AssertionError("cached flights should not read ADS-B")
@@ -480,6 +484,46 @@ def test_get_flights_uses_cache_before_creating(monkeypatch, tmp_path):
     result = get_flights(source, target_date, ADSBSource.ADSBX)
 
     assert result.equals(expected)
+
+
+def test_get_flights_rebuilds_cache_after_adsb_parquet_version_changes(
+    monkeypatch,
+    tmp_path,
+):
+    target_date = date(2026, 3, 1)
+    source = DummyADSBFlightSource()
+    adsb_source = ADSBSource.ADSBX
+    airport_catalog = fake_airport_catalog(target_date)
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    path = flight_path(source, target_date, adsb_source)
+    path.parent.mkdir(parents=True)
+    pl.DataFrame({"icao": ["cached"]}).write_parquet(path)
+    FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=adsb_source,
+    ).write(flight_manifest_path(path))
+
+    next_version = adsb_canonical.ADSB_PARQUET_VERSIONS[adsb_source] + 1
+    monkeypatch.setitem(
+        adsb_canonical.ADSB_PARQUET_VERSIONS,
+        adsb_source,
+        next_version,
+    )
+    reads = []
+
+    def read_adsb(start, end, *, source):
+        reads.append(source)
+        return pl.DataFrame({"icao": ["fresh"]})
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+
+    result = get_flights(source, target_date, adsb_source)
+
+    assert result.get_column("icao").to_list() == ["fresh"]
+    assert reads == [adsb_source]
+    manifest = FlightManifest.read(flight_manifest_path(path))
+    assert manifest.adsb_source == adsb_source.value
+    assert manifest.adsb_parquet_version == next_version
 
 
 @pytest.mark.parametrize("cache_state", ["missing-manifest", "stale-manifest"])
@@ -511,8 +555,8 @@ def test_get_flights_persists_rebuilt_invalid_cache(
                 policy_version="test",
             )
         )
-        AirportCatalogManifest.from_provenance(stale_catalog.provenance).write(
-            airport_catalog_manifest_path(path)
+        FlightManifest.from_provenance(stale_catalog.provenance).write(
+            flight_manifest_path(path)
         )
 
     create_calls = []
@@ -531,9 +575,9 @@ def test_get_flights_persists_rebuilt_invalid_cache(
 
     assert result.get_column("icao").to_list() == ["fresh"]
     assert pl.read_parquet(path).get_column("icao").to_list() == ["fresh"]
-    assert AirportCatalogManifest.read(
-        airport_catalog_manifest_path(path)
-    ) == AirportCatalogManifest.from_provenance(current_catalog.provenance)
+    assert FlightManifest.read(
+        flight_manifest_path(path)
+    ) == FlightManifest.from_provenance(current_catalog.provenance)
     assert create_calls == [(target_date, current_catalog)]
 
     create_calls.clear()
