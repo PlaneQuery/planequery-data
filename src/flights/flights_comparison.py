@@ -31,7 +31,6 @@ def _with_comparison_endpoint_columns(df: pl.DataFrame) -> pl.DataFrame:
         return df.with_columns(missing_columns)
     return df
 
-
 def _haversine_expr(
     lat_col: str,
     lon_col: str,
@@ -296,57 +295,3 @@ def df_flights_comparison(
         .alias("last_message_distance_to_landing_airport_km"),
     )
     return df
-
-
-def df_flights_comparison_stats(df: pl.DataFrame) -> dict[str, int | float]:
-    true_positive = df.filter(pl.col("match_status") == "both").height
-    false_positive = df.filter(pl.col("match_status") == "df0_only").height
-    false_negative = df.filter(pl.col("match_status") == "df1_only").height
-
-    precision_denominator = true_positive + false_positive
-    recall_denominator = true_positive + false_negative
-
-    precision = true_positive / precision_denominator if precision_denominator else 0.0
-    recall = true_positive / recall_denominator if recall_denominator else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-
-    takeoff_airport_id_match = df.filter(pl.col("same_takeoff_airport_id")).height
-    landing_airport_id_match = df.filter(pl.col("same_landing_airport_id")).height
-    airport_id_match = df.filter(pl.col("same_airport_id")).height
-    takeoff_airport_id_match_pct = (
-        takeoff_airport_id_match / true_positive if true_positive else 0.0
-    )
-    landing_airport_id_match_pct = (
-        landing_airport_id_match / true_positive if true_positive else 0.0
-    )
-    airport_id_match_pct = (
-        airport_id_match / true_positive if true_positive else 0.0
-    )
-    return {
-        "true_positive": true_positive,
-        "false_positive": false_positive,
-        "false_negative": false_negative,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        # Keep the underlying counts alongside the rates so evaluation output
-        # shows how many matched flights had the correct airport assignment.
-        "takeoff_airport_id_total_count": true_positive,
-        "takeoff_airport_id_match_count": takeoff_airport_id_match,
-        "takeoff_airport_id_incorrect_match_count": (
-            true_positive - takeoff_airport_id_match
-        ),
-        "takeoff_airport_id_match_pct": takeoff_airport_id_match_pct,
-        "landing_airport_id_total_count": true_positive,
-        "landing_airport_id_match_count": landing_airport_id_match,
-        "landing_airport_id_incorrect_match_count": (
-            true_positive - landing_airport_id_match
-        ),
-        "landing_airport_id_match_pct": landing_airport_id_match_pct,
-        "airport_id_total_count": true_positive,
-        "airport_id_match_count": airport_id_match,
-        "airport_id_incorrect_match_count": (
-            true_positive - airport_id_match
-        ),
-        "airport_id_match_pct": airport_id_match_pct,
-    }

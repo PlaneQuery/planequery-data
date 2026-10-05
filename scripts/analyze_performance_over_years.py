@@ -110,23 +110,19 @@ def save_raw_comparisons(
 
 def main() -> tuple[Path, Path]:
     output_dir = make_output_dir()
-    comparisons, metrics = evaluate(
+    results = evaluate(
         test_source=ALGORITHM_NN_SOURCE,
         gold_source=BTS_SOURCE,
         test_dates=TEST_DATES,
         write_outputs=False,
     )
 
-    # The shared evaluator adds an aggregate row for multi-day runs. Keep this
-    # experiment's CSV and chart limited to the actual points in time.
-    daily_metrics = metrics.filter(pl.col("test_date") != "average").sort(
-        "test_date"
-    )
+    daily_metrics = results.to_frame(include_averages=False).sort("test_date")
     metrics_path = output_dir / "daily_metrics.csv"
     chart_path = output_dir / "performance_over_years.png"
 
     daily_metrics.write_csv(metrics_path)
-    save_raw_comparisons(comparisons, TEST_DATES, output_dir)
+    save_raw_comparisons(list(results.comparisons), TEST_DATES, output_dir)
     make_performance_chart(daily_metrics, chart_path)
 
     print(f"Saved experiment data to {output_dir}")

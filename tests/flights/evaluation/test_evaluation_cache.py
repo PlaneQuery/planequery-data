@@ -122,16 +122,18 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     frame = flights_to_flights_df([_flight()])
     reads = _patch_inputs(monkeypatch, test_source, lambda source: frame)
 
-    first_comparisons, first_stats = _evaluate(test_source, cache)
+    first_results = _evaluate(test_source, cache)
     first_read_count = len(reads)
-    second_comparisons, second_stats = _evaluate(test_source, cache)
+    second_results = _evaluate(test_source, cache)
 
     assert first_read_count == 2
     assert len(reads) == first_read_count
-    assert len(first_comparisons) == len(second_comparisons) == 1
-    assert first_comparisons[0].equals(second_comparisons[0])
-    assert first_stats.equals(second_stats)
-    assert first_stats.row(0, named=True)["precision"] == 1.0
+    assert len(first_results.entries) == len(second_results.entries) == 1
+    assert first_results.comparisons[0].equals(
+        second_results.comparisons[0]
+    )
+    assert first_results.stats == second_results.stats
+    assert first_results.stats[0].precision == 1.0
 
 
 def test_cache_listing_only_returns_the_active_cache_version(
@@ -140,8 +142,8 @@ def test_cache_listing_only_returns_the_active_cache_version(
 ):
     test_source = _algorithm_nn_source(tmp_path)
     cache_root = tmp_path / "cache"
-    old_cache = EvaluationCache(cache_root, cache_version=1)
-    current_cache = EvaluationCache(cache_root, cache_version=2)
+    old_cache = EvaluationCache(cache_root, cache_version=2)
+    current_cache = EvaluationCache(cache_root, cache_version=3)
     frame = flights_to_flights_df([_flight()])
     _patch_inputs(monkeypatch, test_source, lambda source: frame)
 
@@ -225,13 +227,13 @@ def test_refresh_cache_recomputes_and_overwrites_entry(monkeypatch, tmp_path):
 
     reads = _patch_inputs(monkeypatch, test_source, frame_for_source)
 
-    _, original_stats = _evaluate(test_source, cache)
+    original_results = _evaluate(test_source, cache)
     state["changed"] = True
-    _, refreshed_stats = _evaluate(test_source, cache, refresh_cache=True)
+    refreshed_results = _evaluate(test_source, cache, refresh_cache=True)
 
     assert len(reads) == 4
-    assert original_stats.row(0, named=True)["airport_id_match_pct"] == 1.0
-    assert refreshed_stats.row(0, named=True)["airport_id_match_pct"] == 0.0
+    assert original_results.stats[0].airport_id_match_pct == 1.0
+    assert refreshed_results.stats[0].airport_id_match_pct == 0.0
 
     listed = cache.list_entries(
         test_source=test_source.name,
@@ -324,7 +326,7 @@ def test_evaluate_writes_selected_columns_but_returns_full_stats(
     _patch_inputs(monkeypatch, test_source, lambda source: frame)
     output_csv = tmp_path / "reports" / "selected.csv"
 
-    _, stats = evaluation.evaluate(
+    results = evaluation.evaluate(
         test_source=test_source,
         gold_source=BTS_SOURCE,
         test_dates=TARGET_DATE,
@@ -337,9 +339,9 @@ def test_evaluate_writes_selected_columns_but_returns_full_stats(
     written = pl.read_csv(output_csv)
     assert written.columns == ["gold_src", "precision", "test_date"]
     assert written.row(0) == ("bts", 1.0, TARGET_DATE.isoformat())
-    assert "recall" in stats.columns
-    assert "takeoff_airport_id_match_pct" in stats.columns
-    assert stats.columns != written.columns
+    assert results.stats[0].recall == 1.0
+    assert results.stats[0].takeoff_airport_id_match_pct == 1.0
+    assert results.to_frame().columns != written.columns
 
 
 def test_export_cached_evaluations_filters_and_selects_columns(

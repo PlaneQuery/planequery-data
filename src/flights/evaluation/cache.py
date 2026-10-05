@@ -24,40 +24,24 @@ from urllib.parse import quote
 import polars as pl
 
 from data_engineering.adsb.canonical import ADSB_PARQUET_VERSIONS, ADSBSource
+from flights.evaluation.models import (
+    EVALUATION_STATS_SCHEMA,
+    EvaluationStats,
+    evaluation_stats_frame,
+)
 
 
-EVALUATION_CACHE_VERSION = 2
+EVALUATION_CACHE_VERSION = 3
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
 SUCCESS_FILENAME = "_SUCCESS"
 
-_SOURCE_METADATA_COLUMNS = ("test_date", "adsb_src", "test_src", "gold_src")
-_EVALUATION_METRIC_SCHEMA = {
-    "true_positive": pl.Int64,
-    "false_positive": pl.Int64,
-    "false_negative": pl.Int64,
-    "precision": pl.Float64,
-    "recall": pl.Float64,
-    "f1": pl.Float64,
-    "takeoff_airport_id_total_count": pl.Int64,
-    "takeoff_airport_id_match_count": pl.Int64,
-    "takeoff_airport_id_incorrect_match_count": pl.Int64,
-    "takeoff_airport_id_match_pct": pl.Float64,
-    "landing_airport_id_total_count": pl.Int64,
-    "landing_airport_id_match_count": pl.Int64,
-    "landing_airport_id_incorrect_match_count": pl.Int64,
-    "landing_airport_id_match_pct": pl.Float64,
-    "airport_id_total_count": pl.Int64,
-    "airport_id_match_count": pl.Int64,
-    "airport_id_incorrect_match_count": pl.Int64,
-    "airport_id_match_pct": pl.Float64,
-}
 _CACHE_DISCOVERY_SCHEMA = {
     "cache_version": pl.Int64,
-    "test_source_version": pl.String,
+    "test_source_version": pl.Int64,
     "test_source_config_fingerprint": pl.String,
-    "gold_source_version": pl.String,
+    "gold_source_version": pl.Int64,
     "gold_source_config_fingerprint": pl.String,
     "adsb_parquet_version": pl.Int64,
     "airport_catalog_fingerprint": pl.String,
@@ -232,12 +216,10 @@ def _coerce_date(value: date | datetime | str) -> date:
     return date.fromisoformat(value)
 
 
-def _source_version(value: Any) -> int | str:
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, (int, str)):
-        return value
-    return str(value)
+def _source_version(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("Flight source versions must be integers")
+    return value
 
 
 @dataclass(frozen=True)
@@ -245,7 +227,7 @@ class SourceFingerprint:
     """Stable identity and normalized configuration for one flight source."""
 
     name: str
-    version: int | str
+    version: int
     config_fingerprint: str
     config_json: str
 
@@ -453,7 +435,7 @@ class EvaluationCacheKey:
         return self.test_source.name
 
     @property
-    def test_source_version(self) -> int | str:
+    def test_source_version(self) -> int:
         return self.test_source.version
 
     @property
@@ -461,7 +443,7 @@ class EvaluationCacheKey:
         return self.gold_source.name
 
     @property
-    def gold_source_version(self) -> int | str:
+    def gold_source_version(self) -> int:
         return self.gold_source.version
 
     @property
@@ -544,15 +526,9 @@ class CachedEvaluation:
     """A successfully loaded pair of daily cache artifacts."""
 
     result: pl.DataFrame
-    stats: pl.DataFrame
+    stats: EvaluationStats
     manifest: EvaluationCacheManifest
     path: Path
-
-    def __iter__(self):
-        """Allow ``result, stats = cache.load(key)`` for compact callers."""
-
-        yield self.result
-        yield self.stats
 
 
 def _partition_value(value: object | None) -> str:
@@ -596,42 +572,18 @@ def _atomic_write_parquet(frame: pl.DataFrame, path: Path) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _metadata_value(key: EvaluationCacheKey, column: str) -> str | None:
-    return {
-        "test_date": key.test_date.isoformat(),
-        "adsb_src": key.adsb_source,
-        "test_src": key.test_source.name,
-        "gold_src": key.gold_source.name,
-    }[column]
-
-
-def _with_stats_metadata(
-    stats: pl.DataFrame,
+def _stats_match_key(
+    stats: EvaluationStats,
     key: EvaluationCacheKey,
-) -> pl.DataFrame:
-    if stats.height != 1:
-        raise ValueError(
-            "A daily evaluation cache entry must contain exactly one stats row"
-        )
-    missing = [
-        column for column in _SOURCE_METADATA_COLUMNS if column not in stats.columns
-    ]
-    if missing:
-        stats = stats.with_columns(
-            *[
-                pl.lit(_metadata_value(key, column)).alias(column)
-                for column in missing
-            ]
-        )
-    # Keep the legacy metadata names prominent while retaining the exact
-    # values/types supplied by evaluation.py when they already exist.
-    return stats.select(
-        *_SOURCE_METADATA_COLUMNS,
-        *[
-            column
-            for column in stats.columns
-            if column not in _SOURCE_METADATA_COLUMNS
-        ],
+) -> bool:
+    adsb_source = (
+        stats.adsb_source.value if stats.adsb_source is not None else None
+    )
+    return (
+        stats.test_date == key.test_date
+        and stats.test_source == key.test_source.name
+        and stats.gold_source == key.gold_source.name
+        and adsb_source == key.adsb_source
     )
 
 
@@ -749,7 +701,7 @@ class EvaluationCache:
         path: Path,
         *,
         expected_key: EvaluationCacheKey | None = None,
-    ) -> tuple[pl.DataFrame, EvaluationCacheManifest] | None:
+    ) -> tuple[EvaluationStats, EvaluationCacheManifest] | None:
         """Load and validate a cache entry's small discovery artifacts."""
 
         if not (path / SUCCESS_FILENAME).is_file():
@@ -765,13 +717,16 @@ class EvaluationCache:
                 return None
             if self.path_for(manifest.key) != path:
                 return None
-            stats = pl.read_parquet(path / STATS_FILENAME)
-            if stats.height != manifest.stats_rows or stats.height != 1:
-                return None
-            if any(
-                column not in stats.columns
-                for column in _SOURCE_METADATA_COLUMNS
+            stats_frame = pl.read_parquet(path / STATS_FILENAME)
+            if (
+                stats_frame.height != manifest.stats_rows
+                or stats_frame.height != 1
             ):
+                return None
+            stats = EvaluationStats.from_row(
+                stats_frame.row(0, named=True)
+            )
+            if not _stats_match_key(stats, manifest.key):
                 return None
         except Exception:
             return None
@@ -816,7 +771,7 @@ class EvaluationCache:
         self,
         key: EvaluationCacheKey | None,
         result: pl.DataFrame,
-        stats: pl.DataFrame,
+        stats: EvaluationStats,
         *,
         overwrite: bool = False,
     ) -> Path | None:
@@ -824,7 +779,8 @@ class EvaluationCache:
 
         if key is None:
             return None
-        stats = _with_stats_metadata(stats, key)
+        if not _stats_match_key(stats, key):
+            raise ValueError("EvaluationStats metadata does not match cache key")
         path = self.path_for(key)
 
         # A complete immutable entry already represents these exact inputs.
@@ -840,10 +796,13 @@ class EvaluationCache:
             key=key,
             created_at=datetime.now(UTC),
             result_rows=result.height,
-            stats_rows=stats.height,
+            stats_rows=1,
         )
         _atomic_write_parquet(result, path / RESULT_FILENAME)
-        _atomic_write_parquet(stats, path / STATS_FILENAME)
+        _atomic_write_parquet(
+            evaluation_stats_frame([stats]),
+            path / STATS_FILENAME,
+        )
         _atomic_write_bytes(
             path / MANIFEST_FILENAME,
             (
@@ -919,7 +878,7 @@ class EvaluationCache:
                 continue
             stats, manifest = loaded
             entries.append(
-                stats.with_columns(
+                evaluation_stats_frame([stats]).with_columns(
                     pl.lit(key.cache_version).alias("cache_version"),
                     pl.lit(key.test_source.version).alias(
                         "test_source_version"
@@ -949,11 +908,7 @@ class EvaluationCache:
         if not entries:
             return pl.DataFrame(
                 schema={
-                    "test_date": pl.String,
-                    "adsb_src": pl.String,
-                    "test_src": pl.String,
-                    "gold_src": pl.String,
-                    **_EVALUATION_METRIC_SCHEMA,
+                    **EVALUATION_STATS_SCHEMA,
                     **_CACHE_DISCOVERY_SCHEMA,
                 }
             )

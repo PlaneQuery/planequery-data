@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 
 from flights.evaluation import evaluation
+from flights.evaluation.models import EvaluationResults, EvaluationStats
 from flights.flight_type import Flight, flights_to_flights_df
 from flights.sources import BTS_SOURCE, SFDPS_SOURCE
 
@@ -60,7 +61,7 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
         lambda _: SimpleNamespace(airports=()),
     )
 
-    comparisons, stats = evaluation.evaluate(
+    results = evaluation.evaluate(
         test_source=BTS_SOURCE,
         gold_source=SFDPS_SOURCE,
         test_dates=target_date,
@@ -68,8 +69,9 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
         use_cache=False,
     )
 
-    assert len(comparisons) == 1
-    comparison = comparisons[0]
+    assert isinstance(results, EvaluationResults)
+    assert len(results.entries) == 1
+    comparison = results.entries[0].comparison
     assert comparison.get_column("icao").unique().sort().to_list() == [
         "gold-only",
         "shared",
@@ -101,7 +103,59 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
         "airport_id_incorrect_match_count": 0,
         "airport_id_match_pct": 1.0,
     }
-    row = stats.row(0, named=True)
+    stats = results.entries[0].stats
+    assert isinstance(stats, EvaluationStats)
+    row = stats.to_row()
     assert {key: row[key] for key in expected_metrics} == pytest.approx(
         expected_metrics
     )
+
+
+@pytest.mark.parametrize(
+    ("null_source", "source_role"),
+    [
+        (BTS_SOURCE, "test_source"),
+        (SFDPS_SOURCE, "gold_source"),
+    ],
+)
+def test_evaluate_asserts_icaos_are_not_null(
+    monkeypatch,
+    null_source,
+    source_role,
+):
+    target_date = date(2026, 3, 1)
+    noon = datetime(2026, 3, 1, 12)
+    valid_frame = flights_to_flights_df([_flight("abc123", noon)])
+    null_icao_frame = valid_frame.with_columns(
+        pl.lit(None, dtype=pl.String).alias("icao")
+    )
+    source_frames = {
+        BTS_SOURCE.name: valid_frame,
+        SFDPS_SOURCE.name: valid_frame,
+    }
+    source_frames[null_source.name] = null_icao_frame
+
+    monkeypatch.setattr(
+        evaluation,
+        "source_flights_reader",
+        lambda source, adsb_source=None: (
+            lambda _: source_frames[source.name].clone()
+        ),
+    )
+    monkeypatch.setattr(
+        evaluation,
+        "airport_catalog_for_date",
+        lambda _: SimpleNamespace(airports=()),
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match=rf"{source_role} contains 1 null icao value",
+    ):
+        evaluation.evaluate(
+            test_source=BTS_SOURCE,
+            gold_source=SFDPS_SOURCE,
+            test_dates=target_date,
+            write_outputs=False,
+            use_cache=False,
+        )

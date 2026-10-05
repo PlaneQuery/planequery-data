@@ -58,3 +58,29 @@ it will reuse hits and create only the missing entries.
 
 The equivalent Python entry points are `evaluate`, `list_cached_evaluations`,
 and `export_cached_evaluations` in `flights.evaluation.evaluation`.
+
+`evaluate` returns `EvaluationResults`, whose entries pair each detailed
+comparison with a typed `EvaluationStats` object. DataFrames are an explicit
+reporting boundary rather than the primary stats interface:
+
+```python
+from datetime import date
+
+from flights.evaluation.evaluation import evaluate
+
+results = evaluate(
+    test_source="algorithm-nn",
+    gold_source="bts",
+    test_dates=date(2026, 3, 1),
+    write_outputs=False,
+)
+
+stats = results.stats[0]
+print(stats.precision, stats.recall, stats.airport_id_match_pct)
+
+# Convert only when tabular output is needed.
+frame = results.to_frame()
+```
+
+The result models live in `flights.evaluation.models`. Cache discovery remains
+tabular because it can combine many cache entries and provenance columns.
