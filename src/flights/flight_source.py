@@ -19,9 +19,9 @@ from data_engineering.adsb.read_adsb import (
     read_adsb,
 )
 from data_engineering.utils import OUTPUT_DIR
-from flights.airport_catalog_manifest import (
-    AirportCatalogManifest,
-    airport_catalog_manifest_path,
+from flights.flight_manifest import (
+    FlightManifest,
+    flight_manifest_path,
 )
 
 
@@ -254,15 +254,16 @@ def _read_cached_flights_for_catalog(
     adsb_src: ADSBSource | None,
 ) -> pl.DataFrame | None:
     path = flight_path(source, dt, adsb_src)
-    manifest_path = airport_catalog_manifest_path(path)
+    manifest_path = flight_manifest_path(path)
     if not path.is_file() or not manifest_path.is_file():
         return None
 
-    current_manifest = AirportCatalogManifest.from_provenance(
-        airport_catalog.provenance
+    current_manifest = FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=adsb_src,
     )
-    cached_manifest = AirportCatalogManifest.read(manifest_path)
-    if cached_manifest.catalog_cache_key != current_manifest.catalog_cache_key:
+    cached_manifest = FlightManifest.read(manifest_path)
+    if cached_manifest.flight_cache_key != current_manifest.flight_cache_key:
         return None
     return pl.read_parquet(path)
 
@@ -518,7 +519,8 @@ def write_flights_for_catalog(
         batch_workers,
     )
     df_flights.write_parquet(path)
-    AirportCatalogManifest.from_provenance(
-        airport_catalog.provenance
-    ).write(airport_catalog_manifest_path(path))
+    FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=adsb_src,
+    ).write(flight_manifest_path(path))
     return df_flights

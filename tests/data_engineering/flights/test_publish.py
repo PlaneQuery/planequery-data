@@ -7,9 +7,9 @@ import pytest
 from airports.models import AirportCatalogProvenance
 import data_engineering.spark as spark_module
 from data_engineering.flights import publish
-from flights.airport_catalog_manifest import (
-    AirportCatalogManifest,
-    airport_catalog_manifest_path,
+from flights.flight_manifest import (
+    FlightManifest,
+    flight_manifest_path,
 )
 from flights import flight_source
 from flights.flight_type import FLIGHT_POLARS_SCHEMA
@@ -94,9 +94,12 @@ def test_publish_flights_parquet_uses_canonical_path(monkeypatch, tmp_path):
     assert pl.read_parquet(path).select(
         "takeoff_airport_id", "landing_airport_id"
     ).row(0) == (None, None)
-    assert AirportCatalogManifest.read(
-        airport_catalog_manifest_path(path)
-    ) == AirportCatalogManifest.from_provenance(airport_catalog.provenance)
+    assert FlightManifest.read(
+        flight_manifest_path(path)
+    ) == FlightManifest.from_provenance(
+        airport_catalog.provenance,
+        adsb_source=publish.ADSBSource.ADSBLOL,
+    )
 
 
 def test_ingest_flights_to_iceberg(monkeypatch):
@@ -106,7 +109,7 @@ def test_ingest_flights_to_iceberg(monkeypatch):
     publish.ingest_flights_to_iceberg(
         pl.DataFrame({"icao": ["abc123"]}),
         date(2026, 3, 1),
-        AirportCatalogManifest(
+        FlightManifest(
             flight_date=date(2026, 3, 1),
             observed_commit_sha="observed-commit",
             knowledge_cutoff_date=date(2026, 4, 1),
@@ -138,7 +141,7 @@ def test_ingest_flights_to_iceberg_rejects_existing_day(monkeypatch):
         publish.ingest_flights_to_iceberg(
             pl.DataFrame({"icao": ["abc123"]}),
             date(2026, 3, 1),
-            AirportCatalogManifest(
+            FlightManifest(
                 flight_date=date(2026, 3, 1),
                 observed_commit_sha="observed-commit",
                 knowledge_cutoff_date=date(2026, 4, 1),
