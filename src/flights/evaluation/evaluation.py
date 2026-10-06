@@ -244,11 +244,7 @@ def evaluate(
         ADSBSource | str | Sequence[ADSBSource | str]
     ) = DEFAULT_ADSB_SOURCE,
     *,
-    write_outputs: bool = True,
-    output_csv: Path | None = None,
-    output_columns: Sequence[str] | None = None,
     airport_nn_model_path: Path | None = None,
-    use_cache: bool = True,
     refresh_cache: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> EvaluationResults:
@@ -257,14 +253,8 @@ def evaluate(
     Each comparison keeps all gold-source ICAOs and restricts test flights to
     ICAOs present in gold. Detailed comparisons and their daily stats are
     cached together. Set
-    ``refresh_cache=True`` to recompute and replace matching entries, or
-    ``use_cache=False`` to bypass both cache reads and writes. CSV output keeps
-    all stats columns unless ``output_columns`` supplies a projection/order.
+    ``refresh_cache=True`` to recompute and replace matching entries.
     """
-    if not write_outputs and (
-        output_csv is not None or output_columns is not None
-    ):
-        raise ValueError("output_csv/output_columns require write_outputs=True")
     test_sources = _with_airport_nn_model(
         _as_source_list(test_source),
         airport_nn_model_path,
@@ -328,21 +318,16 @@ def evaluate(
                             target_date
                         )
                     airport_catalog = airport_catalogs[target_date]
-                    cache_key = (
-                        cache.make_key(
-                            test_date=target_date,
-                            test_source=resolved_test_source,
-                            gold_source=resolved_gold_source,
-                            adsb_source=selected_adsb_source,
-                            airport_catalog=airport_catalog,
-                        )
-                        if use_cache
-                        else None
+                    cache_key = cache.make_key(
+                        test_date=target_date,
+                        test_source=resolved_test_source,
+                        gold_source=resolved_gold_source,
+                        adsb_source=selected_adsb_source,
+                        airport_catalog=airport_catalog,
                     )
 
                     cached = None
-                    if use_cache and not refresh_cache:
-                        assert cache_key is not None
+                    if not refresh_cache:
                         cached = cache.load(cache_key)
                     if cached is not None:
                         comparison = cached.comparison
@@ -375,15 +360,12 @@ def evaluate(
                             test_source=resolved_test_source.name,
                             gold_source=resolved_gold_source.name,
                         )
-                        if use_cache:
-                            assert cache_key is not None
-                            cache_path = cache.store(
-                                cache_key,
-                                comparison,
-                                stats,
-                                overwrite=refresh_cache,
-                            )
-                            print(f"Cached evaluation at {cache_path}")
+                        cache_path = cache.store(
+                            cache_key,
+                            comparison,
+                            stats,
+                        )
+                        print(f"Cached evaluation at {cache_path}")
 
                     daily_results.append(
                         EvaluationResult(
@@ -401,15 +383,7 @@ def evaluate(
                         f"{resolved_gold_source.name} on {target_date}: {metrics}"
                     )
 
-    results = EvaluationResults(entries=tuple(daily_results))
-    if write_outputs:
-        stats_output = write_evaluation_csv(
-            results.to_frame(),
-            output_csv or default_stats_path(),
-            columns=output_columns,
-        )
-        print(f"Stats CSV saved to {stats_output}")
-    return results
+    return EvaluationResults(entries=tuple(daily_results))
 
 
 def list_cached_evaluations(
@@ -496,22 +470,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Recalculate requested evaluations and replace matching cache entries.",
     )
     parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Do not read or write the persistent evaluation cache.",
-    )
-    parser.add_argument(
         "--list-cache",
         action="store_true",
         help="List cached daily results matching the supplied source/date filters.",
-    )
-    parser.add_argument(
-        "--output-csv",
-        type=Path,
-        help=(
-            "CSV destination. Normal evaluations otherwise use a timestamped "
-            "path; cache listings otherwise write CSV to stdout."
-        ),
     )
     parser.add_argument(
         "--columns",
@@ -531,27 +492,26 @@ def main(argv: Sequence[str] | None = None) -> None:
             test_dates=args.test_dates,
         )
         cached = select_output_columns(cached, args.columns)
-        if args.output_csv is not None:
-            output_path = write_evaluation_csv(cached, args.output_csv)
-            print(f"Cached evaluation CSV saved to {output_path}")
-            return
         if cached.is_empty():
             print("No cached evaluations matched.")
         else:
             cached.write_csv(sys.stdout)
         return
 
-    evaluate(
+    results = evaluate(
         test_source=args.test_source or [ALGORITHM_NEAREST_SOURCE.name],
         gold_source=args.gold_source or [BTS_SOURCE.name],
         test_dates=args.test_dates or [DEFAULT_TARGET_DATE],
         adsb_source=args.adsb_source or [DEFAULT_ADSB_SOURCE],
         airport_nn_model_path=args.airport_nn_model,
-        output_csv=args.output_csv,
-        output_columns=args.columns,
-        use_cache=not args.no_cache,
         refresh_cache=args.refresh_cache,
     )
+    stats_output = write_evaluation_csv(
+        results.to_frame(),
+        default_stats_path(),
+        columns=args.columns,
+    )
+    print(f"Stats CSV saved to {stats_output}")
 
 
 if __name__ == "__main__":
