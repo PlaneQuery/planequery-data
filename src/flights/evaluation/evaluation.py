@@ -340,7 +340,7 @@ def evaluate(
                     if use_cache and not refresh_cache and cache_key is not None:
                         cached = cache.load(cache_key)
                     if cached is not None:
-                        comparison = cached.result
+                        comparison = cached.comparison
                         stats = cached.stats
                         print(
                             "Using cached evaluation for "

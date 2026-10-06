@@ -13,6 +13,7 @@ from flights.evaluation.cache import (
     CachedEvaluationStats,
     EvaluationCache,
     RESULT_FILENAME,
+    STATS_FILENAME,
     default_evaluation_cache_dir,
 )
 from flights.flight_type import Flight, flights_to_flights_df
@@ -135,6 +136,26 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     )
     assert first_results.stats == second_results.stats
     assert first_results.stats[0].precision == 1.0
+
+
+@pytest.mark.parametrize("unreadable_file", [RESULT_FILENAME, STATS_FILENAME])
+def test_unreadable_entry_is_a_cache_miss(
+    monkeypatch,
+    tmp_path,
+    unreadable_file,
+):
+    test_source = _algorithm_nn_source(tmp_path)
+    cache = EvaluationCache(tmp_path / "cache")
+    frame = flights_to_flights_df([_flight()])
+    reads = _patch_inputs(monkeypatch, test_source, lambda source: frame)
+
+    _evaluate(test_source, cache)
+    next(cache.root.rglob(unreadable_file)).write_bytes(b"not parquet")
+    assert not cache.find_stats()
+    _evaluate(test_source, cache)
+
+    assert len(reads) == 4
+    assert cache.find_stats()
 
 
 def test_cache_listing_only_returns_the_active_cache_version(

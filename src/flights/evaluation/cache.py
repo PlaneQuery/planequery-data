@@ -26,6 +26,7 @@ import polars as pl
 from data_engineering.adsb.canonical import ADSB_PARQUET_VERSIONS, ADSBSource
 from flights.evaluation.models import (
     EVALUATION_STATS_SCHEMA,
+    EvaluationResult,
     EvaluationStats,
     evaluation_stats_frame,
 )
@@ -35,7 +36,6 @@ EVALUATION_CACHE_VERSION = 3
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
-SUCCESS_FILENAME = "_SUCCESS"
 
 _CACHE_DISCOVERY_SCHEMA = {
     "cache_version": pl.Int64,
@@ -483,60 +483,12 @@ class EvaluationCacheKey:
 
 
 @dataclass(frozen=True)
-class EvaluationCacheManifest:
-    """Description of the files committed for one cache key."""
-
-    key: EvaluationCacheKey
-    created_at: datetime
-    result_rows: int
-    stats_rows: int
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "key": self.key.to_dict(),
-            "created_at": self.created_at.astimezone(UTC).isoformat(),
-            "result_rows": self.result_rows,
-            "stats_rows": self.stats_rows,
-            "files": {
-                "result": RESULT_FILENAME,
-                "stats": STATS_FILENAME,
-            },
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> Self:
-        files = value.get("files")
-        if not isinstance(files, Mapping) or files.get("result") != RESULT_FILENAME:
-            raise ValueError("Evaluation cache manifest has an invalid result file")
-        if files.get("stats") != STATS_FILENAME:
-            raise ValueError("Evaluation cache manifest has an invalid stats file")
-        created_at = datetime.fromisoformat(str(value["created_at"]))
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=UTC)
-        return cls(
-            key=EvaluationCacheKey.from_dict(value["key"]),
-            created_at=created_at,
-            result_rows=int(value["result_rows"]),
-            stats_rows=int(value["stats_rows"]),
-        )
-
-
-@dataclass(frozen=True)
-class CachedEvaluation:
-    """A successfully loaded pair of daily cache artifacts."""
-
-    result: pl.DataFrame
-    stats: EvaluationStats
-    manifest: EvaluationCacheManifest
-    path: Path
-
-
-@dataclass(frozen=True)
 class CachedEvaluationStats:
     """Typed daily stats and provenance without the detailed comparison."""
 
     stats: EvaluationStats
-    manifest: EvaluationCacheManifest
+    key: EvaluationCacheKey
+    created_at: datetime
     path: Path
 
 
@@ -697,84 +649,50 @@ class EvaluationCache:
             / f"test_date={key.test_date.isoformat()}"
         )
 
-    def _read_manifest(self, path: Path) -> EvaluationCacheManifest:
+    def _read_manifest(
+        self,
+        path: Path,
+    ) -> tuple[EvaluationCacheKey, datetime]:
         value = json.loads(
             (path / MANIFEST_FILENAME).read_text(encoding="utf-8")
         )
         if not isinstance(value, Mapping):
             raise ValueError("Evaluation cache manifest must be a JSON object")
-        return EvaluationCacheManifest.from_dict(value)
+        created_at = datetime.fromisoformat(str(value["created_at"]))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        return EvaluationCacheKey.from_dict(value["key"]), created_at
 
-    def _load_stats_path(
+    def _read_stats(
         self,
         path: Path,
-        *,
-        expected_key: EvaluationCacheKey | None = None,
-    ) -> tuple[EvaluationStats, EvaluationCacheManifest] | None:
-        """Load and validate a cache entry's small discovery artifacts."""
-
-        if not (path / SUCCESS_FILENAME).is_file():
-            return None
-        if not all(
-            (path / filename).is_file()
-            for filename in (RESULT_FILENAME, STATS_FILENAME, MANIFEST_FILENAME)
-        ):
-            return None
-        try:
-            manifest = self._read_manifest(path)
-            if expected_key is not None and manifest.key != expected_key:
-                return None
-            if self.path_for(manifest.key) != path:
-                return None
-            stats_frame = pl.read_parquet(path / STATS_FILENAME)
-            if (
-                stats_frame.height != manifest.stats_rows
-                or stats_frame.height != 1
-            ):
-                return None
-            stats = EvaluationStats.from_row(
-                stats_frame.row(0, named=True)
-            )
-            if not _stats_match_key(stats, manifest.key):
-                return None
-        except Exception:
-            return None
-        return stats, manifest
-
-    def _load_path(
-        self,
-        path: Path,
-        *,
-        expected_key: EvaluationCacheKey | None = None,
-    ) -> CachedEvaluation | None:
-        loaded_stats = self._load_stats_path(path, expected_key=expected_key)
-        if loaded_stats is None:
-            return None
-        stats, manifest = loaded_stats
-        try:
-            result = pl.read_parquet(path / RESULT_FILENAME)
-            if result.height != manifest.result_rows:
-                return None
-        except Exception:
-            # A partial, stale, or corrupt cache is a cache miss.  Evaluation
-            # can then recompute and atomically replace it.
-            return None
-        return CachedEvaluation(
-            result=result,
-            stats=stats,
-            manifest=manifest,
-            path=path,
-        )
+        key: EvaluationCacheKey,
+    ) -> EvaluationStats:
+        frame = pl.read_parquet(path / STATS_FILENAME)
+        if frame.height != 1:
+            raise ValueError("Expected one stats row")
+        stats = EvaluationStats.from_row(frame.row(0, named=True))
+        if not _stats_match_key(stats, key):
+            raise ValueError("Stats do not match cache key")
+        return stats
 
     def load(
         self,
         key: EvaluationCacheKey | None,
-    ) -> CachedEvaluation | None:
-        """Load a complete cache entry; return ``None`` for any unsafe entry."""
-
+    ) -> EvaluationResult | None:
+        """Return a cache hit, or ``None`` when no readable entry exists."""
         if key is None:
             return None
-        return self._load_path(self.path_for(key), expected_key=key)
+        path = self.path_for(key)
+        try:
+            stored_key, _ = self._read_manifest(path)
+            if stored_key != key:
+                return None
+            stats = self._read_stats(path, key)
+            comparison = pl.read_parquet(path / RESULT_FILENAME)
+        except Exception:
+            return None
+        return EvaluationResult(comparison=comparison, stats=stats)
 
     def store(
         self,
@@ -792,31 +710,25 @@ class EvaluationCache:
             raise ValueError("EvaluationStats metadata does not match cache key")
         path = self.path_for(key)
 
-        # A complete immutable entry already represents these exact inputs.
-        # Avoid touching its creation timestamp or doing unnecessary I/O.
-        if not overwrite and self._load_path(path, expected_key=key) is not None:
+        if not overwrite and self.load(key) is not None:
             return path
 
         path.mkdir(parents=True, exist_ok=True)
-        success_path = path / SUCCESS_FILENAME
-        success_path.unlink(missing_ok=True)
-
-        manifest = EvaluationCacheManifest(
-            key=key,
-            created_at=datetime.now(UTC),
-            result_rows=result.height,
-            stats_rows=1,
-        )
+        manifest_path = path / MANIFEST_FILENAME
+        manifest_path.unlink(missing_ok=True)
         _atomic_write_parquet(result, path / RESULT_FILENAME)
         _atomic_write_parquet(
             evaluation_stats_frame([stats]),
             path / STATS_FILENAME,
         )
         _atomic_write_bytes(
-            path / MANIFEST_FILENAME,
+            manifest_path,
             (
                 json.dumps(
-                    manifest.to_dict(),
+                    {
+                        "key": key.to_dict(),
+                        "created_at": datetime.now(UTC).isoformat(),
+                    },
                     ensure_ascii=True,
                     indent=2,
                     sort_keys=True,
@@ -824,9 +736,6 @@ class EvaluationCache:
                 + "\n"
             ).encode("utf-8"),
         )
-        # Completeness is published last.  Atomic replacement prevents readers
-        # from observing a partially written marker.
-        _atomic_write_bytes(success_path, b"")
         return path
 
     def find_stats(
@@ -841,11 +750,7 @@ class EvaluationCache:
             date | datetime | str | Sequence[date | datetime | str] | None
         ) = None,
     ) -> tuple[CachedEvaluationStats, ...]:
-        """Return typed cached stats matching optional one-or-many filters.
-
-        Incomplete, corrupt, and inactive-version entries are omitted. The
-        detailed comparison Parquet files are not loaded.
-        """
+        """Return readable cached stats without loading comparison files."""
 
         test_sources = _source_filter(test_source)
         gold_sources = _source_filter(gold_source)
@@ -853,18 +758,21 @@ class EvaluationCache:
         dates = _date_filter(test_dates)
 
         entries: list[CachedEvaluationStats] = []
-        if self.root.is_dir():
-            success_markers = sorted(self.root.rglob(SUCCESS_FILENAME))
-        else:
-            success_markers = []
-        for marker in success_markers:
-            path = marker.parent
+        manifests = (
+            sorted(self.root.rglob(MANIFEST_FILENAME))
+            if self.root.is_dir()
+            else []
+        )
+        for manifest_path in manifests:
+            path = manifest_path.parent
             try:
-                manifest = self._read_manifest(path)
+                key, created_at = self._read_manifest(path)
             except Exception:
                 continue
-            key = manifest.key
-            if key.cache_version != self.cache_version:
+            if (
+                key.cache_version != self.cache_version
+                or self.path_for(key) != path
+            ):
                 continue
             if (
                 test_sources is not None
@@ -881,14 +789,16 @@ class EvaluationCache:
             if dates is not None and key.test_date not in dates:
                 continue
 
-            loaded = self._load_stats_path(path, expected_key=key)
-            if loaded is None:
+            try:
+                pl.read_parquet_schema(path / RESULT_FILENAME)
+                stats = self._read_stats(path, key)
+            except Exception:
                 continue
-            stats, manifest = loaded
             entries.append(
                 CachedEvaluationStats(
                     stats=stats,
-                    manifest=manifest,
+                    key=key,
+                    created_at=created_at,
                     path=path,
                 )
             )
@@ -903,7 +813,7 @@ class EvaluationCache:
                     entry.stats.adsb_source.value
                     if entry.stats.adsb_source is not None
                     else "",
-                    entry.manifest.created_at,
+                    entry.created_at,
                     str(entry.path),
                 ),
             )
@@ -932,8 +842,7 @@ class EvaluationCache:
         entries: list[pl.DataFrame] = []
         for entry in cached_entries:
             stats = entry.stats
-            manifest = entry.manifest
-            key = manifest.key
+            key = entry.key
             entries.append(
                 evaluation_stats_frame([stats]).with_columns(
                     pl.lit(key.cache_version).alias("cache_version"),
@@ -956,7 +865,7 @@ class EvaluationCache:
                         "airport_catalog_fingerprint"
                     ),
                     pl.lit(str(entry.path)).alias("cache_path"),
-                    pl.lit(manifest.created_at.isoformat()).alias(
+                    pl.lit(entry.created_at.isoformat()).alias(
                         "cache_created_at"
                     ),
                 )
@@ -981,16 +890,13 @@ class EvaluationCache:
 
 __all__ = [
     "AirportCatalogFingerprint",
-    "CachedEvaluation",
     "CachedEvaluationStats",
     "EVALUATION_CACHE_VERSION",
     "EvaluationCache",
     "EvaluationCacheKey",
-    "EvaluationCacheManifest",
     "MANIFEST_FILENAME",
     "RESULT_FILENAME",
     "STATS_FILENAME",
-    "SUCCESS_FILENAME",
     "SourceFingerprint",
     "default_evaluation_cache_dir",
 ]
