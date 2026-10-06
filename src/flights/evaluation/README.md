@@ -19,9 +19,11 @@ python -m flights.evaluation.evaluation \
   --test-source algorithm-nn \
   --gold-source bts \
   --adsb-source adsblol adsbx \
-  --test-dates 2026-02-01 2026-03-01 \
-  --output-csv /tmp/evaluation.csv
+  --test-dates 2026-02-01 2026-03-01
 ```
+
+The CSV is written to the timestamped default location under
+`OUTPUT_DIR/data/experiments/comparison`.
 
 Select and order CSV columns with `--columns`:
 
@@ -31,13 +33,11 @@ python -m flights.evaluation.evaluation \
   --gold-source bts \
   --adsb-source adsblol adsbx \
   --test-dates 2026-02-01 2026-03-01 \
-  --output-csv /tmp/evaluation-summary.csv \
   --columns test_date adsb_src precision recall f1 \
     takeoff_airport_id_match_pct landing_airport_id_match_pct
 ```
 
-Use `--refresh-cache` to replace matching entries or `--no-cache` for a run
-that neither reads nor writes the persistent cache.
+Use `--refresh-cache` to recalculate and replace matching entries.
 
 ## Inspect existing cache entries
 
@@ -49,9 +49,11 @@ cache version; source, provider, and date options narrow the results. Omit
 python -m flights.evaluation.evaluation --list-cache \
   --test-source algorithm-nn \
   --gold-source bts \
-  --adsb-source adsblol adsbx \
-  --output-csv /tmp/cached-evaluations.csv
+  --adsb-source adsblol adsbx
 ```
+
+Cache listings are written to stdout. Use `export_cached_evaluations` when a
+specific destination file is needed programmatically.
 
 If a requested day is not cached, use the normal command above with that date;
 it will reuse hits and create only the missing entries.
@@ -61,7 +63,8 @@ and `export_cached_evaluations` in `flights.evaluation.evaluation`.
 
 `evaluate` returns `EvaluationResults`, whose entries pair each detailed
 comparison with a typed `EvaluationStats` object. DataFrames are an explicit
-reporting boundary rather than the primary stats interface:
+reporting boundary rather than the primary stats interface. It never writes a
+CSV; the command-line interface handles CSV reporting separately.
 
 ```python
 from datetime import date
@@ -72,7 +75,6 @@ results = evaluate(
     test_source="algorithm-nn",
     gold_source="bts",
     test_dates=date(2026, 3, 1),
-    write_outputs=False,
 )
 
 stats = results.stats[0]

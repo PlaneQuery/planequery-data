@@ -391,17 +391,11 @@ class EvaluationCache:
         key: EvaluationCacheKey,
         result: pl.DataFrame,
         stats: EvaluationStats,
-        *,
-        overwrite: bool = False,
     ) -> Path:
         """Write one result/stats pair and return its directory."""
         if not _stats_match_key(stats, key):
             raise ValueError("EvaluationStats metadata does not match cache key")
         path = self.path_for(key)
-
-        if not overwrite and self.load(key) is not None:
-            return path
-
         path.mkdir(parents=True, exist_ok=True)
         manifest_path = path / MANIFEST_FILENAME
         manifest_path.unlink(missing_ok=True)

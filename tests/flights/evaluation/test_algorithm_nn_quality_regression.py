@@ -128,7 +128,6 @@ def evaluate(config: EvaluationConfig, gold_sources: list[str]):
         gold_source=gold_sources,
         test_dates=config.test_date,
         adsb_source=config.adsb_source or ADSBSource.ADSBLOL,
-        write_outputs=False,
         refresh_cache=True,
     )
     return {
