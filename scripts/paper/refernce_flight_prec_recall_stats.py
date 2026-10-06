@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from statistics import fmean
+from datetime import date
 
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.evaluation.cache import EvaluationCache
@@ -51,3 +52,8 @@ def main(cache: EvaluationCache | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+# ---- desired days
+SFPDS_DAYS = [date(2026,2,1), date(2026,3,1)]
+BTS_DAYS =  SFPDS_DAYS + [date(2025, 6,1)]
+EUROCONTROL_DAYS = [date(2025,6,1), date(2025,7,1), date(2025,8,1)]
