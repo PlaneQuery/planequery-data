@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
+from airports.models import AirportCatalogProvenance
 from flights.evaluation import evaluation
+from flights.evaluation.cache import EvaluationCache
 from flights.evaluation.models import EvaluationResults, EvaluationStats
 from flights.flight_type import Flight, flights_to_flights_df
 from flights.sources import BTS_SOURCE, SFDPS_SOURCE
@@ -28,7 +30,24 @@ def _flight(
     )
 
 
-def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
+def _airport_catalog(target_date: date):
+    return SimpleNamespace(
+        airports=(),
+        provenance=AirportCatalogProvenance(
+            flight_date=target_date,
+            observed_commit_sha="observed-commit",
+            knowledge_cutoff_date=date(2026, 4, 1),
+            knowledge_commit_sha="knowledge-commit",
+            catalog_available_date=date(2026, 4, 1),
+            policy_version="test-policy",
+        ),
+    )
+
+
+def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
+    monkeypatch,
+    tmp_path,
+):
     target_date = date(2026, 3, 1)
     noon = datetime(2026, 3, 1, 12)
     source_frames = {
@@ -58,15 +77,14 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
     monkeypatch.setattr(
         evaluation,
         "airport_catalog_for_date",
-        lambda _: SimpleNamespace(airports=()),
+        _airport_catalog,
     )
 
     results = evaluation.evaluate(
         test_source=BTS_SOURCE,
         gold_source=SFDPS_SOURCE,
         test_dates=target_date,
-        write_outputs=False,
-        use_cache=False,
+        evaluation_cache=EvaluationCache(tmp_path / "cache"),
     )
 
     assert isinstance(results, EvaluationResults)
@@ -120,6 +138,7 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(monkeypatch):
 )
 def test_evaluate_asserts_icaos_are_not_null(
     monkeypatch,
+    tmp_path,
     null_source,
     source_role,
 ):
@@ -145,7 +164,7 @@ def test_evaluate_asserts_icaos_are_not_null(
     monkeypatch.setattr(
         evaluation,
         "airport_catalog_for_date",
-        lambda _: SimpleNamespace(airports=()),
+        _airport_catalog,
     )
 
     with pytest.raises(
@@ -156,6 +175,5 @@ def test_evaluate_asserts_icaos_are_not_null(
             test_source=BTS_SOURCE,
             gold_source=SFDPS_SOURCE,
             test_dates=target_date,
-            write_outputs=False,
-            use_cache=False,
+            evaluation_cache=EvaluationCache(tmp_path / "cache"),
         )

@@ -93,7 +93,6 @@ def _evaluate(test_source, cache, **kwargs):
         gold_source=BTS_SOURCE,
         test_dates=TARGET_DATE,
         adsb_source=ADSBSource.ADSBLOL,
-        write_outputs=False,
         evaluation_cache=cache,
         **kwargs,
     )
@@ -171,7 +170,6 @@ def test_two_adsb_providers_are_cached_and_listed_with_filters(
         gold_source=BTS_SOURCE,
         test_dates=TARGET_DATE,
         adsb_source=[ADSBSource.ADSBLOL, ADSBSource.ADSBX],
-        write_outputs=False,
         evaluation_cache=cache,
     )
 
@@ -302,7 +300,7 @@ def test_select_output_columns_rejects_invalid_requests(columns, message):
         evaluation.select_output_columns(frame, columns)
 
 
-def test_evaluate_writes_selected_columns_but_returns_full_stats(
+def test_csv_writer_selects_columns_from_evaluation_results(
     monkeypatch,
     tmp_path,
 ):
@@ -318,8 +316,11 @@ def test_evaluate_writes_selected_columns_but_returns_full_stats(
         test_dates=TARGET_DATE,
         adsb_source=ADSBSource.ADSBLOL,
         evaluation_cache=cache,
-        output_csv=output_csv,
-        output_columns=["gold_src", "precision", "test_date"],
+    )
+    evaluation.write_evaluation_csv(
+        results.to_frame(),
+        output_csv,
+        columns=["gold_src", "precision", "test_date"],
     )
 
     written = pl.read_csv(output_csv)
@@ -344,7 +345,6 @@ def test_export_cached_evaluations_filters_and_selects_columns(
         gold_source=BTS_SOURCE,
         test_dates=TARGET_DATE,
         adsb_source=[ADSBSource.ADSBLOL, ADSBSource.ADSBX],
-        write_outputs=False,
         evaluation_cache=cache,
     )
     output_csv = tmp_path / "exports" / "adsbx.csv"
@@ -389,13 +389,9 @@ def test_empty_cache_export_supports_metric_columns(tmp_path):
     assert pl.read_csv(output_csv).columns == exported.columns
 
 
-def test_parse_args_accepts_csv_output_options(tmp_path):
-    output_csv = tmp_path / "evaluation.csv"
-
+def test_parse_args_accepts_output_columns():
     args = evaluation.parse_args(
         [
-            "--output-csv",
-            str(output_csv),
             "--columns",
             "test_date",
             "precision",
@@ -403,8 +399,41 @@ def test_parse_args_accepts_csv_output_options(tmp_path):
         ]
     )
 
-    assert args.output_csv == Path(output_csv)
     assert args.columns == ["test_date", "precision", "recall"]
+
+
+def test_cli_writes_csv(monkeypatch, tmp_path):
+    evaluate_kwargs = {}
+    output_csv = tmp_path / "evaluation.csv"
+
+    def evaluate(**kwargs):
+        evaluate_kwargs.update(kwargs)
+        return SimpleNamespace(
+            to_frame=lambda: pl.DataFrame(
+                {"precision": [1.0], "recall": [1.0]}
+            )
+        )
+
+    monkeypatch.setattr(
+        evaluation,
+        "evaluate",
+        evaluate,
+    )
+    monkeypatch.setattr(evaluation, "default_stats_path", lambda: output_csv)
+
+    evaluation.main(
+        [
+            "--test-dates",
+            TARGET_DATE.isoformat(),
+            "--columns",
+            "precision",
+        ]
+    )
+
+    assert "write_csv" not in evaluate_kwargs
+    assert pl.read_csv(output_csv).to_dict(as_series=False) == {
+        "precision": [1.0]
+    }
 
 
 @pytest.mark.parametrize(
@@ -417,7 +446,6 @@ def test_evaluate_rejects_empty_input_sequences(empty_parameter):
         "gold_source": [BTS_SOURCE],
         "test_dates": [TARGET_DATE],
         "adsb_source": [ADSBSource.ADSBLOL],
-        "write_outputs": False,
     }
     values[empty_parameter] = []
 
@@ -440,6 +468,8 @@ def test_evaluate_rejects_empty_input_sequences(empty_parameter):
         ("--include-consecutive-airport-metrics", None),
         ("--consecutive-airport-displacement-threshold-km", "10"),
         ("--use_all_icaos", None),
+        ("--no-cache", None),
+        ("--output-csv", "/tmp/evaluation.csv"),
     ],
 )
 def test_parse_args_rejects_removed_options(option, value):
