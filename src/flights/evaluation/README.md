@@ -82,5 +82,7 @@ print(stats.precision, stats.recall, stats.airport_id_match_pct)
 frame = results.to_frame()
 ```
 
-The result models live in `flights.evaluation.models`. Cache discovery remains
-tabular because it can combine many cache entries and provenance columns.
+The result models live in `flights.evaluation.models`. For object-based cache
+discovery, `EvaluationCache.find_stats(...)` returns `CachedEvaluationStats`
+objects without loading the detailed comparison files. `list_entries(...)`
+is the tabular adapter for display and CSV export.

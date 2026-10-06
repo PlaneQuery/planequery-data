@@ -10,6 +10,7 @@ from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn.source import AlgorithmNNFlightSource
 from flights.evaluation import evaluation
 from flights.evaluation.cache import (
+    CachedEvaluationStats,
     EvaluationCache,
     RESULT_FILENAME,
     default_evaluation_cache_dir,
@@ -210,6 +211,10 @@ def test_cache_listing_reads_stats_without_loading_full_comparisons(
 
     monkeypatch.setattr(pl, "read_parquet", read_stats_only)
 
+    cached_stats = cache.find_stats()
+    assert len(cached_stats) == 1
+    assert isinstance(cached_stats[0], CachedEvaluationStats)
+    assert cached_stats[0].stats.precision == 1.0
     assert cache.list_entries().height == 1
 
 

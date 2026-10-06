@@ -531,6 +531,15 @@ class CachedEvaluation:
     path: Path
 
 
+@dataclass(frozen=True)
+class CachedEvaluationStats:
+    """Typed daily stats and provenance without the detailed comparison."""
+
+    stats: EvaluationStats
+    manifest: EvaluationCacheManifest
+    path: Path
+
+
 def _partition_value(value: object | None) -> str:
     text = "none" if value is None else str(value)
     # Escape slashes, equals signs, and other characters which could alter the
@@ -820,7 +829,7 @@ class EvaluationCache:
         _atomic_write_bytes(success_path, b"")
         return path
 
-    def list_entries(
+    def find_stats(
         self,
         *,
         test_source: object | Sequence[object] | None = None,
@@ -831,12 +840,11 @@ class EvaluationCache:
         test_dates: (
             date | datetime | str | Sequence[date | datetime | str] | None
         ) = None,
-    ) -> pl.DataFrame:
-        """Return cached daily stats matching optional one-or-many filters.
+    ) -> tuple[CachedEvaluationStats, ...]:
+        """Return typed cached stats matching optional one-or-many filters.
 
-        Incomplete or corrupt entries are omitted.  The returned rows retain
-        the legacy ``test_date``, ``adsb_src``, ``test_src``, and ``gold_src``
-        columns and append cache-key/provenance discovery columns.
+        Incomplete, corrupt, and inactive-version entries are omitted. The
+        detailed comparison Parquet files are not loaded.
         """
 
         test_sources = _source_filter(test_source)
@@ -844,7 +852,7 @@ class EvaluationCache:
         adsb_sources = _adsb_filter(adsb_source)
         dates = _date_filter(test_dates)
 
-        entries: list[pl.DataFrame] = []
+        entries: list[CachedEvaluationStats] = []
         if self.root.is_dir():
             success_markers = sorted(self.root.rglob(SUCCESS_FILENAME))
         else:
@@ -878,6 +886,55 @@ class EvaluationCache:
                 continue
             stats, manifest = loaded
             entries.append(
+                CachedEvaluationStats(
+                    stats=stats,
+                    manifest=manifest,
+                    path=path,
+                )
+            )
+
+        return tuple(
+            sorted(
+                entries,
+                key=lambda entry: (
+                    entry.stats.test_date,
+                    entry.stats.test_source,
+                    entry.stats.gold_source,
+                    entry.stats.adsb_source.value
+                    if entry.stats.adsb_source is not None
+                    else "",
+                    entry.manifest.created_at,
+                    str(entry.path),
+                ),
+            )
+        )
+
+    def list_entries(
+        self,
+        *,
+        test_source: object | Sequence[object] | None = None,
+        gold_source: object | Sequence[object] | None = None,
+        adsb_source: (
+            ADSBSource | str | Sequence[ADSBSource | str | None] | None
+        ) = None,
+        test_dates: (
+            date | datetime | str | Sequence[date | datetime | str] | None
+        ) = None,
+    ) -> pl.DataFrame:
+        """Return a tabular view of matching cached stats and provenance."""
+
+        cached_entries = self.find_stats(
+            test_source=test_source,
+            gold_source=gold_source,
+            adsb_source=adsb_source,
+            test_dates=test_dates,
+        )
+        entries: list[pl.DataFrame] = []
+        for entry in cached_entries:
+            stats = entry.stats
+            manifest = entry.manifest
+            key = manifest.key
+            entries.append(
                 evaluation_stats_frame([stats]).with_columns(
                     pl.lit(key.cache_version).alias("cache_version"),
                     pl.lit(key.test_source.version).alias(
@@ -898,7 +955,7 @@ class EvaluationCache:
                     pl.lit(key.airport_catalog.fingerprint).alias(
                         "airport_catalog_fingerprint"
                     ),
-                    pl.lit(str(path)).alias("cache_path"),
+                    pl.lit(str(entry.path)).alias("cache_path"),
                     pl.lit(manifest.created_at.isoformat()).alias(
                         "cache_created_at"
                     ),
@@ -925,6 +982,7 @@ class EvaluationCache:
 __all__ = [
     "AirportCatalogFingerprint",
     "CachedEvaluation",
+    "CachedEvaluationStats",
     "EVALUATION_CACHE_VERSION",
     "EvaluationCache",
     "EvaluationCacheKey",
