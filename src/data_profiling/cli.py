@@ -39,11 +39,12 @@ def get_daily_flight_counts(
     start_date: date,
     end_date: date,
 ) -> dict[date, int]:
-    """Return counts for readable flight files in ``[start_date, end_date)``."""
+    """Return daily counts, using zero for missing or unreadable files."""
     counts: dict[date, int] = {}
     for day in date_range(start_date, end_date):
         path = flight_path(ALGORITHM_NN_SOURCE, day, ADSBSource.ADSBLOL)
         if not path.is_file():
+            counts[day] = 0
             continue
         try:
             counts[day] = int(
@@ -51,7 +52,7 @@ def get_daily_flight_counts(
             )
         except Exception:
             # A partial/corrupt Parquet file has no usable flight count.
-            continue
+            counts[day] = 0
     return counts
 
 
