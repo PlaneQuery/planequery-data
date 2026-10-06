@@ -328,16 +328,21 @@ def evaluate(
                             target_date
                         )
                     airport_catalog = airport_catalogs[target_date]
-                    cache_key = cache.make_key(
-                        test_date=target_date,
-                        test_source=resolved_test_source,
-                        gold_source=resolved_gold_source,
-                        adsb_source=selected_adsb_source,
-                        airport_catalog=airport_catalog,
+                    cache_key = (
+                        cache.make_key(
+                            test_date=target_date,
+                            test_source=resolved_test_source,
+                            gold_source=resolved_gold_source,
+                            adsb_source=selected_adsb_source,
+                            airport_catalog=airport_catalog,
+                        )
+                        if use_cache
+                        else None
                     )
 
                     cached = None
-                    if use_cache and not refresh_cache and cache_key is not None:
+                    if use_cache and not refresh_cache:
+                        assert cache_key is not None
                         cached = cache.load(cache_key)
                     if cached is not None:
                         comparison = cached.comparison
@@ -370,15 +375,15 @@ def evaluate(
                             test_source=resolved_test_source.name,
                             gold_source=resolved_gold_source.name,
                         )
-                        if use_cache and cache_key is not None:
+                        if use_cache:
+                            assert cache_key is not None
                             cache_path = cache.store(
                                 cache_key,
                                 comparison,
                                 stats,
                                 overwrite=refresh_cache,
                             )
-                            if cache_path is not None:
-                                print(f"Cached evaluation at {cache_path}")
+                            print(f"Cached evaluation at {cache_path}")
 
                     daily_results.append(
                         EvaluationResult(

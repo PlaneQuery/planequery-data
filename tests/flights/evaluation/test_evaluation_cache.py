@@ -24,22 +24,21 @@ TARGET_DATE = date(2026, 3, 1)
 NOON = datetime(2026, 3, 1, 12)  # noqa: DTZ001 - flight times are naive UTC
 
 
-def _airport_catalog(*, with_provenance: bool = True):
+def _airport_catalog():
     catalog = SimpleNamespace(
         airports=(
             SimpleNamespace(id=1, lat=40.0, lon=-75.0),
             SimpleNamespace(id=2, lat=41.0, lon=-74.0),
         )
     )
-    if with_provenance:
-        catalog.provenance = AirportCatalogProvenance(
-            flight_date=TARGET_DATE,
-            observed_commit_sha="observed-commit",
-            knowledge_cutoff_date=date(2026, 4, 1),
-            knowledge_commit_sha="knowledge-commit",
-            catalog_available_date=date(2026, 4, 1),
-            policy_version="test-policy",
-        )
+    catalog.provenance = AirportCatalogProvenance(
+        flight_date=TARGET_DATE,
+        observed_commit_sha="observed-commit",
+        knowledge_cutoff_date=date(2026, 4, 1),
+        knowledge_commit_sha="knowledge-commit",
+        catalog_available_date=date(2026, 4, 1),
+        policy_version="test-policy",
+    )
     return catalog
 
 
@@ -65,7 +64,7 @@ def _algorithm_nn_source(tmp_path):
     return AlgorithmNNFlightSource(model_path=checkpoint)
 
 
-def _patch_inputs(monkeypatch, test_source, frame_for_source, *, catalog=None):
+def _patch_inputs(monkeypatch, test_source, frame_for_source):
     reads = []
 
     def source_flights_reader(source, adsb_source=None):
@@ -83,7 +82,7 @@ def _patch_inputs(monkeypatch, test_source, frame_for_source, *, catalog=None):
     monkeypatch.setattr(
         evaluation,
         "airport_catalog_for_date",
-        lambda target_date: catalog or _airport_catalog(),
+        lambda target_date: _airport_catalog(),
     )
     return reads
 
@@ -101,9 +100,9 @@ def _evaluate(test_source, cache, **kwargs):
 
 
 def test_default_cache_directory_is_under_output_dir(monkeypatch, tmp_path):
-    from data_engineering import utils as data_engineering_utils
+    from flights.evaluation import cache as evaluation_cache
 
-    monkeypatch.setattr(data_engineering_utils, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation_cache, "OUTPUT_DIR", tmp_path)
 
     assert default_evaluation_cache_dir() == (
         tmp_path / "data" / "cache" / "evaluation"
@@ -156,23 +155,6 @@ def test_unreadable_entry_is_a_cache_miss(
 
     assert len(reads) == 4
     assert cache.find_stats()
-
-
-def test_cache_listing_only_returns_the_active_cache_version(
-    monkeypatch,
-    tmp_path,
-):
-    test_source = _algorithm_nn_source(tmp_path)
-    cache_root = tmp_path / "cache"
-    old_cache = EvaluationCache(cache_root, cache_version=2)
-    current_cache = EvaluationCache(cache_root, cache_version=3)
-    frame = flights_to_flights_df([_flight()])
-    _patch_inputs(monkeypatch, test_source, lambda source: frame)
-
-    _evaluate(test_source, old_cache)
-
-    assert old_cache.list_entries().height == 1
-    assert current_cache.list_entries().is_empty()
 
 
 def test_two_adsb_providers_are_cached_and_listed_with_filters(
@@ -268,28 +250,6 @@ def test_refresh_cache_recomputes_and_overwrites_entry(monkeypatch, tmp_path):
     )
     assert listed.height == 1
     assert listed.row(0, named=True)["airport_id_match_pct"] == 0.0
-
-
-def test_catalog_without_provenance_does_not_create_cache_files(
-    monkeypatch,
-    tmp_path,
-):
-    test_source = _algorithm_nn_source(tmp_path)
-    cache_root = tmp_path / "cache"
-    cache = EvaluationCache(cache_root)
-    frame = flights_to_flights_df([_flight()])
-    reads = _patch_inputs(
-        monkeypatch,
-        test_source,
-        lambda source: frame,
-        catalog=_airport_catalog(with_provenance=False),
-    )
-
-    _evaluate(test_source, cache)
-
-    assert len(reads) == 2
-    assert not list(cache_root.rglob("*"))
-    assert cache.list_entries().is_empty()
 
 
 def test_parse_args_accepts_hyphenated_source_options():
