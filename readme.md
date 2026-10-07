@@ -1,8 +1,6 @@
-
-# Testing Data to focus on for now
-Febuary 28th -> March 4th. So I can test March 1, 2, 3
-
+# Data https://huggingface.co/datasets/ggman12/planequery-data-flights
+Find a wrong or missing flight? File a github or huggingface issue.
 # Setup
 pip install -e .
 
-Find a wrong or missing flight? File a github issue. 
+Evaluation against OpenSky and ADS-B Exchange flight datasets coming soon.
