@@ -23,6 +23,7 @@ from flights.flight_manifest import (
     FlightManifest,
     flight_manifest_path,
 )
+from planequery_data.utils import date_range
 
 
 @dataclass(frozen=True)
@@ -483,6 +484,27 @@ def get_flights(
         use_cache,
         batch_workers,
     )
+
+
+def get_flights_range(
+    source: FlightSource,
+    start_date: date,
+    end_date: date,
+    adsb_src: ADSBSource | None = None,
+    use_cache: bool = True,
+    batch_workers: int = 1,
+) -> pl.DataFrame:
+    """Get flights for each day in ``[start_date, end_date)``."""
+    return pl.concat([
+        get_flights(
+            source,
+            target_date,
+            adsb_src,
+            use_cache,
+            batch_workers,
+        )
+        for target_date in date_range(start_date, end_date)
+    ])
 
 
 def write_flights(

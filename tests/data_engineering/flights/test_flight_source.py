@@ -17,6 +17,7 @@ from flights.flight_source import (
     ADSBFlightSource,
     NonADSBFlightSource,
     get_flights,
+    get_flights_range,
     flight_path,
     write_flights,
 )
@@ -165,6 +166,37 @@ def test_get_flights_dispatches_adsb_source_and_interval(monkeypatch, tmp_path):
         )
     ]
     assert result.get_column("icao").to_list() == ["abc123"]
+
+
+def test_get_flights_range_gets_each_day_and_excludes_end_date(monkeypatch):
+    source = DummyADSBFlightSource()
+    calls = []
+
+    def get_day(source_arg, target_date, adsb_src, use_cache, batch_workers):
+        calls.append(
+            (source_arg, target_date, adsb_src, use_cache, batch_workers)
+        )
+        return pl.DataFrame({"date": [target_date]})
+
+    monkeypatch.setattr(flight_source_module, "get_flights", get_day)
+
+    result = get_flights_range(
+        source,
+        date(2026, 3, 1),
+        date(2026, 3, 3),
+        ADSBSource.ADSBX,
+        use_cache=False,
+        batch_workers=4,
+    )
+
+    assert result.get_column("date").to_list() == [
+        date(2026, 3, 1),
+        date(2026, 3, 2),
+    ]
+    assert calls == [
+        (source, date(2026, 3, 1), ADSBSource.ADSBX, False, 4),
+        (source, date(2026, 3, 2), ADSBSource.ADSBX, False, 4),
+    ]
 
 
 def test_get_flights_reads_bounded_complete_aircraft_batches(monkeypatch, tmp_path):

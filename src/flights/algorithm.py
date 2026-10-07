@@ -15,7 +15,6 @@ from flights.flight_manifest import (
 from flights.flight_source import (
     ADSBFlightSource,
     flight_path,
-    get_flights as get_source_flights,
 )
 from flights.segmentation import algorithm as segmentation
 from planequery_data.utils import date_range
@@ -46,22 +45,6 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
             dt,
             airport_catalog,
         )
-
-
-def get_flights_range(
-    start_date: date,
-    end_date: date,
-    adsb_src: ADSBSource = ADSBSource.ADSBLOL,
-) -> pl.DataFrame:
-    assert end_date > start_date
-    return pl.concat([
-        get_source_flights(
-            AlgorithmNearestFlightSource(),
-            target_date,
-            adsb_src,
-        )
-        for target_date in date_range(start_date, end_date)
-    ])
 
 
 def create_flights_for_day(
