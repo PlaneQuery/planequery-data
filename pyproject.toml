@@ -17,10 +17,11 @@ dependencies = [
     "polars==1.42.1",
     "pyarrow==25.0.0",
     "pyspark==4.0.4",
+    "requests==2.34.2",
     "scikit-learn==1.9.0",
     "scipy==1.18.0",
     "timezonefinder==8.2.4",
-    'trino[external-authentication-token-cache]',
+    "trino==0.340.0",
     "boto3==1.43.46",
     "lxml==6.1.1"
 ]
