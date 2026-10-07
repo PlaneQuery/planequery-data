@@ -1,170 +1,179 @@
 """Shared OpenSky Trino connection and Arrow helpers."""
 
-import json
+from collections.abc import Callable
 import os
-from pathlib import Path
-import sys
+import threading
+import time
 from typing import Any
 
 import pyarrow as pa
-from trino.auth import OAuth2Authentication
+import requests
+from requests.auth import AuthBase
+from trino.auth import Authentication
 from trino.dbapi import Connection, connect
 from trino.exceptions import TrinoAuthError
 
 
 BATCH_SIZE = 100_000
-DEFAULT_TRINO_USER = os.environ.get("OPENSKY_TRINO_USER", "goodejonah")
-TOKEN_CACHE_PATH_ENV = "OPENSKY_TRINO_TOKEN_CACHE"
-TOKEN_CACHE_SERVICE = "planequery-opensky-trino"
+OPENSKY_USERNAME_ENV = "OPENSKY_USERNAME"
+OPENSKY_PASSWORD_ENV = "OPENSKY_PASSWORD"
+DEFAULT_TRINO_USER = os.environ.get(
+    OPENSKY_USERNAME_ENV,
+    "",
+)
+OPENSKY_TOKEN_URL = (
+    "https://auth.opensky-network.org/auth/realms/opensky-network/"
+    "protocol/openid-connect/token"
+)
+OPENSKY_TRINO_CLIENT_ID = "trino-client"
+TOKEN_REQUEST_TIMEOUT_SECONDS = 30
+TOKEN_REFRESH_MARGIN_SECONDS = 60
+DEFAULT_TOKEN_LIFETIME_SECONDS = 300
 
 
-def default_token_cache_path() -> Path:
-    """Return the fallback OAuth token path for the current platform."""
-    configured = os.environ.get(TOKEN_CACHE_PATH_ENV)
-    if configured:
-        return Path(configured).expanduser()
-    if sys.platform == "darwin":
-        return (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "PlaneQuery"
-            / "opensky-trino-oauth.json"
-        )
-    state_root = Path(
-        os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")
-    )
-    return state_root / "planequery" / "opensky-trino-oauth.json"
-
-
-def _load_keyring() -> Any | None:
-    try:
-        import keyring
-    except ImportError:
-        return None
-    return keyring
-
-
-class PersistentOAuthTokenCache:
-    """Persist OAuth tokens in the OS keyring or a mode-0600 JSON file."""
+class OpenSkyTokenProvider:
+    """Acquire and proactively refresh an OpenSky Trino bearer token."""
 
     def __init__(
         self,
-        path: Path | None = None,
+        username: str,
+        password: str,
         *,
-        keyring_module: Any | None = None,
-        load_system_keyring: bool = True,
+        session: requests.Session | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        refresh_margin_seconds: float = TOKEN_REFRESH_MARGIN_SECONDS,
     ) -> None:
-        self.path = path or default_token_cache_path()
-        self._keyring = (
-            _load_keyring() if load_system_keyring else keyring_module
-        )
-        if keyring_module is not None:
-            self._keyring = keyring_module
-        self._reported_file_fallback = False
+        if not username:
+            raise ValueError("username must not be empty")
+        if not password:
+            raise ValueError("password must not be empty")
+        if refresh_margin_seconds < 0:
+            raise ValueError("refresh_margin_seconds must not be negative")
 
-    @staticmethod
-    def _account(key: str | None) -> str:
-        return key or "default"
+        self.username = username.lower()
+        self._password = password
+        self._session = session or requests.Session()
+        self._clock = clock
+        self._refresh_margin_seconds = refresh_margin_seconds
+        self._lock = threading.Lock()
+        self._token: str | None = None
+        self._refresh_at = 0.0
 
-    def _get_from_keyring(self, key: str | None) -> str | None:
-        if self._keyring is None:
-            return None
-        try:
-            return self._keyring.get_password(
-                TOKEN_CACHE_SERVICE,
-                self._account(key),
-            )
-        except Exception:
-            self._keyring = None
-            return None
+    def get_token(self) -> str:
+        """Return a valid token, refreshing it before it expires."""
+        with self._lock:
+            now = self._clock()
+            if self._token is not None and now < self._refresh_at:
+                return self._token
 
-    def _store_in_keyring(self, key: str | None, token: str) -> bool:
-        if self._keyring is None:
-            return False
-        try:
-            self._keyring.set_password(
-                TOKEN_CACHE_SERVICE,
-                self._account(key),
-                token,
-            )
-        except Exception:
-            self._keyring = None
-            return False
-        return True
-
-    def _read_file(self) -> dict[str, str]:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return {}
-        if not isinstance(payload, dict):
-            return {}
-        return {
-            str(key): value
-            for key, value in payload.items()
-            if isinstance(value, str)
-        }
-
-    def _store_in_file(self, key: str | None, token: str) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        tokens = self._read_file()
-        tokens[self._account(key)] = token
-        temporary_path = self.path.with_name(
-            f".{self.path.name}.{os.getpid()}.tmp"
-        )
-        descriptor = os.open(
-            temporary_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-            0o600,
-        )
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-                json.dump(tokens, file)
-                file.write("\n")
-            os.replace(temporary_path, self.path)
-            self.path.chmod(0o600)
-        finally:
-            temporary_path.unlink(missing_ok=True)
-        if not self._reported_file_fallback:
-            print(
-                "System keyring unavailable; cached the OpenSky OAuth token "
-                f"in {self.path} with mode 0600.",
-                file=sys.stderr,
-            )
-            self._reported_file_fallback = True
-
-    def get_token_from_cache(self, key: str | None) -> str | None:
-        token = self._get_from_keyring(key)
-        if token is not None:
+            token, lifetime = self._request_token()
+            # For unusually short-lived tokens, use a 10% margin instead of
+            # refreshing on every request.
+            margin = min(self._refresh_margin_seconds, lifetime / 10)
+            self._token = token
+            self._refresh_at = now + max(lifetime - margin, 1)
             return token
-        return self._read_file().get(self._account(key))
 
-    def store_token_to_cache(self, key: str | None, token: str) -> None:
-        if not self._store_in_keyring(key, token):
-            self._store_in_file(key, token)
+    def _request_token(self) -> tuple[str, float]:
+        try:
+            response = self._session.post(
+                OPENSKY_TOKEN_URL,
+                data={
+                    "client_id": OPENSKY_TRINO_CLIENT_ID,
+                    "grant_type": "password",
+                    "username": self.username,
+                    "password": self._password,
+                },
+                timeout=TOKEN_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as error:
+            raise TrinoAuthError(
+                "Could not reach the OpenSky authentication service"
+            ) from error
+
+        if response.status_code in (400, 401):
+            raise TrinoAuthError(
+                "OpenSky rejected OPENSKY_USERNAME/OPENSKY_PASSWORD. "
+                "Verify that they are the website credentials for the same "
+                "account that has Trino access."
+            )
+
+        try:
+            response.raise_for_status()
+            payload = response.json()
+        except (requests.RequestException, ValueError) as error:
+            raise TrinoAuthError(
+                "OpenSky returned an invalid authentication response"
+            ) from error
+
+        token = payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise TrinoAuthError(
+                "OpenSky authentication response did not contain an access token"
+            )
+
+        expires_in = payload.get(
+            "expires_in",
+            DEFAULT_TOKEN_LIFETIME_SECONDS,
+        )
+        try:
+            lifetime = float(expires_in)
+        except (TypeError, ValueError):
+            lifetime = DEFAULT_TOKEN_LIFETIME_SECONDS
+        if lifetime <= 0:
+            lifetime = DEFAULT_TOKEN_LIFETIME_SECONDS
+        return token, lifetime
 
 
-def wait_for_external_authentication(url: str) -> None:
-    """Pause Trino's OAuth polling until browser authentication is complete.
+class _RefreshingBearerAuth(AuthBase):
+    """Inject the provider's current token into every HTTP request."""
 
-    The Trino Python client otherwise starts polling immediately and gives up
-    after five attempts, which is usually too short for a copied browser URL on
-    a headless or remote machine.
-    """
-    print(
-        "Open this URL in a browser and sign in with the same OpenSky account:\n"
-        f"{url}",
-        flush=True,
-    )
-    try:
-        input("After authentication succeeds in the browser, press Enter here: ")
-    except EOFError as error:
+    def __init__(self, token_provider: OpenSkyTokenProvider) -> None:
+        self._token_provider = token_provider
+
+    def __call__(
+        self,
+        request: requests.PreparedRequest,
+    ) -> requests.PreparedRequest:
+        request.headers["Authorization"] = (
+            f"Bearer {self._token_provider.get_token()}"
+        )
+        return request
+
+
+class RefreshingJWTAuthentication(Authentication):
+    """Trino authentication backed by an automatically refreshed JWT."""
+
+    def __init__(self, token_provider: OpenSkyTokenProvider) -> None:
+        self.token_provider = token_provider
+
+    def set_http_session(
+        self,
+        http_session: requests.Session,
+    ) -> requests.Session:
+        http_session.auth = _RefreshingBearerAuth(self.token_provider)
+        return http_session
+
+
+def opensky_credentials_from_environment() -> tuple[str, str]:
+    """Read the OpenSky website credentials required for Trino."""
+    username = os.environ.get(OPENSKY_USERNAME_ENV, "").strip()
+    password = os.environ.get(OPENSKY_PASSWORD_ENV, "")
+    missing = [
+        name
+        for name, value in (
+            (OPENSKY_USERNAME_ENV, username),
+            (OPENSKY_PASSWORD_ENV, password),
+        )
+        if not value
+    ]
+    if missing:
         raise TrinoAuthError(
-            "OpenSky external authentication requires an interactive terminal. "
-            "Run the downloader from a terminal, open the printed URL, then "
-            "press Enter after the browser login succeeds."
-        ) from error
+            "Automatic OpenSky Trino authentication requires "
+            + " and ".join(missing)
+            + " to be set"
+        )
+    return username.lower(), password
 
 
 def rows_to_arrow(
@@ -181,19 +190,22 @@ def rows_to_arrow(
     )
 
 
-def create_connection(user: str) -> Connection:
-    """Create an external OAuth-authenticated OpenSky Trino connection."""
-    authentication = OAuth2Authentication(
-        redirect_auth_url_handler=wait_for_external_authentication,
+def create_connection(user: str = "") -> Connection:
+    """Create an automatically authenticated OpenSky Trino connection."""
+    username, password = opensky_credentials_from_environment()
+    requested_user = user.strip().lower()
+    if requested_user and requested_user != username:
+        raise TrinoAuthError(
+            "The requested Trino user does not match OPENSKY_USERNAME"
+        )
+
+    authentication = RefreshingJWTAuthentication(
+        OpenSkyTokenProvider(username, password)
     )
-    # trino 0.340 has no public token-cache injection point. It is pinned in
-    # pyproject.toml, so replace its internal in-memory/keyring-only cache with
-    # the cross-platform cache above.
-    authentication._bearer._token_cache = PersistentOAuthTokenCache()
     return connect(
         host="trino.opensky-network.org",
         port=443,
-        user=user.lower(),
+        user=username,
         catalog="minio",
         schema="osky",
         http_scheme="https",
