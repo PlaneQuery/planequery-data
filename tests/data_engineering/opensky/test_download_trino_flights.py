@@ -213,3 +213,28 @@ def test_main_passes_cli_arguments(monkeypatch, tmp_path):
             },
         )
     ]
+
+
+def test_main_downloads_date_range_with_exclusive_end(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        downloader,
+        "download_day",
+        lambda target_date, **kwargs: calls.append(target_date),
+    )
+
+    downloader.main(["2026-09-26", "2026-09-29"])
+
+    assert calls == [
+        date(2026, 9, 26),
+        date(2026, 9, 27),
+        date(2026, 9, 28),
+    ]
+
+
+@pytest.mark.parametrize("end_date", ["2026-09-26", "2026-09-25"])
+def test_parse_args_rejects_non_increasing_date_range(end_date, capsys):
+    with pytest.raises(SystemExit):
+        downloader.parse_args(["2026-09-26", end_date])
+
+    assert "END_DATE must be after START_DATE" in capsys.readouterr().err
