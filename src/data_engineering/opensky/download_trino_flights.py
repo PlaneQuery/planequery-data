@@ -188,7 +188,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TRINO_USER,
         help=(
             "OpenSky Trino user "
-            "(default: OPENSKY_TRINO_USER or goodejonah)"
+            "(default: OPENSKY_USERNAME; must match that credential)"
         ),
     )
     parser.add_argument(
