@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -184,6 +185,27 @@ def _remove_overlapping_flights(
     return df.sort(["icao", "takeoff_time"])
 
 
+def _bts_month_paths(year: int, month: int) -> list[Path]:
+    """Return source files that can contribute to a UTC takeoff month."""
+    month_start = date(year, month, 1)
+    previous_month = month_start - timedelta(days=1)
+    next_month = (
+        date(year + 1, 1, 1)
+        if month == 12
+        else date(year, month + 1, 1)
+    )
+    return [
+        OUTPUT_DIR
+        / "data"
+        / "raw"
+        / "bts"
+        / f"year={source_month.year}"
+        / f"month={source_month.month:02d}"
+        / "T_ONTIME_REPORTING.csv"
+        for source_month in (previous_month, month_start, next_month)
+    ]
+
+
 def _create_flights_from_bts_month(
     year: int,
     month: int,
@@ -193,13 +215,10 @@ def _create_flights_from_bts_month(
     '''
     On 2025, 10 for example some flights from UTC day 2025-11-01 and 2025-09-30 are included
     '''
-    # bts raw data is in OUTPUT_DIR / 'data/raw/bts/year=2025/month=10/T_ONTIME_REPORTING.csv'
-    bts_path = OUTPUT_DIR / "data" / "raw" / "bts" / f"year={year}" / f"month={month:02d}" / "T_ONTIME_REPORTING.csv"
-    prev_month = month - 1 if month > 1 else 12
-    prev_year = year if month > 1 else year - 1
-    prev_bts_path = OUTPUT_DIR / "data" / "raw" / "bts" / f"year={prev_year}" / f"month={prev_month:02d}" / "T_ONTIME_REPORTING.csv"
     dfs = []
-    for path in [prev_bts_path, bts_path]:
+    # A BTS source month can contain computed UTC takeoffs in either adjacent
+    # month, so load both sides before assigning flights by takeoff_time.
+    for path in _bts_month_paths(year, month):
         if path.exists():
             df_tmp = pl.read_csv(path)
             df_tmp = df_tmp.rename({c: c.lower() for c in df_tmp.columns})
@@ -309,7 +328,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 8
+    version: int = 9
 
     def create_flights_for_day(
         self,
