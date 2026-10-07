@@ -227,3 +227,4 @@ nohup*.out
 
 tmp/
 logs/
+/notebooks/
