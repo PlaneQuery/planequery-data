@@ -1,4 +1,4 @@
-"""Download one UTC day of OpenSky flights_data4 from Trino to parquet."""
+"""Download UTC days of OpenSky flights_data4 from Trino to parquet."""
 
 import argparse
 from collections.abc import Sequence
@@ -164,9 +164,25 @@ def download_day(
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download one UTC day of OpenSky flights_data4 from Trino.",
+        description=(
+            "Download OpenSky flights_data4 from Trino for one UTC day or a "
+            "range of UTC days."
+        ),
     )
-    parser.add_argument("date", type=date.fromisoformat, help="UTC date (YYYY-MM-DD)")
+    parser.add_argument(
+        "start_date",
+        type=date.fromisoformat,
+        help="First UTC date to download (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "end_date",
+        type=date.fromisoformat,
+        nargs="?",
+        help=(
+            "Exclusive end UTC date (YYYY-MM-DD); omit to download only "
+            "START_DATE"
+        ),
+    )
     parser.add_argument(
         "--user",
         default=DEFAULT_TRINO_USER,
@@ -201,19 +217,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Replace an existing completed day after a successful download",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.end_date is not None and args.end_date <= args.start_date:
+        parser.error("END_DATE must be after START_DATE")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    download_day(
-        args.date,
-        user=args.user,
-        output_dir=args.output_dir,
-        batch_size=args.batch_size,
-        query_window_minutes=args.query_window_minutes,
-        overwrite=args.overwrite,
-    )
+    end_date = args.end_date or args.start_date + timedelta(days=1)
+    target_date = args.start_date
+    while target_date < end_date:
+        download_day(
+            target_date,
+            user=args.user,
+            output_dir=args.output_dir,
+            batch_size=args.batch_size,
+            query_window_minutes=args.query_window_minutes,
+            overwrite=args.overwrite,
+        )
+        target_date += timedelta(days=1)
 
 
 if __name__ == "__main__":
