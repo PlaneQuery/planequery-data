@@ -2,9 +2,11 @@ import networkx as nx
 import polars as pl
 from datetime import date
 from airports.runtime import airport_catalog_for_date
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.filters import pia_or_american_ladd_icao
-from flights.algorithm import get_flights_range
+from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_reference import airport_from_reference
+from flights.flight_source import get_flights_range
 from flights.flight_type import Flight, FlightIndex, flights_df_to_flights
 from pia.check_mappings import check_mappings
 from pia.graph import FlightLinkCandidate, create_graph_from_candidates, create_graph_from_selected_candidates
@@ -323,7 +325,12 @@ def create_mapping_stats(graph: nx.DiGraph, flight_index: FlightIndex, mapping: 
 if __name__ == "__main__":
     start_date = date(2026, 6, 1)
     end_date = date(2026, 7, 1)
-    df_flights = get_flights_range(start_date, end_date)
+    df_flights = get_flights_range(
+        AlgorithmNearestFlightSource(),
+        start_date,
+        end_date,
+        ADSBSource.ADSBLOL,
+    )
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     df_flights = df_flights.filter(pia_or_american_ladd_icao())
     flights = flights_df_to_flights(df_flights)
