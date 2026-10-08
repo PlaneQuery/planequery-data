@@ -9,7 +9,12 @@ import pytest
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.evaluation.evaluation import evaluate as run_evaluation
 from flights.evaluation.models import EvaluationStats
-from flights.flight_source import ADSBFlightSource, flight_path, write_flights
+from flights.flight_source import (
+    ADSBFlightSource,
+    flight_path,
+    get_flights,
+    write_flights,
+)
 from flights.sources import FLIGHT_SOURCES_BY_NAME
 
 
@@ -25,6 +30,7 @@ MINIMUM_METRICS = (
 )
 # Allow up to a 0.1 percentage-point drop to absorb small run-to-run variation.
 MAX_METRIC_REGRESSION = 0.001
+MIN_METRIC_INCREASE_TO_REPORT = 0.01
 CONFIG_COLUMNS = (
     "test_date",
     "adsb_src",
@@ -106,9 +112,20 @@ def source_for(config: EvaluationConfig):
     return source
 
 
-def regenerate_flights(config: EvaluationConfig) -> None:
+def prepare_flights(
+    config: EvaluationConfig,
+    refresh_cache: bool,
+) -> None:
     source = source_for(config)
     output_path = flight_path(source, config.test_date, config.adsb_source)
+
+    if not refresh_cache:
+        get_flights(source, config.test_date, config.adsb_source)
+        assert output_path.is_file(), (
+            f"Flight output was not created or reused: {output_path}"
+        )
+        return
+
     previous_modified_ns = (
         output_path.stat().st_mtime_ns if output_path.is_file() else None
     )
@@ -122,13 +139,18 @@ def regenerate_flights(config: EvaluationConfig) -> None:
         )
 
 
-def evaluate(config: EvaluationConfig, gold_sources: list[str]):
+def evaluate(
+    config: EvaluationConfig,
+    gold_sources: list[str],
+    adsb_source: ADSBSource = ADSBSource.ADSBLOL,
+    refresh_cache: bool = True,
+):
     results = run_evaluation(
         test_source=source_for(config),
         gold_source=gold_sources,
         test_dates=config.test_date,
-        adsb_source=config.adsb_source or ADSBSource.ADSBLOL,
-        refresh_cache=True,
+        adsb_source=config.adsb_source or adsb_source,
+        refresh_cache=refresh_cache,
     )
     return {
         stats.gold_source: stats
@@ -153,38 +175,109 @@ def assert_meets_baseline(
             f"allowed minimum {minimum_with_margin:.6f} "
             f"(baseline {minimum:.6f}, margin {MAX_METRIC_REGRESSION:.6f})"
         )
+        if measured >= minimum + MIN_METRIC_INCREASE_TO_REPORT:
+            print(
+                f"{case}: {metric} increased by {measured - minimum:.6f} "
+                f"(baseline {minimum:.6f}, measured {measured:.6f})"
+            )
+
+
+def requested_source_names(
+    request: pytest.FixtureRequest,
+    option_name: str,
+) -> set[str] | None:
+    values = request.config.getoption(option_name)
+    if values is None:
+        return None
+
+    unknown_sources = set(values) - FLIGHT_SOURCES_BY_NAME.keys()
+    if unknown_sources:
+        raise pytest.UsageError(
+            f"Unknown {option_name.replace('_', ' ')}: "
+            f"{sorted(unknown_sources)}"
+        )
+    return set(values)
 
 
 @pytest.mark.parametrize(
     "baseline_path",
     BASELINE_PATHS,
-    ids=lambda path: path.stem,
 )
-def test_quality_meets_baseline(baseline_path: Path):
+def test_quality_meets_baseline(
+    baseline_path: Path,
+    request: pytest.FixtureRequest,
+):
     baselines = load_baselines(baseline_path)
     assert baselines, f"No daily quality baselines found in {baseline_path}"
+    refresh_cache = request.config.getoption("refresh_cache")
+
+    selected_test_sources = requested_source_names(request, "test_source")
+    selected_gold_sources = requested_source_names(request, "gold_source")
+    requested_adsb_sources = request.config.getoption("adsb_source")
+    selected_adsb_sources = (
+        tuple(ADSBSource(value) for value in requested_adsb_sources)
+        if requested_adsb_sources is not None
+        else None
+    )
+    selected_dates = request.config.getoption("test_dates")
+
+    baselines = [
+        baseline
+        for baseline in baselines
+        if (
+            selected_test_sources is None
+            or baseline.config.test_source_name in selected_test_sources
+        )
+        and (
+            selected_gold_sources is None
+            or baseline.gold_source_name in selected_gold_sources
+        )
+        and (
+            selected_adsb_sources is None
+            or baseline.config.adsb_source is None
+            or baseline.config.adsb_source in selected_adsb_sources
+        )
+        and (
+            selected_dates is None
+            or baseline.config.test_date in selected_dates
+        )
+    ]
+    if not baselines:
+        pytest.skip("No baselines match the requested evaluation filters")
 
     baselines_by_config = defaultdict(list)
     for baseline in baselines:
         baselines_by_config[baseline.config].append(baseline)
 
-    regenerated = set()
+    prepared = set()
     for config, configured_baselines in baselines_by_config.items():
         artifact_key = (
             config.test_source_name,
             config.test_date,
             config.adsb_source,
         )
-        if artifact_key not in regenerated:
-            regenerate_flights(config)
-            regenerated.add(artifact_key)
+        if artifact_key not in prepared:
+            prepare_flights(
+                config,
+                refresh_cache=refresh_cache,
+            )
+            prepared.add(artifact_key)
 
         gold_sources = list(
             dict.fromkeys(
                 baseline.gold_source_name for baseline in configured_baselines
             )
         )
-        actual_by_gold_source = evaluate(config, gold_sources)
+        actual_by_gold_source = evaluate(
+            config,
+            gold_sources,
+            adsb_source=(
+                selected_adsb_sources[0]
+                if selected_adsb_sources
+                else ADSBSource.ADSBLOL
+            ),
+            refresh_cache=refresh_cache,
+        )
         for baseline in configured_baselines:
             assert baseline.gold_source_name in actual_by_gold_source, (
                 f"Evaluation did not produce stats for "
