@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,17 +14,50 @@ from data_engineering.utils import OUTPUT_DIR
 
 tf = TimezoneFinder()
 
-COLUMNS = set([
+BASE_COLUMNS = [
     "fl_date", "op_unique_carrier", "op_carrier_fl_num",
     "origin", "dest", "wheels_off", "wheels_on",
     "cancelled", "air_time", "diverted", "crs_dep_time", "crs_arr_time",
     "arr_delay", "tail_num",
-])
+]
+
+DIVERSION_COUNT = 5
+DIVERSION_COLUMNS = [
+    "dep_delay",
+    "actual_elapsed_time",
+    "div_airport_landings",
+    "div_reached_dest",
+    "div_actual_elapsed_time",
+    "div_arr_delay",
+    *[
+        f"div{index}_{field}"
+        for index in range(1, DIVERSION_COUNT + 1)
+        for field in ("airport", "wheels_on", "wheels_off", "tail_num")
+    ],
+]
+COLUMNS = set([*BASE_COLUMNS, *DIVERSION_COLUMNS])
+
+DIVERSION_COLUMN_DTYPES = {
+    "dep_delay": pl.Float64,
+    "actual_elapsed_time": pl.Float64,
+    "div_airport_landings": pl.Int64,
+    "div_reached_dest": pl.Float64,
+    "div_actual_elapsed_time": pl.Float64,
+    "div_arr_delay": pl.Float64,
+    **{
+        f"div{index}_{field}": (
+            pl.String if field in {"airport", "tail_num"} else pl.Int64
+        )
+        for index in range(1, DIVERSION_COUNT + 1)
+        for field in ("airport", "wheels_on", "wheels_off", "tail_num")
+    },
+}
 
 
 OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
 
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
+MAX_DIVERSION_LEG_DURATION = timedelta(hours=20)
 
 
 def _hhmm_to_minutes(value: int) -> int:
@@ -33,6 +66,27 @@ def _hhmm_to_minutes(value: int) -> int:
 
 def _has_value(value) -> bool:
     return value is not None and value == value
+
+
+def _diversion_report_expr() -> pl.Expr:
+    return (
+        (pl.col("diverted").fill_null(0) == 1)
+        | (pl.col("div_airport_landings").fill_null(0) > 0)
+    )
+
+
+def _coerce_hhmm(value: object) -> int | None:
+    """Normalize numeric BTS clock values, including zero-padded strings."""
+    if not _has_value(value):
+        return None
+    try:
+        hhmm = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    hours, minutes = divmod(hhmm, 100)
+    if hhmm < 0 or minutes >= 60 or hours > 24 or (hours == 24 and minutes):
+        return None
+    return hhmm
 
 
 def _local_datetime(local_date: date, hhmm: int, timezone_name: str) -> datetime:
@@ -49,6 +103,399 @@ def _closest_local_datetime(reference: datetime, hhmm: int, timezone_name: str) 
     base = _local_datetime(local_reference.date(), hhmm, timezone_name)
     candidates = [base - timedelta(days=1), base, base + timedelta(days=1)]
     return min(candidates, key=lambda candidate: abs(candidate - reference))
+
+
+def _next_utc_datetime(
+    reference: datetime,
+    hhmm: int,
+    timezone_name: str,
+) -> datetime:
+    """Return the first local BTS clock occurrence strictly after reference."""
+    reference_utc = reference.replace(tzinfo=UTC)
+    local_reference = reference_utc.astimezone(ZoneInfo(timezone_name))
+    candidate = _local_datetime(
+        local_reference.date(),
+        hhmm,
+        timezone_name,
+    )
+    while candidate.astimezone(UTC) <= reference_utc:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(UTC).replace(tzinfo=None)
+
+
+def _diverted_takeoff_datetime(row: dict, timezone_name: str) -> datetime:
+    """Anchor a diverted flight's first takeoff to its actual departure day."""
+    wheels_off = _coerce_hhmm(row.get("wheels_off"))
+    if wheels_off is None:
+        raise ValueError("Diverted BTS row is missing a valid wheels_off time")
+
+    scheduled_departure = _local_datetime(
+        row["fl_date"],
+        row["crs_dep_time"],
+        timezone_name,
+    )
+    if _has_value(row.get("dep_delay")):
+        actual_gate_departure = scheduled_departure.astimezone(UTC) + (
+            timedelta(minutes=float(row["dep_delay"]))
+        )
+        takeoff = _closest_local_datetime(
+            actual_gate_departure,
+            wheels_off,
+            timezone_name,
+        )
+    else:
+        takeoff = scheduled_departure.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        ) + timedelta(minutes=_hhmm_to_minutes(wheels_off))
+        scheduled_minutes = _hhmm_to_minutes(row["crs_dep_time"])
+        wheels_off_minutes = _hhmm_to_minutes(wheels_off)
+        if (
+            wheels_off_minutes < scheduled_minutes
+            and scheduled_minutes - wheels_off_minutes
+            > BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES
+        ):
+            takeoff += timedelta(days=1)
+    return takeoff.astimezone(UTC).replace(tzinfo=None)
+
+
+def _diverted_final_landing_datetime(
+    row: dict,
+    origin_timezone: str,
+    destination_timezone: str,
+) -> datetime | None:
+    """Anchor final wheels-on using BTS's reported gate-to-gate duration."""
+    elapsed_time = row.get("div_actual_elapsed_time")
+    if not _has_value(elapsed_time):
+        elapsed_time = row.get("actual_elapsed_time")
+    wheels_on = _coerce_hhmm(row.get("wheels_on"))
+    if (
+        not _has_value(elapsed_time)
+        or not _has_value(row.get("dep_delay"))
+        or wheels_on is None
+    ):
+        return None
+
+    scheduled_departure = _local_datetime(
+        row["fl_date"],
+        row["crs_dep_time"],
+        origin_timezone,
+    )
+    actual_gate_departure = scheduled_departure.astimezone(UTC) + timedelta(
+        minutes=float(row["dep_delay"])
+    )
+    actual_gate_arrival = actual_gate_departure + timedelta(
+        minutes=float(elapsed_time)
+    )
+    landing = _closest_local_datetime(
+        actual_gate_arrival,
+        wheels_on,
+        destination_timezone,
+    )
+    return landing.astimezone(UTC).replace(tzinfo=None)
+
+
+def _valid_diversion_leg(takeoff: datetime, landing: datetime) -> bool:
+    duration = landing - takeoff
+    return timedelta(0) < duration <= MAX_DIVERSION_LEG_DURATION
+
+
+def _utc_clock_candidates(
+    hhmm: int,
+    timezone_name: str,
+    *,
+    after: datetime,
+    before: datetime,
+) -> list[datetime]:
+    """Return occurrences of one local clock in an open UTC interval."""
+    timezone = ZoneInfo(timezone_name)
+    start_date = after.replace(tzinfo=UTC).astimezone(timezone).date()
+    end_date = before.replace(tzinfo=UTC).astimezone(timezone).date()
+    candidates: set[datetime] = set()
+    local_date = start_date - timedelta(days=1)
+    while local_date <= end_date + timedelta(days=1):
+        candidate = _local_datetime(
+            local_date,
+            hhmm,
+            timezone_name,
+        ).astimezone(UTC).replace(tzinfo=None)
+        if after < candidate < before:
+            candidates.add(candidate)
+        local_date += timedelta(days=1)
+    return sorted(candidates)
+
+
+def _diverted_flight_rows(
+    row: dict,
+    airport_timezones: dict[str, str],
+) -> list[dict]:
+    """Expand one diverted BTS report into its actual airborne legs."""
+    origin = row.get("origin")
+    registration = row.get("tail_num")
+    origin_timezone = airport_timezones.get(origin)
+    if (
+        not _has_value(origin)
+        or not _has_value(registration)
+        or origin_timezone is None
+        or not _has_value(row.get("crs_dep_time"))
+    ):
+        return []
+
+    try:
+        takeoff_time = _diverted_takeoff_datetime(row, origin_timezone)
+    except (TypeError, ValueError):
+        return []
+
+    populated_diversions = [
+        index
+        for index in range(1, DIVERSION_COUNT + 1)
+        if _has_value(row.get(f"div{index}_airport"))
+    ]
+    if not populated_diversions or populated_diversions != list(
+        range(1, populated_diversions[-1] + 1)
+    ):
+        return []
+
+    reported_landings = row.get("div_airport_landings")
+    if _has_value(reported_landings):
+        reported_landings = int(reported_landings)
+        if 1 <= reported_landings <= DIVERSION_COUNT:
+            if len(populated_diversions) != reported_landings:
+                return []
+        elif reported_landings != 9:
+            return []
+    landing_count = len(populated_diversions)
+    fly_return = reported_landings == 9
+    reached_destination = row.get("div_reached_dest") == 1 or (
+        fly_return
+        and row.get("cancelled") == 0
+        and _coerce_hhmm(row.get("wheels_on")) is not None
+    )
+
+    destination = row.get("dest")
+    destination_timezone = airport_timezones.get(destination)
+    final_landing_time = None
+    if reached_destination:
+        if not _has_value(destination) or destination_timezone is None:
+            return []
+        final_landing_time = _diverted_final_landing_datetime(
+            row,
+            origin_timezone,
+            destination_timezone,
+        )
+        if final_landing_time is not None and takeoff_time >= final_landing_time:
+            return []
+
+    diversions = []
+    for index in range(1, landing_count + 1):
+        diversion_airport = row.get(f"div{index}_airport")
+        wheels_on = _coerce_hhmm(row.get(f"div{index}_wheels_on"))
+        diversion_timezone = airport_timezones.get(diversion_airport)
+        if (
+            not _has_value(diversion_airport)
+            or wheels_on is None
+            or diversion_timezone is None
+        ):
+            return []
+        wheels_off = _coerce_hhmm(row.get(f"div{index}_wheels_off"))
+        next_registration = row.get(f"div{index}_tail_num")
+        needs_another_takeoff = index < landing_count or reached_destination
+        if needs_another_takeoff and (
+            wheels_off is None or not _has_value(next_registration)
+        ):
+            return []
+        diversions.append(
+            {
+                "airport": diversion_airport,
+                "timezone": diversion_timezone,
+                "wheels_on": wheels_on,
+                "wheels_off": wheels_off,
+                "next_registration": next_registration,
+            }
+        )
+
+    if reached_destination and final_landing_time is None:
+        final_wheels_on = _coerce_hhmm(row.get("wheels_on"))
+        if final_wheels_on is None:
+            return []
+
+    def flight_row(
+        leg_origin: str,
+        leg_destination: str,
+        leg_registration: str,
+        leg_takeoff: datetime,
+        leg_landing: datetime,
+    ) -> dict:
+        return {
+            "registration": leg_registration,
+            "origin": leg_origin,
+            "dest": leg_destination,
+            "takeoff_time": leg_takeoff,
+            "landing_time": leg_landing,
+        }
+
+    if final_landing_time is not None:
+        first_diversion = diversions[0]
+        first_landing_deadline = min(
+            takeoff_time
+            + MAX_DIVERSION_LEG_DURATION
+            + timedelta(microseconds=1),
+            final_landing_time,
+        )
+        first_landing_candidates = _utc_clock_candidates(
+            first_diversion["wheels_on"],
+            first_diversion["timezone"],
+            after=takeoff_time,
+            before=first_landing_deadline,
+        )
+        main_wheels_off = _coerce_hhmm(row.get("wheels_off"))
+        # Some return-to-origin reports overwrite the first takeoff with the
+        # successful post-return departure. The earlier airborne leg has no
+        # recoverable start, but the continuation remains fully specified.
+        if (
+            not first_landing_candidates
+            and first_diversion["airport"] == origin
+            and first_diversion["wheels_off"] == main_wheels_off
+        ):
+            origin = first_diversion["airport"]
+            registration = first_diversion["next_registration"]
+            diversions = diversions[1:]
+            landing_count -= 1
+            if not diversions:
+                if not _valid_diversion_leg(
+                    takeoff_time,
+                    final_landing_time,
+                ):
+                    return []
+                return [
+                    flight_row(
+                        origin,
+                        destination,
+                        registration,
+                        takeoff_time,
+                        final_landing_time,
+                    )
+                ]
+
+    def solve_anchored(
+        diversion_index: int,
+        leg_origin: str,
+        leg_registration: str,
+        leg_takeoff: datetime,
+    ) -> list[dict] | None:
+        assert final_landing_time is not None
+        diversion = diversions[diversion_index]
+        landing_deadline = min(
+            leg_takeoff + MAX_DIVERSION_LEG_DURATION + timedelta(microseconds=1),
+            final_landing_time,
+        )
+        landings = _utc_clock_candidates(
+            diversion["wheels_on"],
+            diversion["timezone"],
+            after=leg_takeoff,
+            before=landing_deadline,
+        )
+        for landing_time in landings:
+            leg = flight_row(
+                leg_origin,
+                diversion["airport"],
+                leg_registration,
+                leg_takeoff,
+                landing_time,
+            )
+            takeoffs = _utc_clock_candidates(
+                diversion["wheels_off"],
+                diversion["timezone"],
+                after=landing_time,
+                before=final_landing_time,
+            )
+            for next_takeoff in takeoffs:
+                if diversion_index + 1 < landing_count:
+                    remaining = solve_anchored(
+                        diversion_index + 1,
+                        diversion["airport"],
+                        diversion["next_registration"],
+                        next_takeoff,
+                    )
+                    if remaining is not None:
+                        return [leg, *remaining]
+                elif _valid_diversion_leg(
+                    next_takeoff,
+                    final_landing_time,
+                ):
+                    return [
+                        leg,
+                        flight_row(
+                            diversion["airport"],
+                            destination,
+                            diversion["next_registration"],
+                            next_takeoff,
+                            final_landing_time,
+                        ),
+                    ]
+        return None
+
+    if reached_destination and final_landing_time is not None:
+        return solve_anchored(
+            0,
+            origin,
+            registration,
+            takeoff_time,
+        ) or []
+
+    flights: list[dict] = []
+    current_origin = origin
+    current_registration = registration
+    for index, diversion in enumerate(diversions):
+        landing_time = _next_utc_datetime(
+            takeoff_time,
+            diversion["wheels_on"],
+            diversion["timezone"],
+        )
+        if not _valid_diversion_leg(takeoff_time, landing_time):
+            return []
+        flights.append(
+            flight_row(
+                current_origin,
+                diversion["airport"],
+                current_registration,
+                takeoff_time,
+                landing_time,
+            )
+        )
+        needs_another_takeoff = index + 1 < landing_count or reached_destination
+        if not needs_another_takeoff:
+            return flights
+        takeoff_time = _next_utc_datetime(
+            landing_time,
+            diversion["wheels_off"],
+            diversion["timezone"],
+        )
+        current_origin = diversion["airport"]
+        current_registration = diversion["next_registration"]
+
+    if reached_destination:
+        if final_landing_time is None:
+            final_wheels_on = _coerce_hhmm(row.get("wheels_on"))
+            final_landing_time = _next_utc_datetime(
+                takeoff_time,
+                final_wheels_on,
+                destination_timezone,
+            )
+        if not _valid_diversion_leg(takeoff_time, final_landing_time):
+            return []
+        flights.append(
+            flight_row(
+                current_origin,
+                destination,
+                current_registration,
+                takeoff_time,
+                final_landing_time,
+            )
+        )
+    return flights
 
 
 def _scheduled_arrival_datetime(row: dict) -> datetime:
@@ -207,6 +654,68 @@ def _bts_month_paths(year: int, month: int) -> list[Path]:
     ]
 
 
+def _select_bts_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Select v2 inputs while tolerating pre-diversion test fixtures."""
+    missing_diversion_columns = [
+        pl.lit(None, dtype=dtype).alias(column)
+        for column, dtype in DIVERSION_COLUMN_DTYPES.items()
+        if column not in df.columns
+    ]
+    if missing_diversion_columns:
+        df = df.with_columns(missing_diversion_columns)
+    return df.select([*BASE_COLUMNS, *DIVERSION_COLUMNS]).with_columns(
+        pl.col(column).cast(dtype, strict=False)
+        for column, dtype in DIVERSION_COLUMN_DTYPES.items()
+    )
+
+
+def _join_bts_identifiers(
+    df: pl.DataFrame,
+    registration_mapping: pl.DataFrame,
+    airport_mapping: pl.DataFrame,
+) -> pl.DataFrame:
+    df = df.join(registration_mapping, on="registration", how="inner")
+    df = df.join(
+        airport_mapping,
+        left_on="origin",
+        right_on="iata",
+        how="inner",
+    ).rename(
+        {
+            "airport_id": "takeoff_airport_id",
+            "ident": "takeoff_airport_ident",
+        }
+    )
+    return df.join(
+        airport_mapping,
+        left_on="dest",
+        right_on="iata",
+        how="inner",
+    ).rename(
+        {
+            "airport_id": "landing_airport_id",
+            "ident": "landing_airport_ident",
+        }
+    )
+
+
+def _to_bts_flight_schema(df: pl.DataFrame) -> pl.DataFrame:
+    df = df.with_columns(
+        pl.lit(None).cast(pl.String).alias("callsign"),
+        pl.lit(False).alias("pia"),
+        pl.lit(False).alias("ladd"),
+        pl.lit(False).alias("military"),
+        pl.lit(False).alias("interesting"),
+        pl.lit(None).cast(pl.String).alias("aircraft_type"),
+        pl.lit(None).cast(pl.String).alias("owner"),
+        pl.lit(None).cast(pl.String).alias("aircraft_description"),
+        pl.lit("A3").cast(pl.String).alias("category"),
+    )
+    return with_flight_schema_columns(df).with_columns(
+        pl.col("icao").str.to_lowercase()
+    )
+
+
 def _create_flights_from_bts_month(
     year: int,
     month: int,
@@ -223,57 +732,54 @@ def _create_flights_from_bts_month(
         if path.exists():
             df_tmp = pl.read_csv(path)
             df_tmp = df_tmp.rename({c: c.lower() for c in df_tmp.columns})
-            df_tmp = df_tmp.select(COLUMNS)
+            df_tmp = _select_bts_columns(df_tmp)
             dfs.append(df_tmp)
-    df = pl.concat(dfs).unique()
-    # filter out canclled, divered, airprots we can't identify. Tail_Numbers we can't idetnify.
-    df = df.filter((pl.col("cancelled") == 0) & (pl.col("diverted") == 0))
-    df = df.rename({"tail_num": "registration"})
-    mapping = get_registration_to_icao(
-        at_date=openairframes_date or date(year, month, 1)
-    )
-    df = df.join(mapping, on="registration", how="inner")
-    airport_codes = pl.concat(
-        [df.get_column("origin"), df.get_column("dest")]
-    ).drop_nulls().unique().to_list()
-    mapping = iata_airport_mapping(airport_catalog, airport_codes)
-    df = df.join(mapping, left_on="origin", right_on="iata", how="inner").rename(
-        {
-            "airport_id": "takeoff_airport_id",
-            "ident": "takeoff_airport_ident",
-        }
-    )
-    df = df.join(mapping, left_on="dest", right_on="iata", how="inner").rename(
-        {
-            "airport_id": "landing_airport_id",
-            "ident": "landing_airport_ident",
-        }
-    )
-    mapping = airport_timezone_mapping(airport_catalog)
-    df = df.join(
-        mapping,
-        left_on="takeoff_airport_id",
-        right_on="airport_id",
-        how="inner",
-    ).rename({"timezone": "origin_timezone"})
-    df = df.join(
-        mapping,
-        left_on="landing_airport_id",
-        right_on="airport_id",
-        how="inner",
-    ).rename({"timezone": "dest_timezone"})
+    df = pl.concat(dfs, how="vertical_relaxed").unique()
     df = df.with_columns(
         pl.col("fl_date")
         .str.to_datetime(format="%m/%d/%Y %I:%M:%S %p", strict=False)
         .dt.strftime("%Y-%m-%d")
+        .str.to_date(format="%Y-%m-%d")
         .alias("fl_date")
     )
 
-    df = df.with_columns(
-        pl.col("fl_date").str.to_date(format="%Y-%m-%d").alias("fl_date")
+    registration_mapping = get_registration_to_icao(
+        at_date=openairframes_date or date(year, month, 1)
     )
-    df = (
-        df.with_columns(
+    airport_code_columns = [
+        "origin",
+        "dest",
+        *[f"div{index}_airport" for index in range(1, DIVERSION_COUNT + 1)],
+    ]
+    airport_codes = pl.concat(
+        [df.get_column(column) for column in airport_code_columns]
+    ).drop_nulls().unique().to_list()
+    airport_mapping = iata_airport_mapping(airport_catalog, airport_codes)
+    timezone_mapping = airport_timezone_mapping(airport_catalog)
+
+    diversion_report = _diversion_report_expr()
+    regular_df = df.filter(
+        (pl.col("cancelled") == 0) & ~diversion_report
+    ).rename({"tail_num": "registration"})
+    regular_df = _join_bts_identifiers(
+        regular_df,
+        registration_mapping,
+        airport_mapping,
+    )
+    regular_df = regular_df.join(
+        timezone_mapping,
+        left_on="takeoff_airport_id",
+        right_on="airport_id",
+        how="inner",
+    ).rename({"timezone": "origin_timezone"})
+    regular_df = regular_df.join(
+        timezone_mapping,
+        left_on="landing_airport_id",
+        right_on="airport_id",
+        how="inner",
+    ).rename({"timezone": "dest_timezone"})
+    regular_df = (
+        regular_df.with_columns(
             pl.struct(
                 "fl_date",
                 "origin_timezone",
@@ -291,21 +797,46 @@ def _create_flights_from_bts_month(
             )
             .struct.unnest()
         )
+        .rename(
+            {
+                "time_takeoff": "takeoff_time",
+                "time_landing": "landing_time",
+            }
+        )
     )
-    df = df.with_columns(
-        pl.lit(None).cast(pl.String).alias("callsign"),
-        pl.lit(False).alias("pia"),
-        pl.lit(False).alias("ladd"),
-        pl.lit(False).alias("military"),
-        pl.lit(False).alias("interesting"),
-        pl.lit(None).cast(pl.String).alias("aircraft_type"),
-        pl.lit(None).cast(pl.String).alias("owner"),
-        pl.lit(None).cast(pl.String).alias("aircraft_description"),
-        pl.lit("A3").cast(pl.String).alias("category"),
+    regular_df = _to_bts_flight_schema(regular_df)
+
+    airport_timezones = dict(
+        airport_mapping.join(
+            timezone_mapping,
+            on="airport_id",
+            how="inner",
+        )
+        .select("iata", "timezone")
+        .iter_rows()
     )
-    df = df.rename({"time_takeoff": "takeoff_time", "time_landing": "landing_time"})
-    df = with_flight_schema_columns(df)
-    return df.with_columns(pl.col("icao").str.to_lowercase())
+    diverted_rows = [
+        flight
+        for row in df.filter(diversion_report).iter_rows(named=True)
+        for flight in _diverted_flight_rows(row, airport_timezones)
+    ]
+    diverted_df = pl.DataFrame(
+        diverted_rows,
+        schema={
+            "registration": pl.String,
+            "origin": pl.String,
+            "dest": pl.String,
+            "takeoff_time": pl.Datetime("us"),
+            "landing_time": pl.Datetime("us"),
+        },
+    )
+    diverted_df = _join_bts_identifiers(
+        diverted_df,
+        registration_mapping,
+        airport_mapping,
+    )
+    diverted_df = _to_bts_flight_schema(diverted_df)
+    return pl.concat([regular_df, diverted_df])
 
 
 def create_flights_from_bts(
@@ -328,7 +859,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 11
+    version: int = 12
 
     def create_flights_for_day(
         self,
