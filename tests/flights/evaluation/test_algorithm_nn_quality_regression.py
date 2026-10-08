@@ -25,6 +25,7 @@ MINIMUM_METRICS = (
 )
 # Allow up to a 0.1 percentage-point drop to absorb small run-to-run variation.
 MAX_METRIC_REGRESSION = 0.001
+MIN_METRIC_INCREASE_TO_REPORT = 0.01
 CONFIG_COLUMNS = (
     "test_date",
     "adsb_src",
@@ -153,6 +154,11 @@ def assert_meets_baseline(
             f"allowed minimum {minimum_with_margin:.6f} "
             f"(baseline {minimum:.6f}, margin {MAX_METRIC_REGRESSION:.6f})"
         )
+        if measured >= minimum + MIN_METRIC_INCREASE_TO_REPORT:
+            print(
+                f"{case}: {metric} increased by {measured - minimum:.6f} "
+                f"(baseline {minimum:.6f}, measured {measured:.6f})"
+            )
 
 
 @pytest.mark.parametrize(
