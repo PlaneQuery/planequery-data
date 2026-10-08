@@ -55,6 +55,17 @@ class ADSBFlightSource(FlightSource):
     ) -> tuple[date | datetime, datetime | None]:
         return dt, None
 
+    def adsb_read_interval_for_source(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[date | datetime, datetime | None]:
+        """Return the provider-specific interval needed to build one flight day."""
+        reusable_source = self.reusable_flight_source()
+        if reusable_source is not None:
+            return reusable_source.adsb_read_interval_for_source(dt, adsb_src)
+        return self.adsb_read_interval(dt)
+
     def reusable_flight_source(self) -> ADSBFlightSource | None:
         """Flights from the same ADS-B provider that can replace segmentation."""
         return None
@@ -149,7 +160,7 @@ def _create_adsb_batch(
         if reused
         else source.adsb_columns()
     )
-    start, end = source.adsb_read_interval(dt)
+    start, end = source.adsb_read_interval_for_source(dt, adsb_src)
     kwargs = {
         "source": adsb_src,
         "icaos": list(task.icaos),
@@ -369,7 +380,7 @@ def _create_flights_for_catalog(
                 adsb_src,
                 batch_workers,
             )
-        start, end = source.adsb_read_interval(dt)
+        start, end = source.adsb_read_interval_for_source(dt, adsb_src)
         columns = source.adsb_columns()
         batch_size = source.adsb_icao_batch_size()
         source_icaos = source.adsb_icaos(dt, airport_catalog)

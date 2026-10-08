@@ -3,7 +3,7 @@ import multiprocessing
 import shutil
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
@@ -38,6 +38,31 @@ def default_workers_for_source(source: FlightSource) -> int:
     if isinstance(source, PARALLEL_ALGORITHM_SOURCES):
         return default_worker_count()
     return 1
+
+
+def adsb_dates_for_run(
+    source: ADSBFlightSource,
+    target_dates: Sequence[date],
+    adsb_source: ADSBSource = ADSBSource.ADSBLOL,
+) -> list[date]:
+    """Return every ADS-B partition needed by the source read windows."""
+    input_dates = set()
+    for target_date in target_dates:
+        start, end = source.adsb_read_interval_for_source(
+            target_date,
+            adsb_source,
+        )
+        if not isinstance(start, datetime):
+            start = datetime.combine(start, datetime.min.time())
+        end = end if end is not None else start + timedelta(days=1)
+        if end <= start:
+            continue
+        final_date = (end - timedelta(microseconds=1)).date()
+        input_dates.update(
+            start.date() + timedelta(days=offset)
+            for offset in range((final_date - start.date()).days + 1)
+        )
+    return sorted(input_dates)
 
 
 def _downloaded_adsb_paths(
@@ -240,10 +265,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit("--no-save-adsb-downloads requires an ADS-B flight source")
 
     target_dates = list(date_range(args.start_date, args.end_date))
+    input_dates = (
+        adsb_dates_for_run(source, target_dates, args.adsb_source)
+        if isinstance(source, ADSBFlightSource)
+        else target_dates
+    )
     downloaded_paths: tuple[Path, ...] = ()
     preexisting_paths: set[Path] = set()
     if args.no_save_adsb_downloads:
-        downloaded_paths = _downloaded_adsb_paths(args.adsb_source, target_dates)
+        downloaded_paths = _downloaded_adsb_paths(args.adsb_source, input_dates)
         preexisting_paths = {path for path in downloaded_paths if path.exists()}
 
     try:
@@ -255,7 +285,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 prepare_releases_for_run,
             )
 
-            prepare_releases_for_run({day.year for day in target_dates})
+            prepare_releases_for_run({day.year for day in input_dates})
         kwargs = {
             "adsb_source": args.adsb_source,
         }

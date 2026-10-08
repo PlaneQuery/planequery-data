@@ -194,6 +194,74 @@ def test_complete_aircraft_batches_match_one_shot_segmentation():
     assert actual.equals(expected)
 
 
+def test_algorithm_source_stitches_a_flight_across_utc_midnight(monkeypatch):
+    from data_engineering.adsb.read_adsb import ADSBSource
+    from flights import flight_source
+    from flights.algorithm import AlgorithmNearestFlightSource
+
+    target_date = START.date()
+    flight_start = START + timedelta(hours=23, minutes=55)
+    messages = [
+        replace(
+            message(index, altitude, on_ground=False),
+            time=flight_start + timedelta(minutes=index),
+        )
+        for index, altitude in enumerate(
+            [
+                1_000,
+                5_000,
+                10_000,
+                20_000,
+                30_000,
+                30_000,
+                25_000,
+                18_000,
+                10_000,
+                5_000,
+                1_000,
+                500,
+            ]
+        )
+    ]
+    frame = pl.from_dicts([item.__dict__ for item in messages])
+    reads = []
+
+    def read_adsb(
+        start,
+        end,
+        *,
+        source,
+        columns=None,
+        lazy=False,
+        icaos=None,
+    ):
+        reads.append((start, end, source, lazy, icaos))
+        return frame.lazy() if lazy else frame
+
+    monkeypatch.setattr(flight_source, "read_adsb", read_adsb)
+
+    flights = flight_source.get_flights_for_catalog(
+        AlgorithmNearestFlightSource(),
+        target_date,
+        fake_airport_catalog(),
+        ADSBSource.ADSBLOL,
+        use_cache=False,
+    )
+
+    assert flights.height == 1
+    assert flights.select("takeoff_time", "landing_time").row(0) == (
+        flight_start,
+        flight_start + timedelta(minutes=11),
+    )
+    assert len(reads) == 2
+    assert all(
+        start == START - timedelta(days=1)
+        and end == START + timedelta(days=2)
+        and source is ADSBSource.ADSBLOL
+        for start, end, source, _, _ in reads
+    )
+
+
 def test_combined_segment_counts_match_individual_collectors():
     messages = [
         replace(

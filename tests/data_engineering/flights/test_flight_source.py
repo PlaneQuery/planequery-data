@@ -135,8 +135,47 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
 
     assert path == Path(
         tmp_path,
-        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=6",
+        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=7",
         "year=2026/month=03/day=01/data.parquet",
+    )
+
+
+@pytest.mark.parametrize(
+    ("adsb_source", "expected"),
+    [
+        (
+            ADSBSource.ADSBLOL,
+            (datetime(2026, 2, 28), datetime(2026, 3, 3)),
+        ),
+        (
+            ADSBSource.ADSBX,
+            (datetime(2026, 3, 1), datetime(2026, 3, 2)),
+        ),
+        (
+            ADSBSource.OPENSKY,
+            (datetime(2026, 3, 1), datetime(2026, 3, 2)),
+        ),
+    ],
+)
+def test_algorithm_sources_use_provider_specific_read_intervals(
+    tmp_path,
+    adsb_source,
+    expected,
+):
+    target_date = date(2026, 3, 1)
+
+    assert (
+        AlgorithmNearestFlightSource().adsb_read_interval_for_source(
+            target_date,
+            adsb_source,
+        )
+        == expected
+    )
+    assert (
+        AlgorithmNNFlightSource(
+            model_path=tmp_path / "model.pt"
+        ).adsb_read_interval_for_source(target_date, adsb_source)
+        == expected
     )
 
 
