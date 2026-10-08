@@ -227,7 +227,6 @@ def _create_flights_from_bts_month(
     df = pl.concat(dfs).unique()
     # filter out canclled, divered, airprots we can't identify. Tail_Numbers we can't idetnify.
     df = df.filter((pl.col("cancelled") == 0) & (pl.col("diverted") == 0))
-    df = df.filter(pl.col("air_time") > 30)
     df = df.rename({"tail_num": "registration"})
     mapping = get_registration_to_icao(
         at_date=openairframes_date or date(year, month, 1)
@@ -328,7 +327,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 9
+    version: int = 10
 
     def create_flights_for_day(
         self,

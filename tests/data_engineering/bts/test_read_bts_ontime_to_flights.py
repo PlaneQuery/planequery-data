@@ -12,6 +12,7 @@ from flights.providers import bts as bts_module
 from flights.providers.bts import (
     _bts_month_paths,
     _compute_bts_timestamps,
+    _create_flights_from_bts_month,
     create_flights_from_bts,
     iata_airport_mapping,
 )
@@ -136,6 +137,75 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
     }
 
 
+def test_create_flights_from_bts_month_keeps_short_flights(monkeypatch, tmp_path):
+    source_path = tmp_path / "T_ONTIME_REPORTING.csv"
+    pl.DataFrame(
+        {
+            "FL_DATE": ["03/01/2026 12:00:00 AM"],
+            "OP_UNIQUE_CARRIER": ["AA"],
+            "OP_CARRIER_FL_NUM": [123],
+            "ORIGIN": ["AAA"],
+            "DEST": ["BBB"],
+            "WHEELS_OFF": [600],
+            "WHEELS_ON": [620],
+            "CANCELLED": [0],
+            "AIR_TIME": [20],
+            "DIVERTED": [0],
+            "CRS_DEP_TIME": [600],
+            "CRS_ARR_TIME": [620],
+            "ARR_DELAY": [0],
+            "TAIL_NUM": ["N12345"],
+        }
+    ).write_csv(source_path)
+
+    monkeypatch.setattr(
+        bts_module,
+        "_bts_month_paths",
+        lambda _year, _month: [source_path],
+    )
+    monkeypatch.setattr(
+        bts_module,
+        "get_registration_to_icao",
+        lambda at_date=None: pl.DataFrame(
+            {"registration": ["N12345"], "icao": ["ABC123"]}
+        ),
+    )
+    monkeypatch.setattr(
+        bts_module,
+        "iata_airport_mapping",
+        lambda _catalog, _codes: pl.DataFrame(
+            {
+                "iata": ["AAA", "BBB"],
+                "airport_id": [1, 2],
+                "ident": ["KAAA", "KBBB"],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        bts_module,
+        "airport_timezone_mapping",
+        lambda _catalog: pl.DataFrame(
+            {"airport_id": [1, 2], "timezone": ["UTC", "UTC"]}
+        ),
+    )
+
+    result = _create_flights_from_bts_month(
+        2026,
+        3,
+        FakeAirportCatalog(),
+    )
+
+    assert result.select(
+        "icao",
+        "takeoff_time",
+        "landing_time",
+    ).row(0) == (
+        "abc123",
+        datetime(2026, 3, 1, 6),
+        datetime(2026, 3, 1, 6, 20),
+    )
+
+
 def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     df = pl.DataFrame(
         {
@@ -168,4 +238,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 9
+    assert bts_module.BTSFlightSource().version == 10
