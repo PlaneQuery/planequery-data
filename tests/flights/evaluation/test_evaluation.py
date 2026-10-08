@@ -177,3 +177,50 @@ def test_evaluate_asserts_icaos_are_not_null(
             test_dates=target_date,
             evaluation_cache=EvaluationCache(tmp_path / "cache"),
         )
+
+
+@pytest.mark.parametrize(
+    ("empty_source", "source_role"),
+    [
+        (BTS_SOURCE, "test_source"),
+        (SFDPS_SOURCE, "gold_source"),
+    ],
+)
+def test_evaluate_asserts_flight_sources_are_not_empty(
+    monkeypatch,
+    tmp_path,
+    empty_source,
+    source_role,
+):
+    target_date = date(2026, 3, 1)
+    noon = datetime(2026, 3, 1, 12)
+    valid_frame = flights_to_flights_df([_flight("abc123", noon)])
+    source_frames = {
+        BTS_SOURCE.name: valid_frame,
+        SFDPS_SOURCE.name: valid_frame,
+    }
+    source_frames[empty_source.name] = flights_to_flights_df([])
+
+    monkeypatch.setattr(
+        evaluation,
+        "source_flights_reader",
+        lambda source, adsb_source=None: (
+            lambda _: source_frames[source.name].clone()
+        ),
+    )
+    monkeypatch.setattr(
+        evaluation,
+        "airport_catalog_for_date",
+        _airport_catalog,
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match=rf"{source_role} contains no flights for {target_date}",
+    ):
+        evaluation.evaluate(
+            test_source=BTS_SOURCE,
+            gold_source=SFDPS_SOURCE,
+            test_dates=target_date,
+            evaluation_cache=EvaluationCache(tmp_path / "cache"),
+        )
