@@ -199,6 +199,7 @@ def _bts_month_paths(year: int, month: int) -> list[Path]:
         / "data"
         / "raw"
         / "bts"
+        / "v2"
         / f"year={source_month.year}"
         / f"month={source_month.month:02d}"
         / "T_ONTIME_REPORTING.csv"
@@ -327,7 +328,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 10
+    version: int = 11
 
     def create_flights_for_day(
         self,
