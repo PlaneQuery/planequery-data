@@ -196,18 +196,6 @@ def _gold_icao_cohort(
     )
 
 
-def _empty_comparison() -> pl.DataFrame:
-    """Return the columns needed to calculate zero-valued comparison stats."""
-    return pl.DataFrame(
-        schema={
-            "match_status": pl.String,
-            "same_takeoff_airport_id": pl.Boolean,
-            "same_landing_airport_id": pl.Boolean,
-            "same_airport_id": pl.Boolean,
-        }
-    )
-
-
 def _compare_day(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
@@ -222,8 +210,12 @@ def _compare_day(
         test_flights,
         gold_flights,
     )
-    if test_flights.is_empty() and gold_flights.is_empty():
-        return _empty_comparison()
+    assert not gold_flights.is_empty(), (
+        f"gold_source contains no flights for {target_date}"
+    )
+    assert not test_flights.is_empty(), (
+        f"test_source contains no flights for {target_date}"
+    )
 
     start = datetime(target_date.year, target_date.month, target_date.day)
     return df_flights_comparison(
