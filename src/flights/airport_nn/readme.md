@@ -90,7 +90,7 @@ Inference supports `adsblol`, `adsbx`, and `opensky`. It preserves the standard 
 and all fields except the two airport references (stable IDs and identifiers).
 Missing observations produce null airport references. Daily results use the
 canonical FlightSource layout under
-`data/flights/source=algorithm-nn/adsb_source=…/version=4/`. The model is not yet
+`data/flights/source=algorithm-nn/adsb_source=…/version=5/`. The model is not yet
 part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
 `data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.

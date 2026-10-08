@@ -42,6 +42,7 @@ MIN_FLIGHT_DISTANCE_KM = 5.0
 MIN_AIRBORNE_RUN_MESSAGES = 2
 MIN_AIRBORNE_RUN_DISTANCE_KM = 1.0
 MIN_AIRBORNE_RUN_SPEED_KT = 30
+ADSB_SEGMENTATION_CONTEXT = timedelta(days=1)
 GROUND_TRUTH_ICAOS_DATE = date(2026, 3, 1)
 ADSB_ALGORITHM_COLUMNS = [
     "time",
@@ -708,6 +709,20 @@ def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
+def _adsb_read_bounds(
+    target_date: date,
+    source: ADSBSource = ADSBSource.ADSBLOL,
+) -> tuple[datetime, datetime]:
+    """Include adjacent-day context for ADSB.lol flight segmentation."""
+    day_start, day_end = _day_bounds(target_date)
+    if ADSBSource(source) is not ADSBSource.ADSBLOL:
+        return day_start, day_end
+    return (
+        day_start - ADSB_SEGMENTATION_CONTEXT,
+        day_end + ADSB_SEGMENTATION_CONTEXT,
+    )
+
+
 def _segment_takes_off_in_window(
     segment: FlightSegment,
     start: datetime,
@@ -818,18 +833,19 @@ def create_flights_from_adsb(
 
 
 def process_icaos(
-    day_start: datetime,
-    day_end: datetime,
+    target_date: date,
+    read_start: datetime,
+    read_end: datetime,
     icaos: list[str],
     source: ADSBSource = ADSBSource.ADSBLOL,
 ) -> pl.DataFrame:
     source = ADSBSource(source)
-    df_adsb = read_adsb(day_start, day_end, icaos=icaos, source=source)
+    df_adsb = read_adsb(read_start, read_end, icaos=icaos, source=source)
     airport_catalog = _WORKER_AIRPORT_CATALOG
     assert airport_catalog is not None
     flights_df = create_flights_from_adsb(
         df_adsb,
-        day_start.date(),
+        target_date,
         airport_catalog,
     )
     if len(flights_df) == 0:
@@ -876,10 +892,10 @@ def create_flights_for_day(
     source = ADSBSource(source)
     print(f"number of workers: {max_workers}")
 
-    day_start, day_end = _day_bounds(target_date)
+    read_start, read_end = _adsb_read_bounds(target_date, source)
     ensure_adsb_source_data(
-        day_start,
-        day_end,
+        read_start,
+        read_end,
         source=source,
     )
     if pia_or_american_ladd_only:
@@ -925,8 +941,9 @@ def create_flights_for_day(
         futures = [
             executor.submit(
                 process_icaos,
-                day_start,
-                day_end,
+                target_date,
+                read_start,
+                read_end,
                 icao_list,
                 source,
             )

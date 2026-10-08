@@ -23,7 +23,7 @@ from planequery_data.utils import date_range
 @dataclass(frozen=True)
 class AlgorithmNearestFlightSource(ADSBFlightSource):
     name: str = "algorithm-nearest"
-    version: int = 6
+    version: int = 7
 
     def adsb_icao_batch_size(self) -> int:
         return 500
@@ -32,7 +32,14 @@ class AlgorithmNearestFlightSource(ADSBFlightSource):
         return segmentation.ADSB_ALGORITHM_COLUMNS
 
     def adsb_read_interval(self, dt: date) -> tuple[datetime, datetime]:
-        return segmentation._day_bounds(dt)
+        return segmentation._adsb_read_bounds(dt)
+
+    def adsb_read_interval_for_source(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[datetime, datetime]:
+        return segmentation._adsb_read_bounds(dt, adsb_src)
 
     def create_flights_for_day(
         self,
