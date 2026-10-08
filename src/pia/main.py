@@ -4,8 +4,10 @@
 from datetime import date, datetime, time
 import polars as pl
 
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.filters import pia_or_american_ladd_icao
-from flights.algorithm import get_flights_range
+from flights.algorithm import AlgorithmNearestFlightSource
+from flights.flight_source import get_flights_range
 from flights.flight_type import flights_df_to_flights
 from pia.resolver import resolve_pia_mappings
 
@@ -81,7 +83,12 @@ def fix_route_mismatches(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 def main(start_date, end_date):
-    df_flights = get_flights_range(start_date, end_date)
+    df_flights = get_flights_range(
+        AlgorithmNearestFlightSource(),
+        start_date,
+        end_date,
+        ADSBSource.ADSBLOL,
+    )
     df_flights = df_flights.filter(pia_or_american_ladd_icao())
     df_flights = df_flights.filter(pl.col("icao").str.len_chars() == 6)
     mappings, _ = resolve_pia_mappings(flights_df_to_flights(df_flights))

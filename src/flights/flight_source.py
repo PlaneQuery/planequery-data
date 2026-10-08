@@ -23,6 +23,7 @@ from flights.flight_manifest import (
     FlightManifest,
     flight_manifest_path,
 )
+from planequery_data.utils import date_range
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,17 @@ class ADSBFlightSource(FlightSource):
         dt: date,
     ) -> tuple[date | datetime, datetime | None]:
         return dt, None
+
+    def adsb_read_interval_for_source(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[date | datetime, datetime | None]:
+        """Return the provider-specific interval needed to build one flight day."""
+        reusable_source = self.reusable_flight_source()
+        if reusable_source is not None:
+            return reusable_source.adsb_read_interval_for_source(dt, adsb_src)
+        return self.adsb_read_interval(dt)
 
     def reusable_flight_source(self) -> ADSBFlightSource | None:
         """Flights from the same ADS-B provider that can replace segmentation."""
@@ -148,7 +160,7 @@ def _create_adsb_batch(
         if reused
         else source.adsb_columns()
     )
-    start, end = source.adsb_read_interval(dt)
+    start, end = source.adsb_read_interval_for_source(dt, adsb_src)
     kwargs = {
         "source": adsb_src,
         "icaos": list(task.icaos),
@@ -368,7 +380,7 @@ def _create_flights_for_catalog(
                 adsb_src,
                 batch_workers,
             )
-        start, end = source.adsb_read_interval(dt)
+        start, end = source.adsb_read_interval_for_source(dt, adsb_src)
         columns = source.adsb_columns()
         batch_size = source.adsb_icao_batch_size()
         source_icaos = source.adsb_icaos(dt, airport_catalog)
@@ -483,6 +495,27 @@ def get_flights(
         use_cache,
         batch_workers,
     )
+
+
+def get_flights_range(
+    source: FlightSource,
+    start_date: date,
+    end_date: date,
+    adsb_src: ADSBSource | None = None,
+    use_cache: bool = True,
+    batch_workers: int = 1,
+) -> pl.DataFrame:
+    """Get flights for each day in ``[start_date, end_date)``."""
+    return pl.concat([
+        get_flights(
+            source,
+            target_date,
+            adsb_src,
+            use_cache,
+            batch_workers,
+        )
+        for target_date in date_range(start_date, end_date)
+    ])
 
 
 def write_flights(

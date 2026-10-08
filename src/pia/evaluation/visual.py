@@ -27,8 +27,10 @@ os.environ.setdefault("OUTPUT_DIR", str(Path("output").resolve()))
 import plotly.graph_objects as go
 import polars as pl
 
+from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.filters import pia_or_american_ladd_icao
-from flights.algorithm import get_flights_range
+from flights.algorithm import AlgorithmNearestFlightSource
+from flights.flight_source import get_flights_range
 from flights.flight_type import (
     Flight,
     FlightIndex,
@@ -451,7 +453,12 @@ def load_real_flight_case(
     )
     relevant_icaos = set(pia_to_real_icao) | set(pia_to_real_icao.values())
     frame = (
-        get_flights_range(start_date, end_date)
+        get_flights_range(
+            AlgorithmNearestFlightSource(),
+            start_date,
+            end_date,
+            ADSBSource.ADSBLOL,
+        )
         .filter(pia_or_american_ladd_icao())
         .filter(pl.col("icao").str.len_chars() == 6)
         .filter(pl.col("icao").is_in(relevant_icaos))
@@ -495,7 +502,12 @@ def main() -> Path:
     args = _parse_args()
     flights = load_real_flight_case(args.start_date, args.end_date)
     if args.icao is not None:
-        df_flights = get_flights_range(args.start_date, args.end_date)
+        df_flights = get_flights_range(
+            AlgorithmNearestFlightSource(),
+            args.start_date,
+            args.end_date,
+            ADSBSource.ADSBLOL,
+        )
         df_flights = df_flights.filter(pia_or_american_ladd_icao())
         flights = flights_df_to_flights(df_flights)
         flight_index = FlightIndex(flights)

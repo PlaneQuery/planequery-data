@@ -17,6 +17,7 @@ from flights.flight_source import (
     ADSBFlightSource,
     NonADSBFlightSource,
     get_flights,
+    get_flights_range,
     flight_path,
     write_flights,
 )
@@ -115,7 +116,7 @@ def test_create_flights_writes_single_bts_day_to_canonical_path(
     assert pl.read_parquet(path).equals(expected)
     assert path == (
         tmp_path
-        / "data/flights/source=bts/version=8"
+        / "data/flights/source=bts/version=9"
         / "year=2026/month=03/day=01/data.parquet"
     )
     assert FlightManifest.read(
@@ -134,8 +135,47 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
 
     assert path == Path(
         tmp_path,
-        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=6",
+        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=7",
         "year=2026/month=03/day=01/data.parquet",
+    )
+
+
+@pytest.mark.parametrize(
+    ("adsb_source", "expected"),
+    [
+        (
+            ADSBSource.ADSBLOL,
+            (datetime(2026, 2, 28), datetime(2026, 3, 3)),
+        ),
+        (
+            ADSBSource.ADSBX,
+            (datetime(2026, 3, 1), datetime(2026, 3, 2)),
+        ),
+        (
+            ADSBSource.OPENSKY,
+            (datetime(2026, 3, 1), datetime(2026, 3, 2)),
+        ),
+    ],
+)
+def test_algorithm_sources_use_provider_specific_read_intervals(
+    tmp_path,
+    adsb_source,
+    expected,
+):
+    target_date = date(2026, 3, 1)
+
+    assert (
+        AlgorithmNearestFlightSource().adsb_read_interval_for_source(
+            target_date,
+            adsb_source,
+        )
+        == expected
+    )
+    assert (
+        AlgorithmNNFlightSource(
+            model_path=tmp_path / "model.pt"
+        ).adsb_read_interval_for_source(target_date, adsb_source)
+        == expected
     )
 
 
@@ -165,6 +205,37 @@ def test_get_flights_dispatches_adsb_source_and_interval(monkeypatch, tmp_path):
         )
     ]
     assert result.get_column("icao").to_list() == ["abc123"]
+
+
+def test_get_flights_range_gets_each_day_and_excludes_end_date(monkeypatch):
+    source = DummyADSBFlightSource()
+    calls = []
+
+    def get_day(source_arg, target_date, adsb_src, use_cache, batch_workers):
+        calls.append(
+            (source_arg, target_date, adsb_src, use_cache, batch_workers)
+        )
+        return pl.DataFrame({"date": [target_date]})
+
+    monkeypatch.setattr(flight_source_module, "get_flights", get_day)
+
+    result = get_flights_range(
+        source,
+        date(2026, 3, 1),
+        date(2026, 3, 3),
+        ADSBSource.ADSBX,
+        use_cache=False,
+        batch_workers=4,
+    )
+
+    assert result.get_column("date").to_list() == [
+        date(2026, 3, 1),
+        date(2026, 3, 2),
+    ]
+    assert calls == [
+        (source, date(2026, 3, 1), ADSBSource.ADSBX, False, 4),
+        (source, date(2026, 3, 2), ADSBSource.ADSBX, False, 4),
+    ]
 
 
 def test_get_flights_reads_bounded_complete_aircraft_batches(monkeypatch, tmp_path):

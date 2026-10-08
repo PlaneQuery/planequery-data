@@ -10,6 +10,7 @@ import polars as pl
 
 from flights.providers import bts as bts_module
 from flights.providers.bts import (
+    _bts_month_paths,
     _compute_bts_timestamps,
     create_flights_from_bts,
     iata_airport_mapping,
@@ -19,6 +20,18 @@ from flights.providers.bts import (
 @dataclass(frozen=True)
 class FakeAirportCatalog:
     name: str = "test-catalog"
+
+
+def test_bts_month_paths_include_both_adjacent_months(monkeypatch, tmp_path):
+    monkeypatch.setattr(bts_module, "OUTPUT_DIR", tmp_path)
+
+    paths = _bts_month_paths(2026, 1)
+
+    assert [path.relative_to(tmp_path).as_posix() for path in paths] == [
+        "data/raw/bts/year=2025/month=12/T_ONTIME_REPORTING.csv",
+        "data/raw/bts/year=2026/month=01/T_ONTIME_REPORTING.csv",
+        "data/raw/bts/year=2026/month=02/T_ONTIME_REPORTING.csv",
+    ]
 
 
 def test_iata_airport_mapping_omits_unknown_non_null_code():
@@ -155,4 +168,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 8
+    assert bts_module.BTSFlightSource().version == 9
