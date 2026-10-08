@@ -116,7 +116,7 @@ def test_create_flights_writes_single_bts_day_to_canonical_path(
     assert pl.read_parquet(path).equals(expected)
     assert path == (
         tmp_path
-        / "data/flights/source=bts/version=10"
+        / "data/flights/source=bts/version=12"
         / "year=2026/month=03/day=01/data.parquet"
     )
     assert FlightManifest.read(
