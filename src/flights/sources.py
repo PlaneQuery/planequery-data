@@ -7,6 +7,7 @@ from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
+from flights.verified.bts_verified import BTSVerifiedFlightSource
 
 
 ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
@@ -15,6 +16,7 @@ ADSBX_SOURCE = ADSBXPublishedFlightSource()
 BTS_SOURCE = BTSFlightSource()
 EUROCONTROL_SOURCE = EurocontrolFlightSource()
 GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
+BTS_VERIFIED_SOURCE = BTSVerifiedFlightSource()
 MIKE_SOURCE = MikeFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
@@ -25,6 +27,7 @@ FLIGHT_SOURCES = (
     ADSBX_SOURCE,
     BTS_SOURCE,
     EUROCONTROL_SOURCE,
+    BTS_VERIFIED_SOURCE,
     GROUND_TRUTH_SOURCE,
     MIKE_SOURCE,
     OPENSKY_SOURCE,
