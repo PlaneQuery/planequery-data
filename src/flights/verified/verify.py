@@ -3,7 +3,7 @@ import polars as pl
 from flights.flight_type import Flight, flights_df_to_flights
 
 
-def process_icao(flights: list[Flight]): # TODO: Add this check to verification.
+def process_icao(flights: list[Flight]): # TODO: Add this check to verification. PRINT HOW MANY ICAOS THIS ELIMINATES
     for i in range(len(flights) - 1):
         if i > 0:
             f0 = flights[i - 1]
