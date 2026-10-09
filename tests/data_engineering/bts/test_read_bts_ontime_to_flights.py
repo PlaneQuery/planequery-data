@@ -77,6 +77,25 @@ def test_diversion_report_recognizes_positive_counts_without_dropping_zero_or_nu
     ]
 
 
+def test_bts_callsign_uses_current_faa_carrier_designators():
+    result = pl.DataFrame(
+        {
+            "op_unique_carrier": ["AA", "AS", "MQ", "OH", "YX", "XX", None],
+            "op_carrier_fl_num": [123, 825, 450, 12, 3456, 9, 10],
+        }
+    ).select(bts_module._bts_callsign_expr())
+
+    assert result.get_column("callsign").to_list() == [
+        "AAL123",
+        "ASA825",
+        "ENY450",
+        "JIA12",
+        "RPA3456",
+        None,
+        None,
+    ]
+
+
 def test_compute_bts_timestamps_does_not_roll_one_minute_early_departure_to_next_day():
     timestamps = _compute_bts_timestamps(
         {
@@ -213,10 +232,12 @@ def test_create_flights_from_bts_month_keeps_short_flights(monkeypatch, tmp_path
 
     assert result.select(
         "icao",
+        "callsign",
         "takeoff_time",
         "landing_time",
     ).row(0) == (
         "abc123",
+        "AAL123",
         datetime(2026, 3, 1, 6),
         datetime(2026, 3, 1, 6, 20),
     )
@@ -553,6 +574,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
 
     assert result.select(
         "icao",
+        "callsign",
         "registration",
         "takeoff_airport_ident",
         "landing_airport_ident",
@@ -561,6 +583,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
     ).rows() == [
         (
             "abc111",
+            "AAL123",
             "N111AA",
             "KAAA",
             "KBBB",
@@ -569,6 +592,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
         ),
         (
             "abc222",
+            "AAL123",
             "N222BB",
             "KBBB",
             "KCCC",
@@ -610,4 +634,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 12
+    assert bts_module.BTSFlightSource().version == 13
