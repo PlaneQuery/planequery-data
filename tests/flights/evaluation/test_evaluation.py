@@ -44,6 +44,31 @@ def _airport_catalog(target_date: date):
     )
 
 
+def test_compare_day_filters_both_sources_to_buffered_bounds(monkeypatch):
+    target_date = date(2026, 3, 1)
+    start = datetime(2026, 3, 1, 0, 30)
+    end = datetime(2026, 3, 1, 23, 30)
+    flights = flights_to_flights_df([
+        _flight("early", start - timedelta(milliseconds=1)),
+        _flight("start", start),
+        _flight("end", end - timedelta(hours=1)),
+        _flight("late", end - timedelta(hours=1) + timedelta(milliseconds=1)),
+        _flight("overnight", end),
+    ])
+    catalog = _airport_catalog(target_date)
+
+    def compare(test, gold, start_dt, end_dt, airport_catalog, **kwargs):
+        assert test.get_column("icao").to_list() == ["start", "end"]
+        assert gold.get_column("icao").to_list() == ["start", "end"]
+        assert start_dt == start
+        assert end_dt == end
+        assert airport_catalog is catalog
+        return test
+
+    monkeypatch.setattr(evaluation, "df_flights_comparison", compare)
+    evaluation._compare_day(flights, flights, target_date, catalog)
+
+
 def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
     monkeypatch,
     tmp_path,
