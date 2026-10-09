@@ -168,10 +168,17 @@ def _with_airport_nn_model(
     ]
 
 
+def _evaluation_bounds(target_date: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(target_date, datetime.min.time())
+    buffer = timedelta(minutes=30)
+    return start + buffer, start + timedelta(days=1) - buffer
+
+
 def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
+    start, end = _evaluation_bounds(target_date)
     return flights.filter(
-        (pl.col("takeoff_time").dt.date() == target_date)
-        & (pl.col("landing_time").dt.date() == target_date)
+        (pl.col("takeoff_time") >= start)
+        & (pl.col("landing_time") <= end)
     )
 
 
@@ -217,12 +224,12 @@ def _compare_day(
         f"test_source contains no flights for {target_date}"
     )
 
-    start = datetime(target_date.year, target_date.month, target_date.day)
+    start, end = _evaluation_bounds(target_date)
     return df_flights_comparison(
         test_flights,
         gold_flights,
         start,
-        start + timedelta(days=1),
+        end,
         airport_catalog,
         compare_airports=False,
     )
