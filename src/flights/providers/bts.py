@@ -54,10 +54,56 @@ DIVERSION_COLUMN_DTYPES = {
 }
 
 
-OPENFLIGHTS_AIRLINES_PATH = "/Volumes/T2-SSD/planequery/data/raw/openflights/airlines.dat.txt"
+# BTS operating-carrier codes to their FAA/ICAO three-letter designators.
+# Keep this explicit: the previously referenced OpenFlights data is stale for
+# current regional carriers such as Envoy (MQ), PSA (OH), and Republic (YX).
+# Source: https://www.aspm.faa.gov/aspmhelp/index/ASQP__Carrier_Codes_and_Names.html
+BTS_CARRIER_ICAO_CODES = {
+    "9E": "EDV",
+    "AA": "AAL",
+    "AS": "ASA",
+    "AX": "LOF",
+    "B6": "JBU",
+    "C5": "UCA",
+    "CP": "CPZ",
+    "DL": "DAL",
+    "EM": "CFS",
+    "EV": "ASQ",
+    "F9": "FFT",
+    "G4": "AAY",
+    "G7": "GJS",
+    "HA": "HAL",
+    "KS": "NLA",
+    "MQ": "ENY",
+    "NK": "NKS",
+    "OH": "JIA",
+    "OO": "SKW",
+    "PT": "PDT",
+    "QX": "QXE",
+    "UA": "UAL",
+    "WN": "SWA",
+    "YV": "ASH",
+    "YX": "RPA",
+    "ZW": "AWI",
+}
 
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 MAX_DIVERSION_LEG_DURATION = timedelta(hours=20)
+
+
+def _bts_callsign_expr() -> pl.Expr:
+    """Build the expected ATC callsign from BTS operating-flight fields."""
+    carrier_designator = pl.col("op_unique_carrier").replace_strict(
+        BTS_CARRIER_ICAO_CODES,
+        default=None,
+        return_dtype=pl.String,
+    )
+    flight_number = (
+        pl.col("op_carrier_fl_num")
+        .cast(pl.Int64, strict=False)
+        .cast(pl.String)
+    )
+    return pl.concat_str([carrier_designator, flight_number]).alias("callsign")
 
 
 def _hhmm_to_minutes(value: int) -> int:
@@ -328,13 +374,16 @@ def _diverted_flight_rows(
         leg_takeoff: datetime,
         leg_landing: datetime,
     ) -> dict:
-        return {
+        flight = {
             "registration": leg_registration,
             "origin": leg_origin,
             "dest": leg_destination,
             "takeoff_time": leg_takeoff,
             "landing_time": leg_landing,
         }
+        if "callsign" in row:
+            flight["callsign"] = row["callsign"]
+        return flight
 
     if final_landing_time is not None:
         first_diversion = diversions[0]
@@ -701,7 +750,6 @@ def _join_bts_identifiers(
 
 def _to_bts_flight_schema(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(
-        pl.lit(None).cast(pl.String).alias("callsign"),
         pl.lit(False).alias("pia"),
         pl.lit(False).alias("ladd"),
         pl.lit(False).alias("military"),
@@ -740,7 +788,8 @@ def _create_flights_from_bts_month(
         .str.to_datetime(format="%m/%d/%Y %I:%M:%S %p", strict=False)
         .dt.strftime("%Y-%m-%d")
         .str.to_date(format="%Y-%m-%d")
-        .alias("fl_date")
+        .alias("fl_date"),
+        _bts_callsign_expr(),
     )
 
     registration_mapping = get_registration_to_icao(
@@ -828,6 +877,7 @@ def _create_flights_from_bts_month(
             "dest": pl.String,
             "takeoff_time": pl.Datetime("us"),
             "landing_time": pl.Datetime("us"),
+            "callsign": pl.String,
         },
     )
     diverted_df = _join_bts_identifiers(
@@ -859,7 +909,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 12
+    version: int = 13
 
     def create_flights_for_day(
         self,
