@@ -7,8 +7,8 @@ from flights.flight_source import NonADSBFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 from flights.sources import FLIGHT_SOURCES_BY_NAME
-from flights.verified import bts_verified
-from flights.verified.bts_verified import VerifiedFlightSource
+from flights.verified import source
+from flights.verified.source import VerifiedFlightSource
 
 
 def _flights(callsign: str) -> pl.DataFrame:
@@ -46,22 +46,22 @@ def test_verified_source_uses_selected_original_source(
         return expected
 
     monkeypatch.setattr(
-        bts_verified,
+        source,
         "get_flights",
         get_source_flights,
     )
     monkeypatch.setattr(
-        bts_verified,
+        source,
         "_check_flights_in_us_faa_airspace",
         lambda df, catalog: ["abc123"],
     )
     monkeypatch.setattr(
-        bts_verified,
+        source,
         "read_adsb",
         lambda date_arg, *, icaos: pl.DataFrame(),
     )
     monkeypatch.setattr(
-        bts_verified,
+        source,
         "get_callsign_history",
         lambda df: pl.DataFrame(
             {"icao": ["abc123"] * 4, "callsign": ["TEST1"] * 4}
@@ -89,7 +89,7 @@ def test_source_callsigns_must_match_adsb_history():
         }
     )
 
-    assert bts_verified._validate_callsign_history(flights, history) == []
+    assert source._validate_callsign_history(flights, history) == []
 
 
 def test_verified_source_rejects_unsupported_original_source():

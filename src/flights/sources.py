@@ -7,7 +7,7 @@ from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
-from flights.verified.bts_verified import VerifiedFlightSource
+from flights.verified.source import VerifiedFlightSource
 
 # TODO: Probably a much better way of handling this, that makes imports easier etc..
 ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
