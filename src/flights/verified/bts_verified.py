@@ -23,6 +23,23 @@ def validation(df_history: pl.DataFrame, df_flights: pl.DataFrame): # TODO: move
         valid_icaos.append(icao)
     return valid_icaos
 
+def check_consecutive_airports(df: pl.DataFrame):
+    valid_icaos = (
+    df
+    .group_by("icao", maintain_order=True)
+    .agg(
+        pl.col("landing_airport_ident")
+        .shift(1)
+        .eq_missing(pl.col("takeoff_airport_ident"))
+        .slice(1)
+        .all()
+        .alias("is_valid")
+    )
+    .filter(pl.col("is_valid"))
+    .get_column("icao")
+    .to_list()
+    )
+    return valid_icaos
 @dataclass(frozen=True)
 class BTSVerifiedFlightSource(NonADSBFlightSource):
     name: str = "bts_verified"
@@ -30,9 +47,24 @@ class BTSVerifiedFlightSource(NonADSBFlightSource):
 
     def create_flights_for_day(self, dt, airport_catalog: AirportCatalogView) -> pl.DataFrame:
         df_flights = get_flights(BTSFlightSource(), dt)
+        assert df_flights.select(["icao", "takeoff_time"]).equals(
+        df_flights.sort(["icao", "takeoff_time"]).select(["icao", "takeoff_time"])
+        )
+        num_icaos = df_flights.get_column("icao").n_unique()
+        valid_icaos = check_consecutive_airports(df_flights)
+        print(f"Filtered {num_icaos - len(valid_icaos)} ICAOs out of {num_icaos} due to non-consecutive airports")
+        df_flights = df_flights.filter(pl.col("icao").is_in(valid_icaos))
         icaos = df_flights.get_column("icao").unique().to_list()
         df_adsb = read_adsb(dt, icaos=icaos)
         df_history = get_callsign_history(df_adsb)
         valid_icaos = validation(df_history, df_flights)
         df_verified = df_flights.filter(pl.col("icao").is_in(valid_icaos))
+        print(f"Filtered {len(icaos) - len(valid_icaos)} ICAOs out of {len(icaos)} due to callsign history mismatch")
         return df_verified
+
+if __name__ == "__main__":
+    from airports.catalog import AirportCatalogView
+    from datetime import date
+    airport_catalog = None
+    df_verified = BTSVerifiedFlightSource().create_flights_for_day(date(2026, 3, 1), airport_catalog)
+    print(df_verified)
