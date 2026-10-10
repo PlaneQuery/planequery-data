@@ -1,12 +1,23 @@
+from collections.abc import Callable
 from dataclasses import dataclass
+
 import polars as pl
+
 from adsb.adsb_callsign_history import get_callsign_history
 from airports.catalog import AirportCatalogView
+from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import read_adsb
+from flights.evaluation.american_evals import (
+    add_airspace_columns,
+    us_faa_airspace_to_us_faa_airspace_expr,
+)
 from flights.flight_source import NonADSBFlightSource, get_flights
 from flights.providers.bts import BTSFlightSource
 
-def validation(df_history: pl.DataFrame, df_flights: pl.DataFrame): # TODO: move to bts verfied/refernce file
+def _validate_callsign_history(
+    df_flights: pl.DataFrame,
+    df_history: pl.DataFrame,
+) -> list[str]:  # TODO: move to bts verfied/refernce file
     df_history = df_history.select(["icao", "callsign"])
     df_flights = df_flights.select(["icao", "callsign"])
     icaos = df_flights.get_column("icao").unique().to_list()
@@ -23,7 +34,7 @@ def validation(df_history: pl.DataFrame, df_flights: pl.DataFrame): # TODO: move
         valid_icaos.append(icao)
     return valid_icaos
 
-def check_consecutive_airports(df: pl.DataFrame):
+def _check_consecutive_airports(df: pl.DataFrame):
     valid_icaos = (
     df
     .group_by("icao", maintain_order=True)
@@ -40,6 +51,36 @@ def check_consecutive_airports(df: pl.DataFrame):
     .to_list()
     )
     return valid_icaos
+
+def _check_flights_in_us_faa_airspace(
+    df: pl.DataFrame,
+    airport_catalog: AirportCatalogView,
+) -> list[str]:
+    df = add_airspace_columns(df, airport_catalog)
+    return (
+        df.group_by("icao", maintain_order=True)
+        .agg(
+            us_faa_airspace_to_us_faa_airspace_expr()
+            .all()
+            .alias("all_flights_in_us_faa_airspace")
+        )
+        .filter(pl.col("all_flights_in_us_faa_airspace"))
+        .get_column("icao")
+        .to_list()
+    )
+
+def _filter_icaos(
+    df_flights: pl.DataFrame,
+    func: Callable[..., list[str]],
+    *args: object,
+) -> pl.DataFrame:
+    icaos = df_flights.get_column("icao").unique().to_list()
+    valid_icaos = func(df_flights, *args)
+    df_flights = df_flights.filter(pl.col("icao").is_in(valid_icaos))
+    print(f"Filtered {len(icaos) - len(valid_icaos)} ICAOs out of {len(icaos)} due to {func.__name__}")
+    return df_flights
+
+
 @dataclass(frozen=True)
 class BTSVerifiedFlightSource(NonADSBFlightSource):
     name: str = "bts_verified"
@@ -50,21 +91,21 @@ class BTSVerifiedFlightSource(NonADSBFlightSource):
         assert df_flights.select(["icao", "takeoff_time"]).equals(
         df_flights.sort(["icao", "takeoff_time"]).select(["icao", "takeoff_time"])
         )
-        num_icaos = df_flights.get_column("icao").n_unique()
-        valid_icaos = check_consecutive_airports(df_flights)
-        print(f"Filtered {num_icaos - len(valid_icaos)} ICAOs out of {num_icaos} due to non-consecutive airports")
-        df_flights = df_flights.filter(pl.col("icao").is_in(valid_icaos))
+        df_flights = _filter_icaos(df_flights, _check_consecutive_airports)
+        df_flights = _filter_icaos(
+            df_flights,
+            _check_flights_in_us_faa_airspace,
+            airport_catalog,
+        )
         icaos = df_flights.get_column("icao").unique().to_list()
         df_adsb = read_adsb(dt, icaos=icaos)
         df_history = get_callsign_history(df_adsb)
-        valid_icaos = validation(df_history, df_flights)
-        df_verified = df_flights.filter(pl.col("icao").is_in(valid_icaos))
-        print(f"Filtered {len(icaos) - len(valid_icaos)} ICAOs out of {len(icaos)} due to callsign history mismatch")
-        return df_verified
+        return _filter_icaos(df_flights, _validate_callsign_history, df_history)
 
 if __name__ == "__main__":
     from airports.catalog import AirportCatalogView
     from datetime import date
-    airport_catalog = None
-    df_verified = BTSVerifiedFlightSource().create_flights_for_day(date(2026, 3, 1), airport_catalog)
+    dt = date(2026, 3, 1)
+    airport_catalog = airport_catalog_for_date(dt)
+    df_verified = BTSVerifiedFlightSource().create_flights_for_day(dt, airport_catalog)
     print(df_verified)
