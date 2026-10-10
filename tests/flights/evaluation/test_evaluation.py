@@ -44,16 +44,16 @@ def _airport_catalog(target_date: date):
     )
 
 
-def test_compare_day_filters_both_sources_to_buffered_bounds(monkeypatch):
+def test_compare_day_filters_flights_to_target_date(monkeypatch):
     target_date = date(2026, 3, 1)
-    start = datetime(2026, 3, 1, 0, 30)
-    end = datetime(2026, 3, 1, 23, 30)
+    start = datetime(2026, 3, 1)
+    end = start + timedelta(days=1)
     flights = flights_to_flights_df([
-        _flight("early", start - timedelta(milliseconds=1)),
+        _flight("previous-day", start - timedelta(microseconds=1)),
         _flight("start", start),
-        _flight("end", end - timedelta(hours=1)),
-        _flight("late", end - timedelta(hours=1) + timedelta(milliseconds=1)),
-        _flight("overnight", end),
+        _flight("end", end - timedelta(hours=1, microseconds=1)),
+        _flight("overnight", end - timedelta(hours=1)),
+        _flight("next-day", end),
     ])
     catalog = _airport_catalog(target_date)
 

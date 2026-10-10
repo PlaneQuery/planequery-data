@@ -168,18 +168,12 @@ def _with_airport_nn_model(
     ]
 
 
-def _evaluation_bounds(target_date: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(target_date, datetime.min.time())
-    buffer = timedelta(minutes=30)
-    return start + buffer, start + timedelta(days=1) - buffer
-
-
 def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
-    start, end = _evaluation_bounds(target_date)
     return flights.filter(
-        (pl.col("takeoff_time") >= start)
-        & (pl.col("landing_time") <= end)
+        (pl.col("takeoff_time").dt.date() == target_date)
+        & (pl.col("landing_time").dt.date() == target_date)
     )
+
 
 
 def _assert_no_null_icaos(flights: pl.DataFrame, source_role: str) -> None:
@@ -223,8 +217,19 @@ def _compare_day(
     assert not test_flights.is_empty(), (
         f"test_source contains no flights for {target_date}"
     )
+    # assert test_flights.select(
+    #   (pl.col("takeoff_time").dt.date() == target_date)
+    #   .fill_null(False)
+    #   .all()
+    # ).item(), f"Expected all flights to take off on {target_date}"
+    assert gold_flights.select(
+      (pl.col("takeoff_time").dt.date() == target_date)
+      .fill_null(False)
+      .all()
+    ).item(), f"Expected all flights to take off on {target_date}"
 
-    start, end = _evaluation_bounds(target_date)
+    start = datetime(target_date.year, target_date.month, target_date.day)
+    end = start + timedelta(days=1)
     return df_flights_comparison(
         test_flights,
         gold_flights,
