@@ -7,7 +7,7 @@ from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
-from flights.verified.bts_verified import BTSVerifiedFlightSource
+from flights.verified.bts_verified import VerifiedFlightSource
 
 
 ALGORITHM_NEAREST_SOURCE = AlgorithmNearestFlightSource()
@@ -16,10 +16,11 @@ ADSBX_SOURCE = ADSBXPublishedFlightSource()
 BTS_SOURCE = BTSFlightSource()
 EUROCONTROL_SOURCE = EurocontrolFlightSource()
 GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
-BTS_VERIFIED_SOURCE = BTSVerifiedFlightSource()
+BTS_VERIFIED_SOURCE = VerifiedFlightSource(BTS_SOURCE)
 MIKE_SOURCE = MikeFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
+SFDPS_VERIFIED_SOURCE = VerifiedFlightSource(SFDPS_SOURCE)
 
 FLIGHT_SOURCES = (
     ALGORITHM_NEAREST_SOURCE,
@@ -32,6 +33,7 @@ FLIGHT_SOURCES = (
     MIKE_SOURCE,
     OPENSKY_SOURCE,
     SFDPS_SOURCE,
+    SFDPS_VERIFIED_SOURCE,
 )
 FLIGHT_SOURCES_BY_NAME = {source.name: source for source in FLIGHT_SOURCES}
 assert len(FLIGHT_SOURCES_BY_NAME) == len(FLIGHT_SOURCES)

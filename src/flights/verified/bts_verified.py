@@ -5,7 +5,7 @@ import polars as pl
 
 from adsb.adsb_callsign_history import get_callsign_history
 from airports.catalog import AirportCatalogView
-from airports.runtime import airport_catalog_for_date
+
 from data_engineering.adsb.read_adsb import read_adsb
 from flights.evaluation.american_evals import (
     add_airspace_columns,
@@ -13,6 +13,7 @@ from flights.evaluation.american_evals import (
 )
 from flights.flight_source import NonADSBFlightSource, get_flights
 from flights.providers.bts import BTSFlightSource
+from flights.providers.sfdps import SFDPSFlightSource
 
 def _validate_callsign_history(
     df_flights: pl.DataFrame,
@@ -81,13 +82,21 @@ def _filter_icaos(
     return df_flights
 
 
-@dataclass(frozen=True)
-class BTSVerifiedFlightSource(NonADSBFlightSource):
-    name: str = "bts_verified"
-    version: int = 1
+@dataclass(frozen=True, init=False)
+class VerifiedFlightSource(NonADSBFlightSource):
+    source: NonADSBFlightSource
+
+    def __init__(self, source: NonADSBFlightSource):
+        if not isinstance(source, (BTSFlightSource, SFDPSFlightSource)):
+            raise ValueError(
+                "VerifiedFlightSource only supports BTS and SFDPS sources"
+            )
+        object.__setattr__(self, "name", f"{source.name}-verified")
+        object.__setattr__(self, "version", 1)
+        object.__setattr__(self, "source", source)
 
     def create_flights_for_day(self, dt, airport_catalog: AirportCatalogView) -> pl.DataFrame:
-        df_flights = get_flights(BTSFlightSource(), dt)
+        df_flights = get_flights(self.source, dt)
         assert df_flights.select(["icao", "takeoff_time"]).equals(
         df_flights.sort(["icao", "takeoff_time"]).select(["icao", "takeoff_time"])
         )
@@ -102,10 +111,14 @@ class BTSVerifiedFlightSource(NonADSBFlightSource):
         df_history = get_callsign_history(df_adsb)
         return _filter_icaos(df_flights, _validate_callsign_history, df_history)
 
+
+
 if __name__ == "__main__":
+    from flights.sources import BTS_SOURCE
+    from airports.runtime import airport_catalog_for_date
     from airports.catalog import AirportCatalogView
     from datetime import date
     dt = date(2026, 3, 1)
     airport_catalog = airport_catalog_for_date(dt)
-    df_verified = BTSVerifiedFlightSource().create_flights_for_day(dt, airport_catalog)
+    df_verified = VerifiedFlightSource(BTS_SOURCE).create_flights_for_day(dt, airport_catalog)
     print(df_verified)
