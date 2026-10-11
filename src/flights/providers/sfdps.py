@@ -1,6 +1,6 @@
 import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import polars as pl
 
@@ -120,7 +120,12 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
-    df = _read_sfdps_for_day(current_day)
+    # Arrival messages can arrive after midnight. Combine each GUFI's history
+    # before reconstructing flights so departure state survives the boundary.
+    df = pl.concat([
+        _read_sfdps_for_day(current_day),
+        _read_sfdps_for_day(current_day + timedelta(days=1)),
+    ]).sort(["gufi", "timestamp"])
     df = df.group_by("gufi").map_groups(gufi_state_machine)
     df = (
         df.rename(
@@ -149,12 +154,7 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
 
 
 def filter_sfdps_flights(df: pl.DataFrame, current_date: datetime) -> pl.DataFrame:
-    day_start = current_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    df = df.filter(
-        (pl.col("takeoff_time").dt.date() == current_date.date())
-        & (pl.col("landing_time").dt.date() == current_date.date())
-        & (pl.col("takeoff_time") != day_start)
-    )
+    df = df.filter(pl.col("takeoff_time").dt.date() == current_date.date())
     df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
     df = df.filter(pl.col("flight_duration") > pl.duration(minutes=20))
     df = df.drop("flight_duration")
@@ -349,6 +349,9 @@ def create_sfdps_flights_day(
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
     assert target_date not in _missing_sfdps_days()
+    assert target_date + timedelta(days=1) not in _missing_sfdps_days(), (
+        "SFDPS flight reconstruction requires the following day's logs"
+    )
     assert target_date >= date(2026, 1, 1)
     day_dt = datetime(target_date.year, target_date.month, target_date.day)
     df_flights = sfdps_to_flights(day_dt)
@@ -365,7 +368,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 5
+    version: int = 6
 
     def create_flights_for_day(
         self,
