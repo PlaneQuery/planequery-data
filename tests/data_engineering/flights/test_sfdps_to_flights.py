@@ -1,13 +1,16 @@
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 from flights.providers import sfdps
+from flights.providers.bts import BTSFlightSource
+from flights.verified.source import VerifiedFlightSource
 
 
 @dataclass(frozen=True)
@@ -144,7 +147,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 5
+    assert sfdps.SFDPSFlightSource().version == 6
 
 
 def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
@@ -186,7 +189,8 @@ def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
     ]
 
 
-def test_airline_callsign_starting_with_n_uses_callsign_icao_matching(monkeypatch):
+@pytest.mark.parametrize("landing", [datetime(2026, 3, 1, 2), datetime(2026, 3, 2, 2)])
+def test_airline_callsign_starting_with_n_uses_callsign_icao_matching(monkeypatch, landing):
     source = pl.DataFrame(
         {
             "gufi": ["gufi-1"],
@@ -195,7 +199,7 @@ def test_airline_callsign_starting_with_n_uses_callsign_icao_matching(monkeypatc
             "flightStatus": ["COMPLETED"],
             "takeoff_time": [datetime(2026, 3, 1, 1, 0)],
             "takeoff_airport_icao": ["KJFK"],
-            "landing_time": [datetime(2026, 3, 1, 2, 0)],
+            "landing_time": [landing],
             "landing_airport_icao": ["KBOS"],
             "estimated_landing_time": [None],
             "estimated_takeoff_time": [None],
@@ -244,3 +248,78 @@ def test_airline_callsign_starting_with_n_uses_callsign_icao_matching(monkeypatc
     assert result.select("icao", "callsign").to_dicts() == [
         {"icao": "a91349", "callsign": "NKS108"}
     ]
+
+
+@pytest.mark.parametrize("day", [datetime(2026, 3, 1), datetime(2026, 12, 31)])
+def test_reconstructs_overnight_flights_from_both_days(monkeypatch, day):
+    next_day = day + timedelta(days=1)
+
+    def message(gufi, timestamp, takeoff, landing):
+        return {
+            "gufi": gufi,
+            "timestamp": timestamp,
+            "callsign": "UAL123",
+            "flightStatus": "ACTIVE" if landing is None else "COMPLETED",
+            "takeoff_time": takeoff,
+            "takeoff_airport_icao": "KJFK" if takeoff is not None else None,
+            "landing_time": landing,
+            "landing_airport_icao": "KLAX",
+            "estimated_takeoff_time": None,
+            "estimated_landing_time": None,
+        }
+
+    same_day = message("same-day", day + timedelta(hours=12),
+                       day + timedelta(hours=10), day + timedelta(hours=12))
+    messages = pl.DataFrame([
+        same_day,
+        message("midnight-departure", day + timedelta(hours=1),
+                day, day + timedelta(hours=1)),
+        message("overnight", day + timedelta(hours=22),
+                day + timedelta(hours=22), None),
+        # The arrival update omits departure state: it must be carried over
+        # from the previous day's message with the same GUFI.
+        message("overnight", next_day + timedelta(hours=1),
+                None, next_day + timedelta(hours=1)),
+        {**same_day, "timestamp": next_day + timedelta(minutes=5)},
+        message("next-day-departure", next_day + timedelta(hours=3),
+                next_day + timedelta(hours=2), next_day + timedelta(hours=3)),
+        message("previous-day-departure", day + timedelta(hours=1),
+                day - timedelta(hours=2), day + timedelta(hours=1)),
+    ], schema_overrides={
+        "estimated_takeoff_time": pl.Datetime("us"),
+        "estimated_landing_time": pl.Datetime("us"),
+    })
+    read_days = []
+
+    def read_day(current_day):
+        read_days.append(current_day)
+        # Deliberately unsorted: reconstruction must order the merged history.
+        return messages.filter(pl.col("timestamp").dt.date() == current_day.date()).reverse()
+
+    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", read_day)
+    flights = sfdps.sfdps_to_flights(day)
+    result = sfdps.filter_sfdps_flights(flights, day)
+
+    assert read_days == [day, next_day]
+    assert result.height == 3
+    assert result.sort("takeoff_time").select(
+        "takeoff_time", "landing_time", "takeoff_airport_ident"
+    ).to_dicts() == [
+        {"takeoff_time": day,
+         "landing_time": day + timedelta(hours=1), "takeoff_airport_ident": "KJFK"},
+        {"takeoff_time": day + timedelta(hours=10),
+         "landing_time": day + timedelta(hours=12), "takeoff_airport_ident": "KJFK"},
+        {"takeoff_time": day + timedelta(hours=22),
+         "landing_time": next_day + timedelta(hours=1), "takeoff_airport_ident": "KJFK"},
+    ]
+
+
+def test_sfdps_requires_following_day_logs(monkeypatch):
+    monkeypatch.setattr(sfdps, "_missing_sfdps_days", lambda: {date(2026, 3, 2)})
+    with pytest.raises(AssertionError, match="following day's logs"):
+        sfdps.create_sfdps_flights_day(date(2026, 3, 1), FakeAirportCatalog())
+
+
+def test_sfdps_verified_cache_version_changes_without_changing_bts():
+    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 2
+    assert VerifiedFlightSource(BTSFlightSource()).version == 1
