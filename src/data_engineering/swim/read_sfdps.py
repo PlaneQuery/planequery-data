@@ -55,7 +55,6 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
         for c in time_cols
     ])
 
-    df = df.filter(pl.col("timestamp").dt.date() == d)
     df = df.filter(pl.col("flightStatus").is_not_null())
     df = df.sort("timestamp")
 
