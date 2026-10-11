@@ -153,7 +153,7 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
         ),
         (
             ADSBSource.OPENSKY,
-            (datetime(2026, 3, 1), datetime(2026, 3, 2)),
+            (datetime(2026, 2, 28), datetime(2026, 3, 3)),
         ),
     ],
 )

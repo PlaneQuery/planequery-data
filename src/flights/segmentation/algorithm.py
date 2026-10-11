@@ -715,13 +715,12 @@ def _adsb_read_bounds(
 ) -> tuple[datetime, datetime]:
     """Include adjacent-day context for ADSB.lol flight segmentation."""
     day_start, day_end = _day_bounds(target_date)
-    if ADSBSource(source) is not ADSBSource.ADSBLOL:
-        return day_start, day_end
-    return (
-        day_start - ADSB_SEGMENTATION_CONTEXT,
-        day_end + ADSB_SEGMENTATION_CONTEXT,
-    )
-
+    if ADSBSource(source) in [ADSBSource.ADSBLOL, ADSBSource.OPENSKY]:
+        return (
+            day_start - ADSB_SEGMENTATION_CONTEXT,
+            day_end + ADSB_SEGMENTATION_CONTEXT,
+        )
+    return day_start, day_end
 
 def _segment_takes_off_in_window(
     segment: FlightSegment,
