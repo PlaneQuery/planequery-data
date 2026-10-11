@@ -335,6 +335,64 @@ def test_no_save_adsb_downloads_rejects_non_adsb_source():
         )
 
 
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("fail", [False, True])
+def test_no_save_cleans_between_batches_and_preserves_shared_inputs(
+    monkeypatch, tmp_path, workers, fail
+):
+    from data_engineering.adsb import canonical, download_adsb_to_parquet
+    from data_engineering.adsblol import check_for_new_release
+
+    monkeypatch.setattr(canonical, "ADSB_PARQUET_ROOT", tmp_path / "processed")
+    monkeypatch.setattr(download_adsb_to_parquet, "EXTRACT_DIR", tmp_path / "extract")
+    monkeypatch.setattr(download_adsb_to_parquet, "RELEASES_DIR", tmp_path / "releases")
+    monkeypatch.setattr(check_for_new_release, "prepare_releases_for_run", lambda years: None)
+    provider = ADSBSource.ADSBLOL
+    existing = cli._downloaded_adsb_paths(provider, [date(2026, 2, 28)])[0]
+    existing.mkdir(parents=True)
+    (existing / "data.parquet").touch()
+    output = tmp_path / "flights.parquet"
+    calls = []
+    previous_inputs = set()
+    created = set()
+
+    def write_batch(start, end, source, **kwargs):
+        nonlocal previous_inputs
+        days = list(cli.date_range(start, end))
+        assert len(days) <= workers
+        inputs = set(cli.adsb_dates_for_run(source, days, provider))
+        if calls:
+            # Overlapping partitions survive; expired partitions are already gone.
+            for day in previous_inputs:
+                for path in cli._downloaded_adsb_paths(provider, [day]):
+                    assert path.exists() == (day in inputs or path == existing)
+        calls.append(days)
+        for path in cli._downloaded_adsb_paths(provider, sorted(inputs)):
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "data.parquet").touch()
+            created.add(path)
+        output.touch()
+        previous_inputs = inputs
+        if fail and len(calls) == 2:
+            raise RuntimeError("conversion failed")
+
+    monkeypatch.setattr(cli, "write_flights_range", write_batch)
+    args = [
+        "2026-03-01", "2026-03-06", "algorithm-nn",
+        "--workers", str(workers), "--no-save-adsb-downloads",
+    ]
+    if fail:
+        with pytest.raises(RuntimeError, match="conversion failed"):
+            cli.main(args)
+    else:
+        cli.main(args)
+        assert sum(map(len, calls)) == 5
+    assert len(calls) >= 2
+    assert (existing / "data.parquet").exists()
+    assert output.exists()
+    assert all(not path.exists() for path in created if path != existing)
+
+
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
 def test_algorithm_sources_accept_opensky(monkeypatch, source_name):
     calls = []

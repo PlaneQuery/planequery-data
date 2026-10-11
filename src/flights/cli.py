@@ -242,8 +242,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-save-adsb-downloads",
         action="store_true",
         help=(
-            "After the run, remove ADS-B release archives, extracted traces, "
-            "and canonical ADS-B Parquet created by this invocation. Existing "
+            "Process at most --workers days per batch and remove ADS-B release "
+            "archives, extracted traces, and canonical ADS-B Parquet created "
+            "by this invocation after their last required batch. Existing "
             "cached data and the generated flight Parquet are preserved."
         ),
     )
@@ -291,12 +292,37 @@ def main(argv: Sequence[str] | None = None) -> None:
         }
         if args.workers is not None:
             kwargs["workers"] = args.workers
-        write_flights_range(
-            args.start_date,
-            args.end_date,
-            source,
-            **kwargs,
-        )
+        if args.no_save_adsb_downloads:
+            # Do not enqueue the whole range: fast workers could otherwise
+            # download months of data before the parent gets to cleanup.
+            batch_size = args.workers or default_workers_for_source(source)
+            last_use = {}
+            for target_date in target_dates:
+                for input_date in adsb_dates_for_run(
+                    source, [target_date], args.adsb_source
+                ):
+                    last_use[input_date] = target_date
+            for offset in range(0, len(target_dates), batch_size):
+                batch = target_dates[offset : offset + batch_size]
+                write_flights_range(
+                    batch[0], batch[-1] + timedelta(days=1), source, **kwargs
+                )
+                # Adjacent flight days share input partitions. Wait until all
+                # readers have finished, including readers in later batches.
+                expired = [day for day, last in last_use.items() if last <= batch[-1]]
+                _remove_new_downloaded_adsb_paths(
+                    _downloaded_adsb_paths(args.adsb_source, expired),
+                    preexisting_paths,
+                )
+                for day in expired:
+                    del last_use[day]
+        else:
+            write_flights_range(
+                args.start_date,
+                args.end_date,
+                source,
+                **kwargs,
+            )
     finally:
         if args.no_save_adsb_downloads:
             _remove_new_downloaded_adsb_paths(
