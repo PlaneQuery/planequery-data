@@ -171,7 +171,6 @@ def _with_airport_nn_model(
 def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     return flights.filter(
         (pl.col("takeoff_time").dt.date() == target_date)
-        & (pl.col("landing_time").dt.date() == target_date)
     )
 
 
