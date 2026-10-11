@@ -22,7 +22,7 @@ REUSED_FLIGHT_BATCH_SIZE = 2048
 @dataclass(frozen=True)
 class AlgorithmNNFlightSource(ADSBFlightSource):
     name: str = "algorithm-nn"
-    version: int = 5
+    version: int = 6
     model_path: Path = DEFAULT_MODEL_PATH
 
     def adsb_icao_batch_size(self) -> int:
