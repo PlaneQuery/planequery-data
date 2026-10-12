@@ -176,9 +176,6 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
 def filter_sfdps_flights(df: pl.DataFrame, current_date: datetime) -> pl.DataFrame:
     df = df.filter(pl.col("icao").is_not_null() & (pl.col("icao") != ""))
     df = df.filter(pl.col("takeoff_time").dt.date() == current_date.date())
-    df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
-    df = df.filter(pl.col("flight_duration") > pl.duration(minutes=20))
-    df = df.drop("flight_duration")
     return df
 
 
