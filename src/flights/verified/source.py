@@ -17,12 +17,16 @@ class VerifiedFlightSource(NonADSBFlightSource):
     source: NonADSBFlightSource
 
     def __init__(self, source: NonADSBFlightSource):
-        if not isinstance(source, (BTSFlightSource, SFDPSFlightSource)):
+        if isinstance(source, SFDPSFlightSource):
+            version = 3
+        elif isinstance(source, BTSFlightSource):
+            version = 1
+        else:
             raise ValueError(
                 "VerifiedFlightSource only supports BTS and SFDPS sources"
             )
         object.__setattr__(self, "name", f"{source.name}-verified")
-        object.__setattr__(self, "version", 2 if isinstance(source, SFDPSFlightSource) else 1)
+        object.__setattr__(self, "version", version)
         object.__setattr__(self, "source", source)
 
     def create_flights_for_day(self, dt, airport_catalog: AirportCatalogView) -> pl.DataFrame:
