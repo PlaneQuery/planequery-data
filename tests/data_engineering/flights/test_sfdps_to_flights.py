@@ -178,7 +178,7 @@ def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
             "estimated_takeoff_time": pl.Datetime("us"),
         },
     )
-    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", lambda _current_day: source)
+    monkeypatch.setattr(sfdps, "read_sfdps", lambda _current_day: source)
 
     result = (
         sfdps.sfdps_to_flights(datetime(2026, 3, 1))
@@ -223,7 +223,7 @@ def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
             "estimated_takeoff_time": pl.Datetime("us"),
         },
     )
-    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", lambda _current_day: source)
+    monkeypatch.setattr(sfdps, "read_sfdps", lambda _current_day: source)
     scans = []
 
     def scan_metadata(current_day, *, columns, icaos):
@@ -296,7 +296,7 @@ def test_reconstructs_overnight_flights_from_both_days(monkeypatch, day):
         # Deliberately unsorted: reconstruction must order the merged history.
         return messages.filter(pl.col("timestamp").dt.date() == current_day.date()).reverse()
 
-    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", read_day)
+    monkeypatch.setattr(sfdps, "read_sfdps", read_day)
     flights = sfdps.sfdps_to_flights(day)
     result = sfdps.filter_sfdps_flights(flights, day)
 
@@ -390,7 +390,7 @@ def test_reconstruction_carries_aircraft_address_state(monkeypatch, addresses, e
         "estimated_takeoff_time": pl.Datetime("us"),
     })
     monkeypatch.setattr(
-        sfdps, "_read_sfdps_for_day",
+        sfdps, "read_sfdps",
         lambda current_day: source if current_day == day else source.clear(),
     )
 
