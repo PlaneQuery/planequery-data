@@ -47,10 +47,6 @@ GUFI_FLIGHT_SCHEMA = {
 }
 
 
-def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
-    return read_sfdps(current_day)
-
-
 def _missing_sfdps_days() -> set[date]:
     return set(MISSING_SFDPS_DAYS)
 
@@ -112,6 +108,7 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
             estimated_takeoff_time = row["estimated_takeoff_time"]
 
         if row["flightStatus"] == "CANCELLED":
+            # never left ground
             pass
 
         if row["flightStatus"] == "ACTIVE":
@@ -148,8 +145,8 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
     # Arrival messages can arrive after midnight. Combine each GUFI's history
     # before reconstructing flights so departure state survives the boundary.
     df = pl.concat([
-        _read_sfdps_for_day(current_day),
-        _read_sfdps_for_day(current_day + timedelta(days=1)),
+        read_sfdps(current_day),
+        read_sfdps(current_day + timedelta(days=1)),
     ]).sort(["gufi", "timestamp"])
     df = df.group_by("gufi").map_groups(gufi_state_machine)
     df = (
