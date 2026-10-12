@@ -2,7 +2,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import polars as pl
+import pytest
 
+from flights.flight_type import FLIGHT_POLARS_SCHEMA
 from airports.models import (
     Airport,
     AirportMatch,
@@ -463,3 +465,34 @@ def test_default_worker_count_is_capped_at_eight(monkeypatch):
     monkeypatch.setattr(algorithm, "default_worker_count", lambda: 32)
 
     assert algorithm._number_of_workers_default() == 8
+
+
+@pytest.mark.parametrize("endpoint", ["first", "last"])
+@pytest.mark.parametrize("altitude_kind", ["baro", "geom"])
+def test_flight_altitude_can_first_appear_after_schema_inference_window(
+    endpoint, altitude_kind
+):
+    takeoff = message(0, None)
+    landing = message(10, None)
+    segment = algorithm.FlightSegment(
+        icao=ICAO,
+        takeoff_time=takeoff.time,
+        landing_time=landing.time,
+        takeoff_message=takeoff,
+        landing_message=landing,
+    )
+    message_field = "takeoff_message" if endpoint == "first" else "landing_message"
+    populated_message = replace(
+        getattr(segment, message_field),
+        **{f"{altitude_kind}_altitude_ft": 150},
+    )
+    segments = [segment] * 100 + [
+        replace(segment, **{message_field: populated_message})
+    ]
+
+    flights = _segments_to_flights_df(segments, fake_airport_catalog())
+
+    assert flights.schema == FLIGHT_POLARS_SCHEMA
+    assert flights[f"{endpoint}_{altitude_kind}_altitude_ft"].to_list() == (
+        [None] * 100 + [150]
+    )
