@@ -15,6 +15,7 @@ from data_engineering.opensky.paths import (
 from data_engineering.opensky.trino_client import (
     BATCH_SIZE,
     DEFAULT_TRINO_USER,
+    arrow_schema_from_description,
     create_connection,
     rows_to_arrow,
 )
@@ -65,6 +66,7 @@ def download_hour(
     writer: pq.ParquetWriter | None = None
     total_rows = 0
     columns: list[str] | None = None
+    schema = None
     end = start + timedelta(hours=1)
     window_size = timedelta(minutes=query_window_minutes)
 
@@ -88,14 +90,16 @@ def download_hour(
                         int(window_end.timestamp()),
                     ],
                 )
-                window_columns = [column[0] for column in cursor.description]
+                window_schema = arrow_schema_from_description(cursor.description)
+                window_columns = window_schema.names
                 if columns is None:
                     columns = window_columns
-                elif window_columns != columns:
-                    raise RuntimeError("Trino returned inconsistent columns")
+                    schema = window_schema
+                elif window_schema != schema:
+                    raise RuntimeError("Trino returned inconsistent column names or types")
 
                 while rows := cursor.fetchmany(batch_size):
-                    table = rows_to_arrow(rows, columns)
+                    table = rows_to_arrow(rows, columns, schema=schema)
                     if writer is None:
                         writer = pq.ParquetWriter(
                             temp_path,
@@ -114,7 +118,7 @@ def download_hour(
         if writer is None:
             if columns is None:
                 raise RuntimeError("Trino did not return column metadata")
-            pq.write_table(rows_to_arrow([], columns), temp_path)
+            pq.write_table(rows_to_arrow([], columns, schema=schema), temp_path)
         else:
             writer.close()
             writer = None
