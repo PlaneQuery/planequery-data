@@ -4,7 +4,6 @@ from datetime import date, datetime, timedelta
 
 import polars as pl
 
-from aircraft.registration import is_valid_registration_callsign_expr
 from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import scan_adsb
 from data_engineering.swim.read_sfdps import read_sfdps
@@ -31,6 +30,22 @@ ADSB_ICAO_INFO_COLUMNS = [
 
 SFDPS_AIRPORT_CODE_PRIORITY = ICAO_AIRPORT_CODE_PRIORITY
 
+GUFI_FLIGHT_SCHEMA = {
+    "gufi": pl.String,
+    "timestamp": pl.Datetime("us"),
+    "callsign": pl.String,
+    "aircraft_address": pl.String,
+    "registration": pl.String,
+    "aircraft_type": pl.String,
+    "flightStatus": pl.String,
+    "takeoff_time": pl.Datetime("us"),
+    "takeoff_airport_icao": pl.String,
+    "landing_time": pl.Datetime("us"),
+    "landing_airport_icao": pl.String,
+    "estimated_landing_time": pl.Datetime("us"),
+    "estimated_takeoff_time": pl.Datetime("us"),
+}
+
 
 def _read_sfdps_for_day(current_day: datetime) -> pl.DataFrame:
     return read_sfdps(current_day)
@@ -54,6 +69,20 @@ def resolve_sfdps_airports(
         allow_unresolved=True,
     )
 
+def _get_most_common_non_null_value(df: pl.DataFrame, column: str):
+    """Return the most common non-null value, preferring the latest value on ties."""
+    non_null_values = df[column].drop_nulls()
+    if non_null_values.is_empty():
+        return None
+    value_counts = non_null_values.value_counts()
+    max_count = value_counts["count"].max()
+    most_common_values = set(
+        value_counts.filter(pl.col("count") == max_count)[column].to_list()
+    )
+    return next(
+        value for value in reversed(non_null_values.to_list())
+        if value in most_common_values
+    )
 
 def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
     landing_time = None
@@ -63,11 +92,12 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
     estimated_landing_time = None
     estimated_takeoff_time = None
     flight_status = None
-    aircraft_address = None
+    aircraft_address = _get_most_common_non_null_value(df, "aircraft_address")
+    aircraft_registration = _get_most_common_non_null_value(df, "aircraft_registration")
+    aircraft_type = _get_most_common_non_null_value(df, "aircraft_type")
+    aircraft_identification = _get_most_common_non_null_value(df, "aircraft_identification")
 
     for _, row in enumerate(df.iter_rows(named=True)):
-        if row["aircraft_address"]:
-            aircraft_address = row["aircraft_address"]
         if row["takeoff_time"] is not None:
             takeoff_time = row["takeoff_time"]
         if row["takeoff_airport_icao"] is not None:
@@ -94,8 +124,10 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
                 {
                     "gufi": [row["gufi"]],
                     "timestamp": [row["timestamp"]],
-                    "callsign": [row["callsign"]],
+                    "callsign": [aircraft_identification],
                     "aircraft_address": [aircraft_address],
+                    "registration": [aircraft_registration],
+                    "aircraft_type": [aircraft_type],
                     "flightStatus": [flight_status],
                     "takeoff_time": [takeoff_time],
                     "takeoff_airport_icao": [takeoff_airport],
@@ -104,24 +136,12 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
                     "estimated_landing_time": [estimated_landing_time],
                     "estimated_takeoff_time": [estimated_takeoff_time],
                 },
-                schema={
-                    "gufi": pl.String,
-                    "timestamp": pl.Datetime("us"),
-                    "callsign": pl.String,
-                    "aircraft_address": pl.String,
-                    "flightStatus": pl.String,
-                    "takeoff_time": pl.Datetime("us"),
-                    "takeoff_airport_icao": pl.String,
-                    "landing_time": pl.Datetime("us"),
-                    "landing_airport_icao": pl.String,
-                    "estimated_landing_time": pl.Datetime("us"),
-                    "estimated_takeoff_time": pl.Datetime("us"),
-                },
+                schema=GUFI_FLIGHT_SCHEMA,
             )
     if flight_status == "DROPPED":
         pass
 
-    return df.clear()
+    return pl.DataFrame(schema=GUFI_FLIGHT_SCHEMA)
 
 
 def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
@@ -141,15 +161,10 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
         )
         .with_columns(
             pl.col("aircraft_address").str.strip_chars().str.to_lowercase().alias("icao"),
-            pl.when(is_valid_registration_callsign_expr("callsign"))
-            .then(pl.col("callsign"))
-            .otherwise(pl.lit(None))
-            .alias("registration"),
             pl.lit(False).alias("pia"),
             pl.lit(False).alias("ladd"),
             pl.lit(False).alias("military"),
             pl.lit(False).alias("interesting"),
-            pl.lit("").alias("aircraft_type"),
             pl.lit("").alias("owner"),
             pl.lit("").alias("aircraft_description"),
             pl.lit("").alias("category"),
@@ -225,7 +240,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 8
+    version: int = 9
 
     def create_flights_for_day(
         self,
