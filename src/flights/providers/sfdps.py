@@ -237,7 +237,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 9
+    version: int = 10
 
     def create_flights_for_day(
         self,
