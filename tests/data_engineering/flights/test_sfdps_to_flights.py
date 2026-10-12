@@ -151,16 +151,17 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
     assert sfdps.SFDPSFlightSource().version == 8
 
 
-def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
-    monkeypatch,
-):
+def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
     callsigns = ["NKS108", "N12345", "N123AB", "N123A4", "C-GABC"]
+    registrations = ["N345NK", None, "N123AB", None, "C-GABC"]
     source = pl.DataFrame(
         {
             "gufi": [f"gufi-{index}" for index in range(len(callsigns))],
             "timestamp": [datetime(2026, 3, 1, 2, 0)] * len(callsigns),
-            "callsign": callsigns,
+            "aircraft_identification": callsigns,
             "aircraft_address": [None] * len(callsigns),
+            "aircraft_registration": registrations,
+            "aircraft_type": [None] * len(callsigns),
             "flightStatus": ["COMPLETED"] * len(callsigns),
             "takeoff_time": [datetime(2026, 3, 1, 1, 0)] * len(callsigns),
             "takeoff_airport_icao": ["KJFK"] * len(callsigns),
@@ -170,6 +171,9 @@ def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
             "estimated_takeoff_time": [None] * len(callsigns),
         },
         schema_overrides={
+            "aircraft_address": pl.String,
+            "aircraft_registration": pl.String,
+            "aircraft_type": pl.String,
             "estimated_landing_time": pl.Datetime("us"),
             "estimated_takeoff_time": pl.Datetime("us"),
         },
@@ -184,10 +188,10 @@ def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
 
     assert result.to_dicts() == [
         {"callsign": "C-GABC", "registration": "C-GABC"},
-        {"callsign": "N12345", "registration": "N12345"},
+        {"callsign": "N12345", "registration": None},
         {"callsign": "N123A4", "registration": None},
         {"callsign": "N123AB", "registration": "N123AB"},
-        {"callsign": "NKS108", "registration": None},
+        {"callsign": "NKS108", "registration": "N345NK"},
     ]
 
 
@@ -200,8 +204,10 @@ def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
         {
             "gufi": [f"gufi-{index}" for index in range(4)],
             "timestamp": [landing] * 4,
-            "callsign": [callsign] * 4,
+            "aircraft_identification": [callsign] * 4,
             "aircraft_address": ["A91349", "012ABC", None, ""],
+            "aircraft_registration": [None] * 4,
+            "aircraft_type": [None] * 4,
             "flightStatus": ["COMPLETED"] * 4,
             "takeoff_time": [datetime(2026, 3, 1, 1, 0)] * 4,
             "takeoff_airport_icao": ["ALM"] * 4,
@@ -211,6 +217,8 @@ def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
             "estimated_takeoff_time": [None] * 4,
         },
         schema_overrides={
+            "aircraft_registration": pl.String,
+            "aircraft_type": pl.String,
             "estimated_landing_time": pl.Datetime("us"),
             "estimated_takeoff_time": pl.Datetime("us"),
         },
@@ -247,8 +255,10 @@ def test_reconstructs_overnight_flights_from_both_days(monkeypatch, day):
         return {
             "gufi": gufi,
             "timestamp": timestamp,
-            "callsign": "UAL123",
+            "aircraft_identification": "UAL123",
             "aircraft_address": "A123BC" if takeoff is not None else None,
+            "aircraft_registration": "N12345",
+            "aircraft_type": "B738",
             "flightStatus": "ACTIVE" if landing is None else "COMPLETED",
             "takeoff_time": takeoff,
             "takeoff_airport_icao": "KJFK" if takeoff is not None else None,
@@ -323,6 +333,8 @@ def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):
         "timestamp": [datetime(2026, 3, 1, hour) for hour in (1, 2, 3)],
         "aircraft_identification": ["UAL123"] * 3,
         "aircraft_address": ["ABC123", "DEF456", None],
+        "aircraft_registration": ["N12345"] * 3,
+        "aircraft_type": ["B738"] * 3,
         "flight_status": ["COMPLETED"] * 3,
         "departure_point": ["KJFK"] * 3,
         "departure_actual_time": [datetime(2026, 3, 1, 0)] * 3,
@@ -335,7 +347,19 @@ def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):
 
     result = sfdps_reader.read_sfdps(datetime(2026, 3, 1))
 
+    assert "callsign" not in result.columns
     assert result["aircraft_address"].to_list() == ["ABC123", "DEF456", None]
+    assert result.select(
+        "aircraft_identification",
+        "aircraft_registration",
+        "aircraft_type",
+    ).to_dicts() == [
+        {
+            "aircraft_identification": "UAL123",
+            "aircraft_registration": "N12345",
+            "aircraft_type": "B738",
+        }
+    ] * 3
 
 
 @pytest.mark.parametrize("addresses, expected", [
@@ -349,8 +373,10 @@ def test_reconstruction_carries_aircraft_address_state(monkeypatch, addresses, e
     source = pl.DataFrame({
         "gufi": ["gufi-1"] * 2,
         "timestamp": [day + timedelta(hours=1), day + timedelta(hours=2)],
-        "callsign": ["UAL123"] * 2,
+        "aircraft_identification": ["UAL123"] * 2,
         "aircraft_address": addresses,
+        "aircraft_registration": ["N12345"] * 2,
+        "aircraft_type": ["B738"] * 2,
         "flightStatus": ["ACTIVE", "COMPLETED"],
         "takeoff_time": [day, None],
         "takeoff_airport_icao": ["KJFK", None],
