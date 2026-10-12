@@ -63,8 +63,11 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
     estimated_landing_time = None
     estimated_takeoff_time = None
     flight_status = None
+    aircraft_address = None
 
     for _, row in enumerate(df.iter_rows(named=True)):
+        if row["aircraft_address"]:
+            aircraft_address = row["aircraft_address"]
         if row["takeoff_time"] is not None:
             takeoff_time = row["takeoff_time"]
         if row["takeoff_airport_icao"] is not None:
@@ -92,6 +95,7 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
                     "gufi": [row["gufi"]],
                     "timestamp": [row["timestamp"]],
                     "callsign": [row["callsign"]],
+                    "aircraft_address": [aircraft_address],
                     "flightStatus": [flight_status],
                     "takeoff_time": [takeoff_time],
                     "takeoff_airport_icao": [takeoff_airport],
@@ -104,6 +108,7 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
                     "gufi": pl.String,
                     "timestamp": pl.Datetime("us"),
                     "callsign": pl.String,
+                    "aircraft_address": pl.String,
                     "flightStatus": pl.String,
                     "takeoff_time": pl.Datetime("us"),
                     "takeoff_airport_icao": pl.String,
@@ -135,7 +140,7 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
             }
         )
         .with_columns(
-            pl.lit(None).cast(pl.String).alias("icao"),
+            pl.col("aircraft_address").str.strip_chars().str.to_lowercase().alias("icao"),
             pl.when(is_valid_registration_callsign_expr("callsign"))
             .then(pl.col("callsign"))
             .otherwise(pl.lit(None))
@@ -154,6 +159,7 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
 
 
 def filter_sfdps_flights(df: pl.DataFrame, current_date: datetime) -> pl.DataFrame:
+    df = df.filter(pl.col("icao").is_not_null() & (pl.col("icao") != ""))
     df = df.filter(pl.col("takeoff_time").dt.date() == current_date.date())
     df = df.with_columns((pl.col("landing_time") - pl.col("takeoff_time")).alias("flight_duration"))
     df = df.filter(pl.col("flight_duration") > pl.duration(minutes=20))
@@ -161,81 +167,21 @@ def filter_sfdps_flights(df: pl.DataFrame, current_date: datetime) -> pl.DataFra
     return df
 
 
-def compress_callsign_segments(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.filter(pl.col("callsign") != "")
-    df = df.with_columns((pl.int_range(0, pl.len()) == pl.len() - 1).alias("is_last"))
-    df = (
-        df.with_columns((pl.col("callsign") != pl.col("callsign").shift(1)).alias("_new_callsign"))
-        .fill_null(True)
-    )
-    df = df.with_columns(
-        pl.when(pl.col("_new_callsign").shift(-1).eq(True) | pl.col("is_last"))
-        .then(pl.col("time"))
-        .alias("end_time")
-        .backward_fill()
-    )
-    df = df.filter(pl.col("_new_callsign"))
-    df = df.rename({"time": "start_time"})
-    df = df.drop("_new_callsign", "is_last")
-    return df
-
-
-def _collect_streaming(lf: pl.LazyFrame) -> pl.DataFrame:
-    try:
-        return lf.collect(engine="streaming")
-    except TypeError:
-        return lf.collect()
-
-
-def _adsb_registration_map(current_day: datetime, registrations: list[str]) -> pl.DataFrame:
-    return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "registration", "pia", "ladd", "time"])
-        .filter((pl.col("registration") != "") & pl.col("registration").is_in(registrations))
-        .group_by(["icao", "registration"])
-        .agg(
-            pl.len().alias("len"),
-            pl.col("pia").any().alias("pia"),
-            pl.col("ladd").any().alias("ladd"),
-        )
-        .sort(["registration", "len", "icao"], descending=[False, True, False])
-        .group_by("registration", maintain_order=True)
-        .first()
-        .select(["icao", "registration", "pia", "ladd"])
-    )
-
-
-def _adsb_callsign_segments(current_day: datetime, callsigns: list[str]) -> pl.DataFrame:
-    return _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "callsign", "pia", "ladd", "time"])
-        .filter((pl.col("callsign") != "") & pl.col("callsign").is_in(callsigns))
-        .sort(["icao", "time", "callsign"])
-        .with_columns(
-            (
-                (pl.col("callsign") != pl.col("callsign").shift(1).over("icao"))
-                | pl.col("callsign").shift(1).over("icao").is_null()
-            ).alias("_new_callsign")
-        )
-        .with_columns(pl.col("_new_callsign").cum_sum().over("icao").alias("_segment_id"))
-        .group_by(["icao", "callsign", "_segment_id"])
-        .agg(
-            pl.col("time").min().alias("start_time"),
-            pl.col("time").max().alias("end_time"),
-            pl.col("pia").any().alias("pia"),
-            pl.col("ladd").any().alias("ladd"),
-        )
-        .select(["icao", "callsign", "start_time", "end_time", "pia", "ladd"])
-    )
-
-
 def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.DataFrame:
+    if df_flights.is_empty():
+        return df_flights
     icaos = df_flights["icao"].drop_nulls().unique().to_list()
-    df_icao_info = _collect_streaming(
-        scan_adsb(current_day.date(), columns=["icao", "time", *ADSB_ICAO_INFO_COLUMNS])
-        .filter(pl.col("icao").is_in(icaos))
+    df_icao_info = (
+        scan_adsb(
+            current_day.date(),
+            columns=["icao", "time", *ADSB_ICAO_INFO_COLUMNS],
+            icaos=icaos,
+        )
         .sort(["icao", "time"])
         .group_by("icao")
         .last()
         .select(["icao", *ADSB_ICAO_INFO_COLUMNS])
+        .collect(engine="streaming")
     )
     df_flights = (
         df_flights.drop(ADSB_ICAO_INFO_COLUMNS)
@@ -255,95 +201,6 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
     return with_flight_schema_columns(df_flights)
 
 
-def sfdps_flights_derive_icao(df_sfdps_flights: pl.DataFrame, current_day: datetime) -> pl.DataFrame:
-    df_sfdps_flights_with_registration = df_sfdps_flights.filter(pl.col("registration").is_not_null())
-    df_sfdps_flights_without_registration = df_sfdps_flights.filter(pl.col("registration").is_null())
-    registrations = df_sfdps_flights_with_registration["registration"].drop_nulls().unique().to_list()
-    callsigns = (
-        df_sfdps_flights_without_registration.filter(pl.col("callsign") != "")
-        ["callsign"]
-        .drop_nulls()
-        .unique()
-        .to_list()
-    )
-    df_adsb_registration_map = _adsb_registration_map(current_day, registrations)
-    df_sfdps_flights_0 = (
-        df_sfdps_flights_with_registration
-        .join(
-            df_adsb_registration_map.select("registration", "icao"),
-            on="registration",
-            how="inner",
-            suffix="_adsb",
-        )
-        .with_columns(
-            pl.col("icao_adsb").alias("icao"),
-        )
-        .drop("icao_adsb")
-    )
-    df_adsb_map = _adsb_callsign_segments(current_day, callsigns)
-    matched_callsigns = set(df_adsb_map["callsign"].unique().to_list())
-    missing_callsign_count = len(set(callsigns) - matched_callsigns)
-    print(f"SFDPS callsigns with no ADS-B match: {missing_callsign_count}/{len(callsigns)}")
-    _30min = pl.duration(minutes=30)
-
-    df_sfdps_flights_1 = (
-        df_sfdps_flights_without_registration
-        .with_row_index("_row_idx")
-        .join(df_adsb_map.select("icao", "callsign", "start_time", "end_time"), on="callsign", how="left")
-        .with_columns(
-            (
-                (pl.col("takeoff_time") >= pl.col("start_time"))
-                & (pl.col("takeoff_time") <= pl.col("end_time"))
-            ).alias("_takeoff_in_range"),
-            (
-                (pl.col("landing_time") >= pl.col("start_time"))
-                & (pl.col("landing_time") <= pl.col("end_time"))
-            ).alias("_landing_in_range"),
-        )
-        .filter(
-            pl.col("_takeoff_in_range")
-            | pl.col("_landing_in_range")
-            | ((pl.col("takeoff_time") - pl.col("start_time")).abs() <= _30min)
-            | ((pl.col("takeoff_time") - pl.col("end_time")).abs() <= _30min)
-            | ((pl.col("landing_time") - pl.col("start_time")).abs() <= _30min)
-            | ((pl.col("landing_time") - pl.col("end_time")).abs() <= _30min)
-        )
-        .with_columns(pl.col("icao_right").n_unique().over("_row_idx").alias("_icao_count"))
-        .filter(pl.col("_icao_count") == 1)
-        .with_columns(
-            pl.when(pl.col("_takeoff_in_range"))
-            .then(0)
-            .when(pl.col("_landing_in_range"))
-            .then(1)
-            .otherwise(2)
-            .alias("_priority"),
-            (
-                (pl.col("takeoff_time") - pl.col("start_time")).abs()
-                + (pl.col("landing_time") - pl.col("end_time")).abs()
-            ).alias("_time_dist"),
-        )
-        .sort(["_priority", "_time_dist"], nulls_last=True)
-        .group_by("_row_idx", maintain_order=True)
-        .first()
-        .with_columns(
-            pl.col("icao").fill_null(pl.col("icao_right")),
-        )
-        .drop(
-            "_row_idx",
-            "icao_right",
-            "start_time",
-            "end_time",
-            "_takeoff_in_range",
-            "_landing_in_range",
-            "_priority",
-            "_time_dist",
-            "_icao_count",
-        )
-    )
-    df_flights = pl.concat([df_sfdps_flights_0, df_sfdps_flights_1])
-    return add_adsb_icao_info(df_flights, current_day)
-
-
 def create_sfdps_flights_day(
     target_date: date,
     airport_catalog: AirportCatalogView,
@@ -356,7 +213,7 @@ def create_sfdps_flights_day(
     day_dt = datetime(target_date.year, target_date.month, target_date.day)
     df_flights = sfdps_to_flights(day_dt)
     df_flights = filter_sfdps_flights(df_flights, day_dt)
-    df_flights = sfdps_flights_derive_icao(df_flights, day_dt)
+    df_flights = add_adsb_icao_info(df_flights, day_dt)
     df_flights = resolve_sfdps_airports(
         df_flights,
         airport_catalog,
@@ -368,7 +225,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 7
+    version: int = 8
 
     def create_flights_for_day(
         self,

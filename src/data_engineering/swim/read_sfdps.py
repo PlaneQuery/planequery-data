@@ -28,6 +28,7 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
         "gufi",
         "timestamp",
         "aircraft_identification",
+        "aircraft_address",
         "flight_status",
         "departure_point",
         "departure_actual_time",
@@ -58,7 +59,7 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
     df = df.filter(pl.col("flightStatus").is_not_null())
     df = df.sort("timestamp")
 
-    state_keys = ["flightStatus", "landing_time", "takeoff_time", "takeoff_airport_icao", "landing_airport_icao"]
+    state_keys = ["flightStatus", "landing_time", "takeoff_time", "takeoff_airport_icao", "landing_airport_icao", "aircraft_address"]
 
     def compress_gufi(group: pl.DataFrame) -> pl.DataFrame:
         """Keep only rows where state_keys change within a single gufi group."""
@@ -85,7 +86,7 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
         .map_groups(compress_gufi)
         .sort(["gufi", "timestamp"])
     )
-    df = df.select(["gufi", "timestamp", "callsign", "flightStatus", "takeoff_time", "takeoff_airport_icao", "landing_time", "landing_airport_icao", "estimated_landing_time", "estimated_takeoff_time"])
+    df = df.select(["gufi", "timestamp", "callsign", "aircraft_address", "flightStatus", "takeoff_time", "takeoff_airport_icao", "landing_time", "landing_airport_icao", "estimated_landing_time", "estimated_takeoff_time"])
     return df
 
 
