@@ -697,11 +697,7 @@ def _segments_to_flights_df(
                 **aircraft_metadata,
             }
         )
-    return (
-        pl.DataFrame(rows)
-        .select(list(FLIGHT_POLARS_SCHEMA.keys()))
-        .cast(FLIGHT_POLARS_SCHEMA)
-    )
+    return pl.DataFrame(rows, schema=FLIGHT_POLARS_SCHEMA)
 
 
 def _day_bounds(target_date: date) -> tuple[datetime, datetime]:
