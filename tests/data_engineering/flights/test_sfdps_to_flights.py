@@ -148,7 +148,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 8
+    assert sfdps.SFDPSFlightSource().version == 9
 
 
 def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
@@ -322,7 +322,7 @@ def test_sfdps_requires_following_day_logs(monkeypatch):
 
 
 def test_sfdps_verified_cache_version_changes_without_changing_bts():
-    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 4
+    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 5
     assert VerifiedFlightSource(BTSFlightSource()).version == 1
 
 
