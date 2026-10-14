@@ -29,6 +29,60 @@ def empty_flights():
     return pl.DataFrame({"icao": []}, schema={"icao": pl.String})
 
 
+@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("workers", [1, 4])
+def test_range_skips_flights_requiring_bad_adsblol_day(
+    monkeypatch, tmp_path, capsys, source_name, workers
+):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "_write_flights_day",
+        lambda source, dt, adsb_source, **kwargs: (
+            calls.append(dt) or dt, 0, tmp_path / "data.parquet"
+        ),
+    )
+
+    cli.write_flights_range(
+        date(2026, 4, 29), date(2026, 5, 3),
+        cli.FLIGHT_SOURCES_BY_NAME[source_name], workers=workers,
+    )
+
+    assert calls == [date(2026, 5, 2)]
+    output = capsys.readouterr().out
+    assert output.count("[SKIP]") == 3
+    assert "requires known bad adsblol day(s): 2026-04-30" in output
+
+
+def test_range_with_only_bad_days_does_not_start_pool(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Skipped range must not start workers or write flights")
+
+    monkeypatch.setattr(cli, "ProcessPoolExecutor", unexpected)
+    monkeypatch.setattr(cli, "_write_flights_day", unexpected)
+    cli.write_flights_range(
+        date(2026, 4, 29), date(2026, 5, 2),
+        cli.ALGORITHM_NN_SOURCE, workers=4,
+    )
+
+
+@pytest.mark.parametrize(
+    "source, provider",
+    [(DummySource(), ADSBSource.ADSBLOL), (DummyADSBSource(), ADSBSource.OPENSKY)],
+)
+def test_bad_adsblol_dates_do_not_skip_other_sources(monkeypatch, tmp_path, source, provider):
+    calls = []
+    monkeypatch.setattr(
+        cli, "write_flights",
+        lambda source, dt, adsb_source: calls.append(dt) or empty_flights(),
+    )
+    monkeypatch.setattr(cli, "flight_path", lambda *args: tmp_path / "data.parquet")
+    cli.write_flights_range(
+        date(2026, 4, 30), date(2026, 5, 1), source, provider, workers=1,
+    )
+    assert calls == [date(2026, 4, 30)]
+
+
 def test_write_flights_range_excludes_end_date(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
