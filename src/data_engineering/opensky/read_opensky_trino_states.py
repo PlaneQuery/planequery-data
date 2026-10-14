@@ -370,7 +370,9 @@ def write_opensky_state_vectors_cache_for_day(
                 )
             )
             enriched = join_lf_with_openairframes(cleaned, openairframes)
-            canonical = canonicalize_adsb_frame(enriched, include_missing=True)
+            canonical = canonicalize_adsb_frame(enriched, include_missing=True).sort(
+                ["icao", "time"]
+            )
 
             icao_bucket = min(
                 processing_shard

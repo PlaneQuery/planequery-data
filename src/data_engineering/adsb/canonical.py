@@ -144,7 +144,7 @@ def write_canonical_adsb_parquet(
     *,
     batch_size: int = 100_000,
 ) -> None:
-    """Stream a canonical frame to Parquet with the exact Arrow schema."""
+    """Stream a canonical frame to Parquet, preserving its row order and schema."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with pq.ParquetWriter(
         output_path,
@@ -153,7 +153,7 @@ def write_canonical_adsb_parquet(
     ) as writer:
         for batch in df.collect_batches(
             chunk_size=batch_size,
-            maintain_order=False,
+            maintain_order=True,
             engine="streaming",
         ):
             writer.write_table(batch.to_arrow().cast(PARQUET_SCHEMA))
