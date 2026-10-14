@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from data_engineering.adsb.read_adsb import ADSBSource
+from data_engineering.adsb.known_bad_days import ADSBLOL_SKIP_DAYS
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.airport_nn import AlgorithmNNFlightSource
 from flights.flight_source import (
@@ -163,6 +164,25 @@ def write_flights_range(
         raise ValueError("workers must be positive")
 
     target_dates = list(date_range(start_date, end_date))
+    if isinstance(source, ADSBFlightSource) and source_adsb is ADSBSource.ADSBLOL:
+        valid_dates = []
+        for target_date in target_dates:
+            bad_days = ADSBLOL_SKIP_DAYS.intersection(
+                adsb_dates_for_run(source, [target_date], source_adsb)
+            )
+            if bad_days:
+                print(
+                    f"[SKIP] {source.name} flights for {target_date}: "
+                    f"requires known bad adsblol day(s): "
+                    f"{', '.join(map(str, sorted(bad_days)))}",
+                    flush=True,
+                )
+            else:
+                valid_dates.append(target_date)
+        target_dates = valid_dates
+    if not target_dates:
+        return
+
     within_day_parallel = (
         len(target_dates) == 1
         and isinstance(source, PARALLEL_ALGORITHM_SOURCES)
