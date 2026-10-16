@@ -100,13 +100,19 @@ validation and ADS-B aircraft buckets. It preserves both clocks, metre
 altitudes, and original callsigns; no ground flag, reported velocity, or
 published flight records are needed for inference.
 
-For takeoffs on day D, all 24 raw hours must exist for D−1 through D+2. Two
-three-day replays reconstruct OpenSky arrival partitions D and D+1, then select
-takeoffs on D, matching the existing published OpenSky provider's convention.
-Missing raw hours fail explicitly. For the example above, the required raw
-partitions are February 28 through March 3, 2026. The lower-level
-`reconstruct_arrival_day` function accepts just the three-day context and is
-used to compare against the research arrival-day benchmark.
+For takeoffs on day D, all 24 raw hours must exist for D−1, D, and D+1. For the
+example above, the required raw partitions are February 28 through March 2,
+2026; March 3 is not required. Missing hours within those three days fail
+explicitly. The source reconstructs arrival partitions D and D+1, then selects
+takeoffs on D. Both replays stop at the end of D+1, including when a caller
+supplies later observations. Overnight flights finalized within that window
+are included; tracks still pending at its end are omitted. An unavailable D+2
+is not treated as an empty day to force those tracks closed.
+
+The lower-level `reconstruct_arrival_day` function retains its default
+three-day arrival-day replay for comparison with the research benchmark. The
+flight source caps that replay with `replay_end` to use only its three input
+days.
 
 The reader builds a separate filtered, aircraft-sorted cache once per day:
 
@@ -120,14 +126,15 @@ memory, and a per-day lock protects overlapping workers. The normal flight
 output is stored at:
 
 ```text
-$OUTPUT_DIR/data/flights/source=opensky-reverse-eng/adsb_source=opensky/version=1/
+$OUTPUT_DIR/data/flights/source=opensky-reverse-eng/adsb_source=opensky/version=2/
 ```
 
 Flight manifests identify the raw-input cache format/version rather than a
 canonical ADS-B Parquet version. Bump the flight-source version if changes to
-input processing affect predictions. `--no-save-adsb-downloads` retains this
-intermediate cache; that option removes canonical ADS-B downloads, which this
-source does not generate.
+input processing affect predictions. Version 2 uses the shorter context and
+does not reuse version 1's four-day flight caches. `--no-save-adsb-downloads`
+retains this intermediate cache; that option removes canonical ADS-B downloads,
+which this source does not generate.
 
 The inferred algorithm uses four or more samples per epoch-aligned 30-second
 bin, seven-point median checks, and removal of three leading and six trailing

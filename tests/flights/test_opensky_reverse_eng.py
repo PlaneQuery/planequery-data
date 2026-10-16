@@ -82,6 +82,7 @@ def epochs(frame):
 def test_registration_input_window_and_provider_restriction():
     source = FLIGHT_SOURCES_BY_NAME["opensky-reverse-eng"]
     assert isinstance(source, pipeline.ADSBFlightSource)
+    assert source.version == 2
     assert (
         parse_args(
             ["2026-03-01", "2026-03-02", source.name, "--adsb-source", "opensky"]
@@ -89,7 +90,7 @@ def test_registration_input_window_and_provider_restriction():
         == source.name
     )
     assert adsb_dates_for_run(source, [DAY], ADSBSource.OPENSKY) == [
-        DAY + timedelta(days=i) for i in [-1, 0, 1, 2]
+        DAY + timedelta(days=i) for i in [-1, 0, 1]
     ]
     with pytest.raises(ValueError, match="requires --adsb-source opensky"):
         source.adsb_read_interval_for_source(DAY, ADSBSource.ADSBLOL)
@@ -186,6 +187,22 @@ def test_takeoff_partition_includes_overnight_and_excludes_prior_day():
     assert result["takeoff_airport_ident"].item() == "CANONICAL"
     assert source.create_flights_for_day(
         DAY + timedelta(days=1), overnight, catalog()
+    ).is_empty()
+
+
+def test_source_does_not_replay_unavailable_fourth_day():
+    # This overnight track is still pending near the end of D+1. Replaying
+    # an imaginary empty D+2 would incorrectly finalize it.
+    times = np.r_[np.arange(86300, 86400), np.arange(172000, 172701)]
+    data = states(times, longitude=np.zeros(len(times)))
+    assert reconstruct_arrival_day(DAY + timedelta(days=1), data, catalog()).height == 1
+    source = OpenSkyReverseEngFlightSource()
+    assert source.create_flights_for_day(DAY, data, catalog()).is_empty()
+
+    # Even callers supplying extra context get the same three-day behavior.
+    later = states(np.arange(172900, 174001), longitude=np.zeros(1101))
+    assert source.create_flights_for_day(
+        DAY, pl.concat([data, later]), catalog()
     ).is_empty()
 
 
@@ -299,12 +316,12 @@ def test_raw_reader_preserves_samples_both_clocks_and_ground_altitude(
 def test_pipeline_batches_raw_reader_and_writes_honest_manifest(tmp_path, monkeypatch):
     data = pl.concat(
         [
-            states(np.arange(100, 1101), icao=icao, longitude=np.zeros(1001))
-            for icao in ["000001", "abcdef"]
+            states(np.arange(100, 1101), icao="000001", longitude=np.zeros(1001)),
+            states(np.arange(85800, 87001), icao="abcdef", longitude=np.zeros(1201)),
         ]
     )
     write_raw_days(
-        tmp_path, monkeypatch, data, [DAY + timedelta(days=i) for i in [-1, 0, 1, 2]]
+        tmp_path, monkeypatch, data, [DAY + timedelta(days=i) for i in [-1, 0, 1]]
     )
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(
@@ -320,6 +337,7 @@ def test_pipeline_batches_raw_reader_and_writes_honest_manifest(tmp_path, monkey
         source, DAY, catalog(), ADSBSource.OPENSKY
     )
     assert result["icao"].to_list() == ["000001", "abcdef"]
+    assert result["landing_time"].dt.date().to_list() == [DAY, DAY + timedelta(days=1)]
     path = pipeline.flight_path(source, DAY, ADSBSource.OPENSKY)
     assert pl.read_parquet(path).equals(result)
     manifest = FlightManifest.read(flight_manifest_path(path))

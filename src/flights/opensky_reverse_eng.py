@@ -185,12 +185,15 @@ def reconstruct_arrival_day(
     airport_catalog: AirportCatalogView,
     *,
     airports: EndpointAirports | None = None,
+    replay_end: date | None = None,
 ) -> pl.DataFrame:
     """Reproduce one OpenSky lastseen day from three UTC snapshot days.
 
     Expects the original clocks/metre values, with ``icao24`` renamed to
     ``icao`` (the raw-input reader performs this rename). Missing context must
     be checked by the reader; an empty complete day is valid input.
+    ``replay_end`` caps the exclusive UTC snapshot boundary, so unavailable
+    later days are not replayed as if they contained no observations.
     """
     if states.is_empty():
         return pl.DataFrame(schema=FLIGHT_POLARS_SCHEMA)
@@ -201,11 +204,16 @@ def reconstruct_arrival_day(
         )
     airports = airports or EndpointAirports(airport_catalog)
     target = _epoch(day)
+    replay_stop = target + 2 * SECONDS_PER_DAY
+    if replay_end is not None:
+        if replay_end <= day:
+            raise ValueError("replay_end must be after the arrival day")
+        replay_stop = min(replay_stop, _epoch(replay_end))
     states = (
         states.filter(
             valid_position()
             & (pl.col("time") >= target - SECONDS_PER_DAY)
-            & (pl.col("time") < target + 2 * SECONDS_PER_DAY)
+            & (pl.col("time") < replay_stop)
         )
         .select(pl.col(c).cast(dtype) for c, dtype in STATE_SCHEMA.items())
         .sort(["icao", "time"], maintain_order=True)
@@ -215,10 +223,8 @@ def reconstruct_arrival_day(
         if icao is None:
             continue
         carry = None
-        for snapshot_day in (
-            target - SECONDS_PER_DAY,
-            target,
-            target + SECONDS_PER_DAY,
+        for snapshot_day in range(
+            target - SECONDS_PER_DAY, replay_stop, SECONDS_PER_DAY
         ):
             new = aircraft.filter(
                 (pl.col("time") >= snapshot_day)
@@ -268,7 +274,7 @@ def reconstruct_arrival_day(
 @dataclass(frozen=True)
 class OpenSkyReverseEngFlightSource(ADSBFlightSource):
     name: str = "opensky-reverse-eng"
-    version: int = 1
+    version: int = 2
 
     def adsb_icao_batch_size(self) -> int:
         return 500
@@ -278,8 +284,8 @@ class OpenSkyReverseEngFlightSource(ADSBFlightSource):
 
     def adsb_read_interval(self, dt: date) -> tuple[datetime, datetime]:
         midnight = datetime.combine(dt, datetime.min.time())
-        # Arrival partitions D and D+1 each need a three-day replay window.
-        return midnight - timedelta(days=1), midnight + timedelta(days=3)
+        # Read the departure day plus one day of context on each side.
+        return midnight - timedelta(days=1), midnight + timedelta(days=2)
 
     @staticmethod
     def _validate_provider(source: ADSBSource | None) -> None:
@@ -322,7 +328,11 @@ class OpenSkyReverseEngFlightSource(ADSBFlightSource):
         arrivals = pl.concat(
             [
                 reconstruct_arrival_day(
-                    day, df_adsb, airport_catalog, airports=airports
+                    day,
+                    df_adsb,
+                    airport_catalog,
+                    airports=airports,
+                    replay_end=dt + timedelta(days=2),
                 )
                 for day in (dt, dt + timedelta(days=1))
             ]
