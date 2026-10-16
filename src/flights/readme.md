@@ -147,17 +147,15 @@ both the flight boundary and message-time fields; they are not observed runway
 events. Callsign mode is computed before trimming its surrounding whitespace.
 Unknown aircraft metadata uses the standard flight-schema defaults.
 
-Recheck the source against an existing research sample without rereading all
-raw state vectors:
+Run the production source's regression tests with:
 
 ```bash
-python scripts/opensky_reverse_engineering/check_source.py --date 2026-03-01
+python -m pytest tests/flights/test_opensky_reverse_eng.py
 ```
 
-This compares the new implementation with the saved predictions using the
-frozen research catalog, and separately measures the shared dated catalog.
-Results are written beside the sample as `source_validation.json` and
-`source_validation_{frozen,shared}.parquet`.
+The exploratory scripts have been retired. Saved integration results remain
+under `data/processed/opensky_reverse_engineering/2026-03-01/` as
+`source_validation.json` and `source_validation_{frozen,shared}.parquet`.
 
 The March 1, 2026 integration check covered 2,048 aircraft and 5,241 published
 flights with known starts. All 5,237 reconstructed boundary pairs, callsigns,

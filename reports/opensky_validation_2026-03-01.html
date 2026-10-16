@@ -41,10 +41,9 @@ The comparison selects the closest predicted pair for diagnostics; large deltas 
 <p>0 sampled known starts precede the extracted context.
 One preceding day cannot recreate older pending state; one subsequent day may leave a high-altitude track unfinished.
 Null-start behavior and the exact historical OpenSky airport database are not reconstructed.</p>
-<h2>Reproduce</h2>
-<pre>POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/validate_date.py --date 2026-03-01 --sample-size 2048 --prepare-only
-POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/extract.py --date 2026-03-01 --sample-size 2048
-POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/validate_date.py --date 2026-03-01 --sample-size 2048</pre>
+<h2>Implementation and saved evidence</h2>
+<p>This is an archived validation report. The exploratory scripts have been retired after migration to <code>src/flights/opensky_reverse_eng.py</code>. See <a href="../src/flights/readme.md">the flight-source documentation</a> for the current CLI and input requirements. Saved validation artifacts remain under <code>/mnt/storage2/planequery-data/data/processed/opensky_reverse_engineering/2026-03-01</code>.</p>
+<pre>python -m pytest tests/flights/test_opensky_reverse_eng.py</pre>
 <p>Evidence and exported flights: <code>/mnt/storage2/planequery-data/data/processed/opensky_reverse_engineering/2026-03-01</code>.
 The frozen settings are in <code>validation_protocol.json</code>; runtime code hashes are in <code>validation_code_hashes.json</code>.
 Raw input files are read-only. The original model commit is <code>9d4453b8d24a4a76584d1426bb0699144d9dbfe1</code>.</p></body></html>
