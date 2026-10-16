@@ -14,6 +14,8 @@ from replica import AirportIndex  # noqa: E402
 from analyze_endpoints import RADIUS  # noqa: E402
 from daily_replay import infer  # noqa: E402
 from extract import extract  # noqa: E402
+from evaluate_replica import run as evaluate_export  # noqa: E402
+from validate_date import infer_sample  # noqa: E402
 
 
 def states(seconds, longitude=None):
@@ -170,3 +172,48 @@ def test_extraction_selects_requested_date_across_year_boundary(tmp_path):
     assert cached.height==1
     assert cached['time'].item()==epoch+10
     assert len(list((out/'sample_hours').glob('*.parquet')))==1
+
+
+def test_export_evaluation_separates_extra_predictions_and_unknown_starts(tmp_path):
+    import json
+    aircraft=['aaaaaa','bbbbbb','cccccc','dddddd']
+    common={'callsign':'TEST123 ','day':DAY}
+    for kind in ['departure','arrival']:
+        common.update({'est'+kind+'airport':None,'est'+kind+'airporthorizdistance':None,
+            'est'+kind+'airportvertdistance':None,kind+'airportcandidatescount':0})
+    reference=pl.DataFrame([dict(common,icao24=ac,firstseen=first,lastseen=last)
+        for ac,first,last in zip(aircraft,[DAY,DAY+100,DAY,None],[DAY+1000,DAY+1000,DAY+1000,DAY+3000])]).with_row_index('flight_id')
+    predictions=pl.DataFrame([dict(common,icao24=ac,firstseen=first,lastseen=last)
+        for ac,first,last in zip(aircraft,[DAY,DAY+110,DAY+2000,DAY+2000],[DAY+1000,DAY+1010,DAY+3000,DAY+3000])])
+    (tmp_path/'manifest.json').write_text(json.dumps({'sample_aircraft':aircraft}))
+    reference.write_parquet(tmp_path/'reference_flights.parquet')
+    predictions.write_parquet(tmp_path/'reconstructed_sample_flights.parquet')
+    evaluate_export(tmp_path)
+    metrics=json.loads((tmp_path/'replica_metrics.json').read_text())
+    assert metrics['exact_boundary_pairs']==1
+    assert metrics['predictions_matching_known_start_reference_within_30s']==2
+    assert metrics['other_predictions_matching_null_start_reference_end']==1
+    assert metrics['remaining_unmatched_predictions']==1
+
+
+def test_validation_reads_aircraft_identifiers_as_values(tmp_path):
+    import json
+    target=date(2026,3,1)
+    epoch=int(datetime(2026,3,1,tzinfo=timezone.utc).timestamp())
+    state=states(np.arange(1001)).with_columns(pl.col('time')+epoch-DAY,
+        pl.col('lastposupdate')+epoch-DAY,pl.lit('000001').alias('icao24'))
+    cache=tmp_path/'sample_hours'
+    cache.mkdir()
+    for offset in [-1,0,1]:
+        for hour in range(24):
+            label=(target+timedelta(days=offset)).isoformat()+f'-{hour:02d}.parquet'
+            (state if offset==0 and hour==0 else state.clear()).write_parquet(cache/label)
+    (tmp_path/'manifest.json').write_text(json.dumps({'sample_aircraft':['000001'],
+        'sample_size':1,'target_date':target.isoformat()}))
+    pl.DataFrame({'icao24':['000001'],'flight_id':[0],'firstseen':[epoch+3],
+                  'lastseen':[epoch+994]}).write_parquet(tmp_path/'reference_flights.parquet')
+    pl.DataFrame({'gps_code':['TEST'],'latitude_deg':[0.],'longitude_deg':[0.],
+        'elevation_ft':[0.],'type':['small_airport']}).write_parquet(tmp_path/'ourairports_2024-06-01.parquet')
+    assert infer_sample(tmp_path,target,{'sample_size':1})==epoch
+    result=json.loads((tmp_path/'segmentation_metrics.json').read_text())[0]
+    assert result['exact_pairs']==result['predicted']==1

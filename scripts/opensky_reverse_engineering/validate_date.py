@@ -115,7 +115,7 @@ def infer_sample(out,target_date,protocol):
     observed=set()
     for start in range(0,len(aircraft),32):
         batch=aircraft[start:start+32]
-        data=pl.scan_parquet(files).filter(pl.col('icao24').is_between(batch[0],batch[-1])
+        data=pl.scan_parquet(files).filter(pl.col('icao24').is_between(pl.lit(batch[0]),pl.lit(batch[-1]))
             &pl.col('icao24').is_in(batch)).collect().sort('icao24','time')
         for (ac,),group in data.partition_by('icao24',as_dict=True).items():
             observed.add(ac)
@@ -216,6 +216,10 @@ An abstract-syntax comparison verifies that the inference and export functions m
 <p>Each tolerance match requires both endpoints to agree with the same reference flight. Reference records with null starts are excluded from these denominators.
 The 2024 and validation samples contain different aircraft populations and sizes. This is agreement with OpenSky, not accuracy against independently verified flights.
 Sampling aircraft already present in the flight table does not measure false positives among aircraft absent from that table.</p>
+<p>Of the {metrics['predicted']:,} predictions, {replica['predictions_matching_known_start_reference_within_30s']:,} match a known-start reference flight within 30 seconds at both ends;
+{replica['other_predictions_matching_null_start_reference_end']:,} others share the exact end of a reference flight whose start is null.
+The remaining {replica['remaining_unmatched_predictions']:,} predictions have neither match. These cases are saved in <code>unmatched_predictions.csv</code>.
+An unmatched prediction can be an extra flight, a split/merged reference flight or a larger timestamp discrepancy.</p>
 <h2>Airport fields and callsign</h2>
 <p>The following comparisons are conditional on the {replica['exact_boundary_pairs']:,} exact boundary matches.
 The public <code>{CATALOG}</code> catalog is unchanged; airport differences can reflect missing, renamed or moved airports.

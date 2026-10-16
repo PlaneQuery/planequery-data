@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>OpenSky validation 2026-03-01</title><style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 24px;color:#192d37;line-height:1.5}h1{line-height:1.2}.lead{font-size:1.2rem}table{border-collapse:collapse;width:100%;font-size:.88rem;margin:20px 0}th,td{border:1px solid #ccd8dd;padding:8px;text-align:left}th,pre{background:#eef4f6}pre{padding:15px;overflow:auto}h2{margin-top:32px}code{font-size:.9em}</style><body><h1>OpenSky fixed-model validation — 2026-03-01</h1>
+<p class="lead">Exact start/end agreement: <b>5,200/5,241 (99.22%)</b>.
+Both endpoints within 30 seconds: <b>5,219/5,241 (99.58%)</b>.
+The rules and airport catalog were fixed from the 2024-06-01 reconstruction before this validation.</p>
+<p>The full target partition contains 102,695 flights from 39,357 aircraft,
+including 375 null starts. Trajectories were reconstructed for a deterministic sample of
+2,048 aircraft, covering 5,264 reference flights
+(5,241 with known starts). The model emitted 5,237 target-day flights.
+All 2,048 sampled aircraft with available states were processed.</p>
+<p>Input context: 72 hours, 2,135,578,976 snapshots,
+43.50 GB compressed, from 2026-02-28 through 2026-03-02.
+The sample is selected by SHA-256 ordering of aircraft IDs with seed <code>opensky-20260301:</code>.
+No parameters were fitted, no alternative segmentation hypotheses were selected, and no airport coordinates were calibrated on this date.
+An abstract-syntax comparison verifies that the inference and export functions match the original commit, allowing only date parameters.</p>
+<h2>Accuracy compared with the development sample</h2>
+<table><thead><tr><th>Metric</th><th>2024-06-01: development sample</th><th>2026-03-01: temporal validation</th></tr></thead><tbody><tr><td>Both timestamps exact</td><td>1,424/1,431 (99.51%)</td><td>5,200/5,241 (99.22%)</td></tr><tr><td>Start exact</td><td>1,424/1,431 (99.51%)</td><td>5,201/5,241 (99.24%)</td></tr><tr><td>End exact</td><td>1,430/1,431 (99.93%)</td><td>5,228/5,241 (99.75%)</td></tr><tr><td>Both timestamps within 1 s</td><td>1,424/1,431 (99.51%)</td><td>5,200/5,241 (99.22%)</td></tr><tr><td>Both timestamps within 5 s</td><td>1,427/1,431 (99.72%)</td><td>5,207/5,241 (99.35%)</td></tr><tr><td>Both timestamps within 30 s</td><td>1,431/1,431 (100.00%)</td><td>5,219/5,241 (99.58%)</td></tr><tr><td>Both timestamps within 60 s</td><td>1,431/1,431 (100.00%)</td><td>5,221/5,241 (99.62%)</td></tr><tr><td>Both timestamps within 120 s</td><td>1,431/1,431 (100.00%)</td><td>5,225/5,241 (99.69%)</td></tr><tr><td>Exact timestamps, callsign and both airports</td><td>1,305/1,431 (91.19%)</td><td>4,761/5,241 (90.84%)</td></tr></tbody></table>
+<p>Each tolerance match requires both endpoints to agree with the same reference flight. Reference records with null starts are excluded from these denominators.
+The 2024 and validation samples contain different aircraft populations and sizes. This is agreement with OpenSky, not accuracy against independently verified flights.
+Sampling aircraft already present in the flight table does not measure false positives among aircraft absent from that table.</p>
+<p>Of the 5,237 predictions, 5,219 match a known-start reference flight within 30 seconds at both ends;
+0 others share the exact end of a reference flight whose start is null.
+The remaining 18 predictions have neither match. These cases are saved in <code>unmatched_predictions.csv</code>.
+An unmatched prediction can be an extra flight, a split/merged reference flight or a larger timestamp discrepancy.</p>
+<h2>Airport fields and callsign</h2>
+<p>The following comparisons are conditional on the 5,200 exact boundary matches.
+The public <code>ourairports_2024-06-01.parquet</code> catalog is unchanged; airport differences can reflect missing, renamed or moved airports.
+Null-to-null comparisons count as matches.</p>
+<table><thead><tr><th>Field</th><th>Exact matches</th></tr></thead><tbody><tr><td>callsign</td><td>5,200/5,200 (100.00%)</td></tr><tr><td>estdepartureairport</td><td>5,034/5,200 (96.81%)</td></tr><tr><td>estarrivalairport</td><td>4,881/5,200 (93.87%)</td></tr><tr><td>estdepartureairporthorizdistance</td><td>4,175/5,200 (80.29%)</td></tr><tr><td>estdepartureairportvertdistance</td><td>4,977/5,200 (95.71%)</td></tr><tr><td>estarrivalairporthorizdistance</td><td>3,992/5,200 (76.77%)</td></tr><tr><td>estarrivalairportvertdistance</td><td>4,846/5,200 (93.19%)</td></tr><tr><td>departureairportcandidatescount</td><td>4,357/5,200 (83.79%)</td></tr><tr><td>arrivalairportcandidatescount</td><td>3,122/5,200 (60.04%)</td></tr></tbody></table>
+<p>1,882/5,241 (35.91%) reference flights match the timestamps and all nine fields above together.
+Alternative-candidate ordering and identities remain unresolved and are excluded from that measure.</p>
+<h2>Full-table endpoint checks</h2>
+<table><thead><tr><th>Endpoint</th><th>Fresh valid source position found</th><th>Airport agreement using reference endpoints</th></tr></thead><tbody><tr><td>departure</td><td>102,320/102,320 (100.00%)</td><td>99,134/102,320 (96.89%)</td></tr><tr><td>arrival</td><td>102,695/102,695 (100.00%)</td><td>97,115/102,695 (94.57%)</td></tr></tbody></table>
+<p>The conditional airport check recognizes ident/GPS/ICAO aliases, while the exported replica emits GPS codes.
+The full table has 0 known durations at or below 600 seconds and
+5,295 below 900 seconds. Every record ends on its partition day: True.</p>
+<h2>Residuals and limits</h2>
+<p>41 known-start reference flights lack an exact boundary-pair match. The largest 30 residuals are shown below;
+all are saved in <code>best_model_residuals.csv</code> and Parquet. Blank deltas mean no prediction for that aircraft.
+The comparison selects the closest predicted pair for diagnostics; large deltas can indicate missing or merged flights rather than simple timestamp shifts.</p>
+<table><thead><tr><th>Aircraft</th><th>Reference start</th><th>Reference end</th><th>Predicted − reference start (s)</th><th>Predicted − reference end (s)</th></tr></thead><tbody><tr><td>a8c92f</td><td>1772318888</td><td>1772326038</td><td>None</td><td>None</td></tr><tr><td>a58a04</td><td>1772383761</td><td>1772386422</td><td>None</td><td>None</td></tr><tr><td>0d0764</td><td>1772384756</td><td>1772387647</td><td>None</td><td>None</td></tr><tr><td>a08c77</td><td>1772387535</td><td>1772389836</td><td>None</td><td>None</td></tr><tr><td>39cf0a</td><td>1772327008</td><td>1772340014</td><td>-90197</td><td>0</td></tr><tr><td>70c122</td><td>1772324083</td><td>1772367869</td><td>-86174</td><td>0</td></tr><tr><td>76cdae</td><td>1772323724</td><td>1772347879</td><td>-82310</td><td>0</td></tr><tr><td>0d115a</td><td>1772323204</td><td>1772348684</td><td>-81711</td><td>0</td></tr><tr><td>4bb0f4</td><td>1772323619</td><td>1772330028</td><td>19681</td><td>59825</td></tr><tr><td>0c2168</td><td>1772329225</td><td>1772331804</td><td>16209</td><td>54853</td></tr><tr><td>78075d</td><td>1772325473</td><td>1772353640</td><td>0</td><td>-27179</td></tr><tr><td>ae0899</td><td>1772389883</td><td>1772390487</td><td>-8815</td><td>-5901</td></tr><tr><td>a9e9f1</td><td>1772379077</td><td>1772382444</td><td>-11</td><td>-545</td></tr><tr><td>0c2057</td><td>1772389852</td><td>1772394098</td><td>-20</td><td>-147</td></tr><tr><td>ac6d36</td><td>1772305069</td><td>1772324363</td><td>122</td><td>0</td></tr><tr><td>a1e8b2</td><td>1772397573</td><td>1772409404</td><td>121</td><td>0</td></tr><tr><td>781795</td><td>1772301869</td><td>1772338613</td><td>115</td><td>0</td></tr><tr><td>00b099</td><td>1772394838</td><td>1772395822</td><td>-24</td><td>-77</td></tr><tr><td>a13583</td><td>1772371379</td><td>1772386887</td><td>-64</td><td>-74</td></tr><tr><td>a45e1a</td><td>1772377857</td><td>1772398614</td><td>-66</td><td>-65</td></tr><tr><td>782179</td><td>1772289266</td><td>1772357172</td><td>56</td><td>0</td></tr><tr><td>a7d2d8</td><td>1772406070</td><td>1772407318</td><td>-4</td><td>-34</td></tr><tr><td>781095</td><td>1772365558</td><td>1772398489</td><td>-26</td><td>0</td></tr><tr><td>781724</td><td>1772350518</td><td>1772359378</td><td>-22</td><td>0</td></tr><tr><td>a706be</td><td>1772387520</td><td>1772389346</td><td>21</td><td>0</td></tr><tr><td>a3e613</td><td>1772322874</td><td>1772324751</td><td>19</td><td>0</td></tr><tr><td>e80490</td><td>1772405184</td><td>1772406214</td><td>-18</td><td>-7</td></tr><tr><td>781ead</td><td>1772327275</td><td>1772328689</td><td>13</td><td>0</td></tr><tr><td>ab7678</td><td>1772338717</td><td>1772347503</td><td>13</td><td>0</td></tr><tr><td>80168a</td><td>1772324443</td><td>1772343626</td><td>9</td><td>0</td></tr></tbody></table>
+<p>0 sampled known starts precede the extracted context.
+One preceding day cannot recreate older pending state; one subsequent day may leave a high-altitude track unfinished.
+Null-start behavior and the exact historical OpenSky airport database are not reconstructed.</p>
+<h2>Reproduce</h2>
+<pre>POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/validate_date.py --date 2026-03-01 --sample-size 2048 --prepare-only
+POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/extract.py --date 2026-03-01 --sample-size 2048
+POLARS_MAX_THREADS=2 .venv/bin/python scripts/opensky_reverse_engineering/validate_date.py --date 2026-03-01 --sample-size 2048</pre>
+<p>Evidence and exported flights: <code>/mnt/storage2/planequery-data/data/processed/opensky_reverse_engineering/2026-03-01</code>.
+The frozen settings are in <code>validation_protocol.json</code>; runtime code hashes are in <code>validation_code_hashes.json</code>.
+Raw input files are read-only. The original model commit is <code>9d4453b8d24a4a76584d1426bb0699144d9dbfe1</code>.</p></body></html>
