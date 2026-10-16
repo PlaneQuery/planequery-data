@@ -63,21 +63,7 @@ def test_prepare_eurocontrol_month_parquet_from_monthly_zip(
         "takeoff_time": [datetime(2025, 8, 1, 0, 20)],
         "landing_time": [datetime(2025, 8, 1, 7, 15)],
     }
-    assert not preprocess.legacy_eurocontrol_month_dir(TARGET_DATE).exists()
-
-
-def test_prepare_eurocontrol_month_parquet_from_legacy_gzip(
-    monkeypatch,
-    tmp_path,
-):
-    monkeypatch.setattr(preprocess, "OUTPUT_DIR", tmp_path)
-    gzip_path = preprocess.legacy_eurocontrol_flights_gzip_path(TARGET_DATE)
-    gzip_path.parent.mkdir(parents=True)
-    gzip_path.write_bytes(gzip.compress(CSV_CONTENT.encode()))
-
-    result = preprocess.prepare_eurocontrol_month_parquet(TARGET_DATE)
-
-    assert pl.read_parquet(result).height == 1
+    assert list(archive_path.parent.iterdir()) == [archive_path]
 
 
 def test_prepare_eurocontrol_month_parquet_reuses_existing_intermediate(

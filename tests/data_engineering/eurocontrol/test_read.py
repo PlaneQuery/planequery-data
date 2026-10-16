@@ -110,4 +110,4 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
         "landing_airport_ident",
     ).row(0) == (None, None, 202, "EGLL")
     assert preprocess.eurocontrol_intermediate_path(target_date).is_file()
-    assert not preprocess.legacy_eurocontrol_month_dir(target_date).exists()
+    assert list(archive_path.parent.iterdir()) == [archive_path]
