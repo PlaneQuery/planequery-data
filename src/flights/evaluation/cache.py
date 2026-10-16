@@ -24,7 +24,7 @@ from flights.evaluation.models import (
 from flights.flight_source import ADSBFlightSource, FlightSource
 
 
-EVALUATION_CACHE_VERSION = 5
+EVALUATION_CACHE_VERSION = 6
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"

@@ -18,6 +18,8 @@ def _stats(test_date: date, *, true_positive: int = 2) -> EvaluationStats:
         adsb_source=ADSBSource.ADSBLOL,
         test_source="algorithm-nn",
         gold_source="bts",
+        gold_icao_count=4,
+        gold_icao_missing_from_test_count=1,
         true_positive=true_positive,
         false_positive=1,
         false_negative=2,
@@ -34,6 +36,7 @@ def test_evaluation_stats_are_explicit_and_round_trip_through_rows():
     assert stats.recall == pytest.approx(1 / 2)
     assert stats.f1 == pytest.approx(4 / 7)
     assert stats.airport_id_match_pct == 0.5
+    assert stats.gold_icao_missing_from_test_pct == 0.25
     assert EvaluationStats.from_row(stats.to_row()) == stats
 
 
@@ -53,11 +56,14 @@ def test_evaluation_stats_are_created_directly_from_comparison():
         adsb_source=ADSBSource.ADSBLOL,
         test_source="algorithm-nn",
         gold_source="bts",
+        gold_icao_count=3,
+        gold_icao_missing_from_test_count=1,
     )
 
     assert stats.true_positive == 2
     assert stats.false_positive == 1
     assert stats.false_negative == 1
+    assert stats.gold_icao_missing_from_test_pct == pytest.approx(1 / 3)
     assert stats.precision == pytest.approx(2 / 3)
     assert stats.recall == pytest.approx(2 / 3)
     assert stats.takeoff_airport_id_match_pct == 0.5
@@ -92,6 +98,8 @@ def test_evaluation_stats_reject_impossible_match_counts():
             adsb_source=None,
             test_source="test",
             gold_source="gold",
+            gold_icao_count=1,
+            gold_icao_missing_from_test_count=0,
             true_positive=1,
             false_positive=0,
             false_negative=0,

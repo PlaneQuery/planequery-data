@@ -127,6 +127,9 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
     )
     assert "test-only" not in comparison.get_column("icao").to_list()
     expected_metrics = {
+        "gold_icao_count": 2,
+        "gold_icao_missing_from_test_count": 1,
+        "gold_icao_missing_from_test_pct": 0.5,
         "true_positive": 1,
         "false_positive": 1,
         "false_negative": 1,
@@ -152,6 +155,54 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
     assert {key: row[key] for key in expected_metrics} == pytest.approx(
         expected_metrics
     )
+
+
+def test_gold_icao_coverage_uses_unique_input_aircraft_before_matching(
+    monkeypatch, tmp_path, capsys,
+):
+    target_date = date(2026, 3, 1)
+    noon = datetime(2026, 3, 1, 12)
+    frames = {
+        BTS_SOURCE.name: flights_to_flights_df([
+            _flight("shared", noon),
+            _flight("present-unmatched", noon),
+            _flight("missing", noon + timedelta(days=1)),
+        ]),
+        SFDPS_SOURCE.name: flights_to_flights_df([
+            _flight("shared", noon),
+            _flight("present-unmatched", noon + timedelta(hours=3)),
+            _flight("missing", noon),
+            _flight("missing", noon + timedelta(hours=3)),
+            _flight("boundary-only", datetime(2026, 3, 1, 0, 10)),
+            _flight("other-day", noon + timedelta(days=1)),
+        ]),
+    }
+    monkeypatch.setattr(
+        evaluation, "source_flights_reader",
+        lambda source, adsb_source=None: lambda _: frames[source.name].clone(),
+    )
+    monkeypatch.setattr(evaluation, "airport_catalog_for_date", _airport_catalog)
+    cache = EvaluationCache(tmp_path / "cache")
+    results = evaluation.evaluate(
+        BTS_SOURCE, SFDPS_SOURCE, target_date, evaluation_cache=cache,
+    )
+    stats = results.stats[0]
+    assert stats.gold_icao_count == 4
+    assert stats.gold_icao_missing_from_test_count == 2
+    assert stats.gold_icao_missing_from_test_pct == 0.5
+    assert "boundary-only" not in results.comparisons[0]["icao"].to_list()
+    assert results.to_frame().item(0, "gold_icao_missing_from_test_pct") == 0.5
+    assert "Gold ICAOs absent from test: 2/4 (50.00%)" in capsys.readouterr().out
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Cached evaluation should not read source flights")
+
+    monkeypatch.setattr(evaluation, "source_flights_reader", unexpected_read)
+    cached = evaluation.evaluate(
+        BTS_SOURCE, SFDPS_SOURCE, target_date, evaluation_cache=cache,
+    )
+    assert cached.stats == results.stats
+    assert "Gold ICAOs absent from test: 2/4 (50.00%)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

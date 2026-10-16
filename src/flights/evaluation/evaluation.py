@@ -342,19 +342,25 @@ def evaluate(
                             f"({selected_adsb_source or 'no ADS-B source'})"
                         )
                     else:
+                        test_flights = read_flights(
+                            resolved_test_source, test_adsb_source, target_date
+                        )
+                        gold_flights = read_flights(
+                            resolved_gold_source, gold_adsb_source, target_date
+                        )
                         comparison = _compare_day(
-                            read_flights(
-                                resolved_test_source,
-                                test_adsb_source,
-                                target_date,
-                            ),
-                            read_flights(
-                                resolved_gold_source,
-                                gold_adsb_source,
-                                target_date,
-                            ),
+                            test_flights,
+                            gold_flights,
                             target_date,
                             airport_catalog,
+                        )
+                        # Measure aircraft presence in the inputs, before matching
+                        # discards unmatched flights near the day's boundaries.
+                        test_icaos = set(
+                            _flights_on_date(test_flights, target_date)["icao"]
+                        )
+                        gold_icaos = set(
+                            _flights_on_date(gold_flights, target_date)["icao"]
                         )
                         stats = EvaluationStats.from_comparison(
                             comparison,
@@ -362,6 +368,10 @@ def evaluate(
                             adsb_source=selected_adsb_source,
                             test_source=resolved_test_source.name,
                             gold_source=resolved_gold_source.name,
+                            gold_icao_count=len(gold_icaos),
+                            gold_icao_missing_from_test_count=len(
+                                gold_icaos - test_icaos
+                            ),
                         )
                         cache_path = cache.store(
                             cache_key,
@@ -384,6 +394,12 @@ def evaluate(
                     print(
                         f"Stats for {resolved_test_source.name}:"
                         f"{resolved_gold_source.name} on {target_date}: {metrics}"
+                    )
+                    print(
+                        "Gold ICAOs absent from test: "
+                        f"{stats.gold_icao_missing_from_test_count}/"
+                        f"{stats.gold_icao_count} "
+                        f"({stats.gold_icao_missing_from_test_pct:.2%})"
                     )
 
     return EvaluationResults(entries=tuple(daily_results))

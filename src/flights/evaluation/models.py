@@ -17,6 +17,9 @@ EVALUATION_METADATA_COLUMNS = (
     "gold_src",
 )
 _METRIC_COLUMNS = (
+    "gold_icao_count",
+    "gold_icao_missing_from_test_count",
+    "gold_icao_missing_from_test_pct",
     "true_positive",
     "false_positive",
     "false_negative",
@@ -37,6 +40,7 @@ _METRIC_COLUMNS = (
     "airport_id_match_pct",
 )
 _RATE_COLUMNS = {
+    "gold_icao_missing_from_test_pct",
     "precision",
     "recall",
     "f1",
@@ -72,6 +76,8 @@ class EvaluationStats:
     adsb_source: ADSBSource | None
     test_source: str
     gold_source: str
+    gold_icao_count: int
+    gold_icao_missing_from_test_count: int
     true_positive: int
     false_positive: int
     false_negative: int
@@ -92,6 +98,10 @@ class EvaluationStats:
             raise ValueError("Evaluation counts cannot be negative")
         if any(value > self.true_positive for value in counts[3:]):
             raise ValueError("Airport match counts cannot exceed true_positive")
+        if not 0 <= self.gold_icao_missing_from_test_count <= self.gold_icao_count:
+            raise ValueError(
+                "Missing gold ICAO count must be between zero and gold_icao_count"
+            )
         if not self.test_source or not self.gold_source:
             raise ValueError("Evaluation sources cannot be empty")
 
@@ -104,6 +114,8 @@ class EvaluationStats:
         adsb_source: ADSBSource | None,
         test_source: str,
         gold_source: str,
+        gold_icao_count: int,
+        gold_icao_missing_from_test_count: int,
     ) -> Self:
         def count(expression: pl.Expr) -> int:
             return comparison.filter(expression).height
@@ -113,6 +125,8 @@ class EvaluationStats:
             adsb_source=adsb_source,
             test_source=test_source,
             gold_source=gold_source,
+            gold_icao_count=gold_icao_count,
+            gold_icao_missing_from_test_count=gold_icao_missing_from_test_count,
             true_positive=count(pl.col("match_status") == "both"),
             false_positive=count(pl.col("match_status") == "df0_only"),
             false_negative=count(pl.col("match_status") == "df1_only"),
@@ -144,6 +158,10 @@ class EvaluationStats:
             ),
             test_source=str(row["test_src"]),
             gold_source=str(row["gold_src"]),
+            gold_icao_count=_count(row, "gold_icao_count"),
+            gold_icao_missing_from_test_count=_count(
+                row, "gold_icao_missing_from_test_count"
+            ),
             true_positive=_count(row, "true_positive"),
             false_positive=_count(row, "false_positive"),
             false_negative=_count(row, "false_negative"),
@@ -155,6 +173,11 @@ class EvaluationStats:
             ),
             airport_id_match_count=_count(row, "airport_id_match_count"),
         )
+
+    @property
+    def gold_icao_missing_from_test_pct(self) -> float:
+        """Fraction of distinct daily gold ICAOs absent from the test input."""
+        return _ratio(self.gold_icao_missing_from_test_count, self.gold_icao_count)
 
     @property
     def precision(self) -> float:
@@ -201,6 +224,11 @@ class EvaluationStats:
             "adsb_src": self.adsb_source.value if self.adsb_source else None,
             "test_src": self.test_source,
             "gold_src": self.gold_source,
+            "gold_icao_count": self.gold_icao_count,
+            "gold_icao_missing_from_test_count": (
+                self.gold_icao_missing_from_test_count
+            ),
+            "gold_icao_missing_from_test_pct": self.gold_icao_missing_from_test_pct,
             "true_positive": self.true_positive,
             "false_positive": self.false_positive,
             "false_negative": self.false_negative,
