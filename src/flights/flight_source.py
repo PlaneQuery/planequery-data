@@ -32,6 +32,10 @@ class FlightSource(ABC):
     version: int = 1
     # TODO: Can have missing days range
 
+    def enrichment_adsb_source(self) -> ADSBSource | None:
+        """Optional ADS-B enrichment dependency for cache paths and manifests."""
+        return None
+
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
@@ -243,6 +247,7 @@ def flight_path(
     adsb_src: ADSBSource | None = None,
 ) -> Path:
     assert isinstance(source, ADSBFlightSource) == (adsb_src is not None)
+    adsb_src = adsb_src or source.enrichment_adsb_source()
 
     path = OUTPUT_DIR / "data" / "flights" / f"source={source.name}"
 
@@ -272,7 +277,7 @@ def _read_cached_flights_for_catalog(
 
     current_manifest = FlightManifest.from_provenance(
         airport_catalog.provenance,
-        adsb_source=adsb_src,
+        adsb_source=adsb_src or source.enrichment_adsb_source(),
     )
     cached_manifest = FlightManifest.read(manifest_path)
     if cached_manifest.flight_cache_key != current_manifest.flight_cache_key:
@@ -554,6 +559,6 @@ def write_flights_for_catalog(
     df_flights.write_parquet(path)
     FlightManifest.from_provenance(
         airport_catalog.provenance,
-        adsb_source=adsb_src,
+        adsb_source=adsb_src or source.enrichment_adsb_source(),
     ).write(flight_manifest_path(path))
     return df_flights

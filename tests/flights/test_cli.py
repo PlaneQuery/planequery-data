@@ -29,6 +29,27 @@ def empty_flights():
     return pl.DataFrame({"icao": []}, schema={"icao": pl.String})
 
 
+@pytest.mark.parametrize("provider_args, expected", [
+    ([], ADSBSource.ADSBLOL),
+    (["--adsb-source", "opensky"], ADSBSource.OPENSKY),
+])
+def test_eurocontrol_always_enriches_callsigns(monkeypatch, provider_args, expected):
+    calls = []
+    monkeypatch.setattr(cli, "write_flights_range", lambda *args, **kwargs: calls.append((args, kwargs)))
+    cli.main([
+        "2024-06-01", "2024-06-02", "eurocontrol",
+        *provider_args,
+    ])
+    source = calls[0][0][2]
+    assert source.callsign_source is expected
+    assert source.enrichment_adsb_source() is expected
+
+
+def test_eurocontrol_callsign_flag_is_removed():
+    with pytest.raises(SystemExit):
+        cli.parse_args(["2024-06-01", "2024-06-02", "eurocontrol", "--eurocontrol-callsigns"])
+
+
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
 @pytest.mark.parametrize("workers", [1, 4])
 def test_range_skips_flights_requiring_bad_adsblol_day(

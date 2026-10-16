@@ -4,11 +4,13 @@ from datetime import date
 import polars as pl
 
 from airports.catalog import AirportCatalogView
+from data_engineering.adsb.canonical import ADSBSource, coerce_adsb_source
 from data_engineering.eurocontrol.preprocess import prepare_eurocontrol_month_parquet
 from data_engineering.openairframes.read import get_openairframes_snapshot
 from flights.airport_reference import resolve_flight_airport_codes
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
+from flights.providers.eurocontrol_callsigns import enrich_eurocontrol_callsigns
 
 
 EUROCONTROL_AIRPORT_CODE_PRIORITY = (
@@ -23,6 +25,8 @@ EUROCONTROL_AIRPORT_CODE_PRIORITY = (
 def create_eurocontrol_flights(
     target_date: date,
     airport_catalog: AirportCatalogView,
+    *,
+    callsign_source: ADSBSource = ADSBSource.ADSBLOL,
 ) -> pl.DataFrame:
     df = (
         pl.scan_parquet(prepare_eurocontrol_month_parquet(target_date))
@@ -72,17 +76,27 @@ def create_eurocontrol_flights(
         "aircraft_type",
         "owner",
     )
-    return with_flight_schema_columns(df)
+    df = with_flight_schema_columns(df)
+    return enrich_eurocontrol_callsigns(df, callsign_source)
 
 
 @dataclass(frozen=True)
 class EurocontrolFlightSource(NonADSBFlightSource):
     name: str = "eurocontrol"
-    version: int = 5
+    version: int = 6
+    callsign_source: ADSBSource = ADSBSource.ADSBLOL
+
+    def __post_init__(self) -> None:
+        coerce_adsb_source(self.callsign_source)
+
+    def enrichment_adsb_source(self) -> ADSBSource:
+        return self.callsign_source
 
     def create_flights_for_day(
         self,
         dt: date,
         airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
-        return create_eurocontrol_flights(dt, airport_catalog)
+        return create_eurocontrol_flights(
+            dt, airport_catalog, callsign_source=self.callsign_source
+        )

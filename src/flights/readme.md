@@ -78,9 +78,42 @@ remain null. `landing_time` uses `ACTUAL ARRIVAL TIME` from the flights summary.
 Daily partitions are selected by the takeoff date.
 
 The monthly cache is `data/intermediate/eurocontrol/version=2/YYYYMM.parquet`,
-and daily files are written under `data/flights/source=eurocontrol/version=5/`.
+and daily files are written under
+`data/flights/source=eurocontrol/adsb_source=adsblol/version=6/` by default.
 These versions bypass older caches that used off-block time for takeoff.
 Temporary CSV files are removed automatically. If the monthly ZIP is absent,
 the source reads the two required files directly from
 `data/raw/eurocontrol/YYYYMM/`, supporting both `.csv.gz` and `.csv` files.
 Existing extracted inputs are retained unchanged.
+
+Every EUROCONTROL build enriches callsigns using locally cached ADS-B data.
+ADSB.lol is the default provider; use `--adsb-source` to choose another:
+
+```bash
+python -m flights.cli 2024-06-01 2024-06-02 eurocontrol \
+  --adsb-source opensky
+```
+
+Supported providers are `adsblol`, `opensky`, and `adsbx`. Enrichment scans only complete local
+canonical ADS-B partitions for the aircraft and dates covered by the flights,
+including arrival dates for overnight flights. It does not download missing
+partitions. Flights without sufficient coverage remain in the output with an
+empty callsign.
+
+Observations must match the aircraft's ICAO address and fall in its
+`[takeoff_time, landing_time)` interval. Callsigns are uppercased with whitespace
+removed; valid values contain 1–8 letters or digits. Each distinct callsign
+receives at most one vote per minute per flight. A callsign needs at least
+three supporting minutes and 80% of valid votes; otherwise it remains empty.
+Missing observations are never filled from another flight.
+
+Enriched files use a separate provider-specific path, for example
+`data/flights/source=eurocontrol/adsb_source=adsblol/version=6/`, and their
+manifests track the ADS-B provider and Parquet version. Rerun the CLI to rebuild
+enriched flights after adding previously missing ADS-B partitions.
+
+From Python, `EurocontrolFlightSource()` always enriches using ADSB.lol.
+Pass `EurocontrolFlightSource(callsign_source=ADSBSource.OPENSKY)` to
+`get_flights`/`write_flights` to select OpenSky, or call
+`enrich_eurocontrol_callsigns(flights, ADSBSource.ADSBLOL)` from
+`flights.providers.eurocontrol_callsigns` on an existing flight DataFrame.

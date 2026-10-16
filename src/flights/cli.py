@@ -18,6 +18,7 @@ from flights.flight_source import (
     write_flights,
 )
 from flights.providers.mike import MikeFlightSource
+from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
     FLIGHT_SOURCES,
@@ -237,7 +238,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=ADSBSource,
         choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
-        help="ADS-B provider used by ADS-B flight sources (default: adsblol).",
+        help="ADS-B provider for flight sources or EUROCONTROL callsigns (default: adsblol).",
     )
     parser.add_argument(
         "--airport-nn-model",
@@ -276,6 +277,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.workers is not None and args.workers < 1:
         raise SystemExit("--workers must be positive")
     source = FLIGHT_SOURCES_BY_NAME[args.source]
+    if isinstance(source, EurocontrolFlightSource):
+        source = replace(source, callsign_source=args.adsb_source)
     if args.mike_input is not None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)
