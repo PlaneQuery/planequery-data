@@ -78,7 +78,7 @@ def create_eurocontrol_flights(
 @dataclass(frozen=True)
 class EurocontrolFlightSource(NonADSBFlightSource):
     name: str = "eurocontrol"
-    version: int = 4
+    version: int = 5
 
     def create_flights_for_day(
         self,
