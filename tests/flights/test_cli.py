@@ -164,10 +164,17 @@ def test_adsblol_algorithm_dates_include_adjacent_days(source_name):
 
 
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
-@pytest.mark.parametrize("adsb_source", [ADSBSource.ADSBX, ADSBSource.OPENSKY])
-def test_non_adsblol_algorithm_dates_use_only_target_day(
+@pytest.mark.parametrize(
+    "adsb_source, expected",
+    [
+        (ADSBSource.ADSBX, [date(2026, 1, 1)]),
+        (ADSBSource.OPENSKY, [date(2025, 12, 31), date(2026, 1, 1), date(2026, 1, 2)]),
+    ],
+)
+def test_non_adsblol_algorithm_dates_use_provider_window(
     source_name,
     adsb_source,
+    expected,
 ):
     source = cli.FLIGHT_SOURCES_BY_NAME[source_name]
 
@@ -175,7 +182,7 @@ def test_non_adsblol_algorithm_dates_use_only_target_day(
         source,
         [date(2026, 1, 1)],
         adsb_source,
-    ) == [date(2026, 1, 1)]
+    ) == expected
 
 
 def test_range_worker_reuses_initialized_source(monkeypatch, tmp_path):

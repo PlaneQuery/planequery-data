@@ -200,7 +200,15 @@ class EvaluationCacheKey:
         adsb_parquet_version: int | None = None
         if source_uses_adsb and adsb_source is not None:
             normalized_adsb_source = adsb_source.value
-            adsb_parquet_version = ADSB_PARQUET_VERSIONS[adsb_source]
+            uses_canonical = any(
+                isinstance(source, ADSBFlightSource)
+                and source.flight_manifest(
+                    airport_catalog.provenance, adsb_source
+                ).adsb_parquet_version is not None
+                for source in (test_source, gold_source)
+            )
+            if uses_canonical:
+                adsb_parquet_version = ADSB_PARQUET_VERSIONS[adsb_source]
 
         return cls(
             test_date=test_date,
