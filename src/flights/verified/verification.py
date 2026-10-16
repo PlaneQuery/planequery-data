@@ -32,6 +32,12 @@ def _check_consecutive_airports(df: pl.DataFrame):
     df
     .group_by("icao", maintain_order=True)
     .agg(
+        (
+            pl.col("takeoff_airport_ident").is_not_null()
+            & (pl.col("takeoff_airport_ident") != "")
+            & pl.col("landing_airport_ident").is_not_null()
+            & (pl.col("landing_airport_ident") != "")
+        ).all().alias("known_airports"),
         pl.col("landing_airport_ident")
         .shift(1)
         .eq_missing(pl.col("takeoff_airport_ident"))
@@ -39,7 +45,7 @@ def _check_consecutive_airports(df: pl.DataFrame):
         .all()
         .alias("is_valid")
     )
-    .filter(pl.col("is_valid"))
+    .filter(pl.col("is_valid") & pl.col("known_airports"))
     .get_column("icao")
     .to_list()
     )
@@ -73,16 +79,16 @@ def _filter_icaos(
     print(f"Filtered {len(icaos) - len(valid_icaos)} ICAOs out of {len(icaos)} due to {func.__name__}")
     return df_flights
 
-def verify_flights(airport_catalog, df_flights, df_adsb):
+def verify_flights(airport_catalog, df_flights, df_adsb, *, require_us_faa_airspace=True):
     df_flights = _filter_icaos(df_flights, _check_consecutive_airports)
-    df_flights = _filter_icaos(
-        df_flights,
-        _check_flights_in_us_faa_airspace,
-        airport_catalog,
-    )
+    if require_us_faa_airspace:
+        df_flights = _filter_icaos(
+            df_flights,
+            _check_flights_in_us_faa_airspace,
+            airport_catalog,
+        )
     icaos = df_flights.get_column("icao").unique().to_list()
     df_adsb = df_adsb.filter(pl.col("icao").is_in(icaos))
     df_history = get_callsign_history(df_adsb)
     df_flights = _filter_icaos(df_flights, _validate_callsign_history, df_history)
     return df_flights
-

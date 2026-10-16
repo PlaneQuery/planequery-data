@@ -50,6 +50,19 @@ def test_eurocontrol_callsign_flag_is_removed():
         cli.parse_args(["2024-06-01", "2024-06-02", "eurocontrol", "--eurocontrol-callsigns"])
 
 
+@pytest.mark.parametrize("provider_args, expected", [
+    ([], ADSBSource.ADSBLOL),
+    (["--adsb-source", "opensky"], ADSBSource.OPENSKY),
+])
+def test_eurocontrol_verified_cli_selects_matching_provider(monkeypatch, provider_args, expected):
+    calls = []
+    monkeypatch.setattr(cli, "write_flights_range", lambda *args, **kwargs: calls.append(args[2]))
+    cli.main(["2024-06-01", "2024-06-02", "eurocontrol-verified", *provider_args])
+    assert calls[0].name == "eurocontrol-verified"
+    assert calls[0].source.callsign_source is expected
+    assert calls[0].enrichment_adsb_source() is expected
+
+
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
 @pytest.mark.parametrize("workers", [1, 4])
 def test_range_skips_flights_requiring_bad_adsblol_day(

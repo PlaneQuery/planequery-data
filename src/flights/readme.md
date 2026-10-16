@@ -117,3 +117,23 @@ Pass `EurocontrolFlightSource(callsign_source=ADSBSource.OPENSKY)` to
 `get_flights`/`write_flights` to select OpenSky, or call
 `enrich_eurocontrol_callsigns(flights, ADSBSource.ADSBLOL)` from
 `flights.providers.eurocontrol_callsigns` on an existing flight DataFrame.
+
+Use `eurocontrol-verified` to apply the verified-flight consistency checks:
+
+```bash
+python -m flights.cli 2024-06-01 2024-06-02 eurocontrol-verified
+```
+
+It requires known, consecutive airports and at least four flights per aircraft,
+with the flight callsign sequence matching the ADS-B callsign history exactly.
+Unlike `bts-verified` and `sfdps-verified`, it accepts airports outside US FAA
+airspace. It sorts flights and observations and includes overnight arrivals.
+The same `--adsb-source` provider is used for enrichment and verification;
+verification reads ADS-B through the standard reader, which can fetch missing
+partitions. Callsigns are refreshed from those observations before checking the
+sequence, so this is a consistency check, not independent callsign ground truth.
+Aircraft that fail the checks are excluded.
+
+The source is also available as `EUROCONTROL_VERIFIED_SOURCE` from
+`flights.sources` and by name in the evaluation CLI. Its default output path is
+`data/flights/source=eurocontrol-verified/adsb_source=adsblol/version=1/`.

@@ -19,6 +19,7 @@ from flights.flight_source import (
 )
 from flights.providers.mike import MikeFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
+from flights.verified.source import VerifiedFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
     FLIGHT_SOURCES,
@@ -279,6 +280,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     source = FLIGHT_SOURCES_BY_NAME[args.source]
     if isinstance(source, EurocontrolFlightSource):
         source = replace(source, callsign_source=args.adsb_source)
+    elif isinstance(source, VerifiedFlightSource) and isinstance(source.source, EurocontrolFlightSource):
+        source = VerifiedFlightSource(replace(source.source, callsign_source=args.adsb_source))
     if args.mike_input is not None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)
