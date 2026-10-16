@@ -134,6 +134,27 @@ def test_long_gap_uses_displacement_speed_not_reported_velocity():
     assert reconstruct_arrival_day(DAY, landed, catalog()).height == 2
 
 
+@pytest.mark.parametrize("gap, expected_flights", [(600, 1), (601, 2)])
+def test_gap_threshold_is_strict(gap, expected_flights):
+    times = np.r_[np.arange(100, 1101), np.arange(1100 + gap, 2101 + gap)]
+    data = states(
+        times, longitude=np.r_[np.arange(1001), np.arange(1000, 2001)] * 100 / 111195
+    )
+    assert reconstruct_arrival_day(DAY, data, catalog()).height == expected_flights
+
+
+def test_median_removes_an_interior_altitude_outlier():
+    data = states(np.arange(30)).with_columns(
+        pl.when(pl.col("time") == EPOCH + 16)
+        .then(9000.0)
+        .otherwise(pl.col("baroaltitude"))
+        .alias("baroaltitude")
+    )
+    clean = _clean_batch(data)
+    assert EPOCH + 15.25 not in clean["lastposupdate"]
+    assert len(clean["lastposupdate"]) == 20
+
+
 def test_raw_pending_context_and_empty_following_day_are_replayed():
     # A cruise segment is closed by a low-speed gap; its final six raw rows
     # must survive into the next daily batch even when that batch is empty.
@@ -168,6 +189,26 @@ def test_takeoff_partition_includes_overnight_and_excludes_prior_day():
     ).is_empty()
 
 
+def test_replay_is_invariant_to_utc_date_across_year_boundary():
+    data = states(np.arange(-1000, 1001))
+    original = reconstruct_arrival_day(DAY, data, catalog())
+    target = date(2027, 1, 1)
+    shift = (target - DAY).days * 86400
+    moved = data.with_columns(pl.col("time") + shift, pl.col("lastposupdate") + shift)
+    shifted = reconstruct_arrival_day(target, moved, catalog())
+    assert original.height == shifted.height == 1
+    restored = shifted.with_columns(
+        pl.col(column) - pl.duration(seconds=shift)
+        for column in (
+            "takeoff_time",
+            "landing_time",
+            "first_message_time",
+            "last_message_time",
+        )
+    )
+    assert restored.equals(original)
+
+
 def test_airport_gates_and_eligibility():
     base = catalog().airports[0]
     candidates = [
@@ -182,6 +223,21 @@ def test_airport_gates_and_eligibility():
     assert airports.candidate(0.0, 0.0, 100.0, departure=False).id == 6
     assert airports.candidate(0.0, 0.18, 2500.0, departure=False) is None
     assert not airports.close_last(0.0, 0.18, 2500.0)
+
+
+def test_airports_rank_horizontal_distance_after_vertical_gate():
+    base = catalog().airports[0]
+    airports = EndpointAirports(
+        catalog(
+            [
+                replace(base, id=2, gps_code="NEAR", lon=0.009, elevation_ft=0),
+                replace(base, id=3, gps_code="LEVEL", lon=0.01, elevation_ft=6234),
+                replace(base, id=4, gps_code="HIGH", lon=0.0, elevation_ft=20000),
+            ]
+        )
+    )
+    # Both NEAR and LEVEL pass the altitude gate; horizontal distance wins.
+    assert airports.candidate(0.0, 0.0, 1900.0, departure=True).id == 2
 
 
 def write_raw_days(tmp_path, monkeypatch, data, days):
