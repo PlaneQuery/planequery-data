@@ -47,30 +47,6 @@ def eurocontrol_flights_filename(target_date: date) -> str:
     return f"Flights_{month_start:%Y%m%d}_{month_end:%Y%m%d}.csv"
 
 
-def legacy_eurocontrol_month_dir(target_date: date) -> Path:
-    return (
-        OUTPUT_DIR
-        / "data"
-        / "raw"
-        / "eurocontrol"
-        / f"{target_date:%Y%m}"
-    )
-
-
-def legacy_eurocontrol_flights_gzip_path(target_date: date) -> Path:
-    return legacy_eurocontrol_month_dir(target_date) / (
-        eurocontrol_flights_filename(target_date) + ".gz"
-    )
-
-
-def legacy_eurocontrol_flights_csv_path(target_date: date) -> Path:
-    return (
-        legacy_eurocontrol_month_dir(target_date)
-        / "extract"
-        / eurocontrol_flights_filename(target_date)
-    )
-
-
 def _archive_member(archive: ZipFile, filename: str) -> ZipInfo:
     matches = [
         info
@@ -124,35 +100,16 @@ def _extract_archive_csv(
 @contextmanager
 def _temporary_month_csv(target_date: date) -> Iterator[Path]:
     archive_path = eurocontrol_archive_path(target_date)
-    legacy_csv_path = legacy_eurocontrol_flights_csv_path(target_date)
-    if not archive_path.is_file() and legacy_csv_path.is_file():
-        yield legacy_csv_path
-        return
+    if not archive_path.is_file():
+        raise FileNotFoundError(
+            "Eurocontrol monthly input not found. Expected the raw archive "
+            f"{archive_path}"
+        )
 
     with tempfile.TemporaryDirectory(prefix="planequery-eurocontrol-") as temp_dir:
         temporary_csv_path = Path(temp_dir) / eurocontrol_flights_filename(target_date)
-        if archive_path.is_file():
-            _extract_archive_csv(target_date, archive_path, temporary_csv_path)
-            yield temporary_csv_path
-            return
-
-        legacy_gzip_path = legacy_eurocontrol_flights_gzip_path(target_date)
-        if legacy_gzip_path.is_file():
-            try:
-                with gzip.open(legacy_gzip_path, "rb") as source:
-                    _copy_to_path(source, temporary_csv_path)
-            except gzip.BadGzipFile as error:
-                raise ValueError(
-                    f"Invalid Eurocontrol gzip file: {legacy_gzip_path}"
-                ) from error
-            yield temporary_csv_path
-            return
-
-        raise FileNotFoundError(
-            "Eurocontrol monthly input not found. Expected the raw archive "
-            f"{archive_path} or legacy input {legacy_csv_path} or "
-            f"{legacy_gzip_path}"
-        )
+        _extract_archive_csv(target_date, archive_path, temporary_csv_path)
+        yield temporary_csv_path
 
 
 def _datetime_expr(column_name: str, alias: str) -> pl.Expr:
@@ -194,7 +151,7 @@ def prepare_eurocontrol_month_parquet(target_date: date) -> Path:
 
     Only the original archive and normalized Parquet are retained. Nested gzip
     and CSV data are streamed through a temporary directory and removed when
-    preprocessing finishes. Existing legacy CSV/gzip inputs remain readable.
+    preprocessing finishes.
     """
     destination = eurocontrol_intermediate_path(target_date)
     if destination.is_file():
