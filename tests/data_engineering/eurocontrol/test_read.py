@@ -1,6 +1,6 @@
 import gzip
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from zipfile import ZipFile
 
 import polars as pl
@@ -38,20 +38,32 @@ class FakeAirportCatalog:
 
 
 def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
-    target_date = date(2025, 8, 1)
+    target_date = date(2025, 8, 2)
     raw_csv = (
-        '"AC Registration","ADEP","ADES","AC Type","AC Operator",'
+        '"ECTRL ID","AC Registration","ADEP","ADES","AC Type","AC Operator",'
         '"ACTUAL OFF BLOCK TIME","ACTUAL ARRIVAL TIME"\n'
-        '"N123AB","KJFK","EGLL","GLEX","TST",'
-        '"01-08-2025 00:20:00","01-08-2025 07:15:00"\n'
-        '"N123AB","UTAN","EGLL","GLEX","TST",'
-        '"01-08-2025 08:20:00","01-08-2025 15:15:00"\n'
+        '"123","N123AB","KJFK","EGLL","GLEX","TST",'
+        '"01-08-2025 23:55:00","02-08-2025 07:15:00"\n'
+        '"456","N123AB","UTAN","EGLL","GLEX","TST",'
+        '"02-08-2025 08:20:00","02-08-2025 15:15:00"\n'
+        '"789","N123AB","KJFK","EGLL","GLEX","TST",'
+        '"02-08-2025 23:55:00","03-08-2025 07:15:00"\n'
+    )
+    fir_csv = (
+        '"ECTRL ID","Sequence Number","FIR ID","Entry Time","Exit Time"\n'
+        '"789","0","TAXI_OUT","02-08-2025 23:55:00","03-08-2025 00:10:00"\n'
+        '"456","0","TAXI_OUT","02-08-2025 08:20:00","02-08-2025 08:35:00"\n'
+        '"123","0","TAXI_OUT","01-08-2025 23:55:00","02-08-2025 00:10:00"\n'
     )
     archive_path = tmp_path / "data/raw/eurocontrol/202508.zip"
     archive_path.parent.mkdir(parents=True)
     member_name = "202508/Flights_20250801_20250831.csv.gz"
     with ZipFile(archive_path, "w") as archive:
         archive.writestr(member_name, gzip.compress(raw_csv.encode()))
+        archive.writestr(
+            member_name.replace("Flights_", "Flight_FIRs_Actual_"),
+            gzip.compress(fir_csv.encode()),
+        )
 
     airport_catalog = FakeAirportCatalog(
         AirportCatalogProvenance(
@@ -90,11 +102,17 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path):
     )
     assert output_path == (
         tmp_path
-        / "data/flights/source=eurocontrol/version=4"
-        / "year=2025/month=08/day=01/data.parquet"
+        / "data/flights/source=eurocontrol/version=5"
+        / "year=2025/month=08/day=02/data.parquet"
     )
     assert output_path.is_file()
     assert pl.read_parquet(output_path).equals(result)
+    assert result["takeoff_time"].sort().to_list() == [
+        datetime(2025, 8, 2, 0, 10), datetime(2025, 8, 2, 8, 35)
+    ]
+    assert result["landing_time"].sort().to_list() == [
+        datetime(2025, 8, 2, 7, 15), datetime(2025, 8, 2, 15, 15)
+    ]
     assert result.select(
         "icao",
         "registration",

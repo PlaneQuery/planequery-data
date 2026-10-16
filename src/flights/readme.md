@@ -70,8 +70,17 @@ Then create every daily partition in that month with an exclusive end date:
 python -m flights.cli 2025-08-01 2025-09-01 eurocontrol
 ```
 
-The Eurocontrol source extracts only the required `Flights_*.csv.gz` member to
-a temporary directory, creates `data/intermediate/eurocontrol/YYYYMM.parquet`,
-and writes daily files under `data/flights/source=eurocontrol/version=3/`.
-Temporary gzip/CSV files are removed automatically. Existing legacy extracted
-inputs remain supported as fallbacks.
+The Eurocontrol source extracts the `Flights_*.csv.gz` and
+`Flight_FIRs_Actual_*.csv.gz` members to a temporary directory (uncompressed CSV
+members are also supported). It joins them by `ECTRL ID` and uses `Exit Time`
+where `FIR ID` is `TAXI_OUT` for `takeoff_time`; missing or invalid exit times
+remain null. `landing_time` uses `ACTUAL ARRIVAL TIME` from the flights summary.
+Daily partitions are selected by the takeoff date.
+
+The monthly cache is `data/intermediate/eurocontrol/version=2/YYYYMM.parquet`,
+and daily files are written under `data/flights/source=eurocontrol/version=5/`.
+These versions bypass older caches that used off-block time for takeoff.
+Temporary CSV files are removed automatically. If the monthly ZIP is absent,
+the source reads the two required files directly from
+`data/raw/eurocontrol/YYYYMM/`, supporting both `.csv.gz` and `.csv` files.
+Existing extracted inputs are retained unchanged.
