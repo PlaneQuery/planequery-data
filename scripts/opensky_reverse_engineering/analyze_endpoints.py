@@ -54,7 +54,7 @@ def metadata_audit(f: pl.DataFrame):
               'consecutive_flights_overlap':adjacent.filter(pl.col('gap')<0).height,
               'all_end_on_partition_day': bool(((f['lastseen']//86400)*86400 == f['day']).all()),
               'firstseen_before_day': int((f['firstseen'] < f['day']).sum()),
-              'firstseen_null_lastseen_range': quantiles(f.filter(pl.col('firstseen').is_null())['lastseen'] - 1717200000)}
+              'firstseen_null_lastseen_range': quantiles(f.filter(pl.col('firstseen').is_null()).select(pl.col('lastseen')-pl.col('day')).to_series())}
     for kind in ['departure', 'arrival']:
         prefix = 'est'+kind+'airport'
         rows = f.select(prefix, prefix+'horizdistance', prefix+'vertdistance', 'other'+kind+'airportcandidates', kind+'airportcandidatescount')

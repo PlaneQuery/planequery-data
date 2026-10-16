@@ -14,6 +14,7 @@ import gc
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
 import pyarrow as pa
@@ -46,17 +47,21 @@ def read_hour(path: Path) -> pa.BufferReader:
     return pa.BufferReader(data)
 
 
-def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = None, only_hours: list[str] | None = None) -> None:
+def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = None, only_hours: list[str] | None = None,
+            target_date: date = date(2024,6,1)) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    flights = pl.read_parquet(raw / 'flights_data4/year=2024/month=06/day=01/data.parquet').with_row_index('flight_id')
+    flights = pl.read_parquet(raw / 'flights_data4' / target_date.strftime('year=%Y/month=%m/day=%d') / 'data.parquet').with_row_index('flight_id')
     # Hash order gives a reproducible aircraft sample without depending on file order.
-    aircraft = sorted(flights['icao24'].unique(), key=lambda x: hashlib.sha256(('opensky-20240601:'+x).encode()).hexdigest())
+    aircraft = sorted(flights['icao24'].unique(), key=lambda x: hashlib.sha256((f'opensky-{target_date:%Y%m%d}:'+x).encode()).hexdigest())
     selected = aircraft[:sample_size]
     manifest = {'sample_size': sample_size, 'sample_aircraft': selected,
-                'raw_root': str(raw), 'probe_offsets': list(range(-2, 4))}
+                'raw_root': str(raw), 'probe_offsets': list(range(-2, 4)), 'target_date': target_date.isoformat()}
     manifest_path = out / 'manifest.json'
-    if manifest_path.exists() and json.loads(manifest_path.read_text()) != manifest:
-        raise ValueError('Cache manifest differs; use a separate output directory')
+    if manifest_path.exists():
+        existing=json.loads(manifest_path.read_text())
+        existing.setdefault('target_date','2024-06-01')
+        if existing != manifest:
+            raise ValueError('Cache manifest differs; use a separate output directory')
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
     flights.write_parquet(out / 'reference_flights.parquet')
     endpoints = pl.concat([
@@ -65,11 +70,13 @@ def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = No
     ]).drop_nulls('endpoint_time')
     probes = endpoints.join(pl.DataFrame({'offset': list(range(-2, 4))}), how='cross').with_columns(
         (pl.col('endpoint_time') + pl.col('offset')).alias('time'))
-    files = sorted(p for day in ['month=05/day=31','month=06/day=01','month=06/day=02']
-                   for p in (raw/'state_vectors_data4/year=2024'/day).glob('hour=*/data.parquet'))
+    dates=[target_date+timedelta(days=offset) for offset in [-1,0,1]]
+    files = sorted(p for day in dates
+                   for p in (raw/'state_vectors_data4'/day.strftime('year=%Y/month=%m/day=%d')).glob('hour=*/data.parquet'))
     if len(files) != 72:
-        raise ValueError(f'Expected 72 input hours for May 31–June 2, found {len(files)}')
-    files.sort(key=lambda p: (0 if 'month=06/day=01' in str(p) else 1 if 'month=05/day=31' in str(p) else 2, str(p)))
+        raise ValueError(f'Expected 72 input hours around {target_date}, found {len(files)}')
+    day_order={day.strftime('year=%Y/month=%m/day=%d'):rank for rank,day in enumerate([target_date,dates[0],dates[2]])}
+    files.sort(key=lambda p: (day_order['/'.join(p.parts[-5:-2])],str(p)))
     for number, path in enumerate(files[:limit] if limit else files):
         label = '-'.join(part.split('=')[1] for part in path.parts[-5:-1])
         if only_hours and label not in only_hours:
@@ -85,7 +92,6 @@ def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = No
         buffer = read_hour(path)
         pf = pq.ParquetFile(buffer)
         # Partition paths are UTC. Min/max metadata are not required to exist.
-        from datetime import datetime, timezone
         hour = int(datetime.strptime(label, '%Y-%m-%d-%H').replace(tzinfo=timezone.utc).timestamp())
         hp = probes.filter(pl.col('time').is_between(hour, hour+3599))
         samples, hits = [], []
@@ -96,11 +102,13 @@ def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = No
                 hits.append(d.join(hp, on=['icao24', 'time'], how='inner'))
         sample_path.parent.mkdir(exist_ok=True)
         endpoint_path.parent.mkdir(exist_ok=True)
-        sample = pl.concat(samples)
+        # Sorted row groups allow later aircraft-range batches to skip most
+        # of the cache instead of decoding every aircraft repeatedly.
+        sample = pl.concat(samples).sort('icao24','time')
         hit = pl.concat(hits) if hits else pl.DataFrame(schema={**sample.schema, **hp.drop('icao24', 'time').schema})
         for data, dest in [(sample, sample_path), (hit, endpoint_path)]:
             temp = dest.with_suffix('.tmp')
-            data.write_parquet(temp, compression='zstd')
+            data.write_parquet(temp, compression='zstd',row_group_size=25000)
             temp.replace(dest)
         print(f'{number+1}/{len(files)} {label}: {pf.metadata.num_rows:,} rows; sample {sample.height:,}; probes {hit.height:,}; {time.monotonic()-t0:.1f}s', flush=True)
         del samples, hits, sample, hit, d, batch, pf, buffer, data
@@ -111,9 +119,10 @@ def extract(raw: Path, out: Path, sample_size: int = 512, limit: int | None = No
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--raw', type=Path, default=RAW)
-    parser.add_argument('--out', type=Path, default=OUT)
+    parser.add_argument('--out', type=Path)
+    parser.add_argument('--date', type=date.fromisoformat, default=date(2024,6,1))
     parser.add_argument('--sample-size', type=int, default=512)
     parser.add_argument('--limit', type=int)
     parser.add_argument('--only-hours', nargs='+')
     args = parser.parse_args()
-    extract(args.raw, args.out, args.sample_size, args.limit, args.only_hours)
+    extract(args.raw, args.out or OUT.parent/args.date.isoformat(), args.sample_size, args.limit, args.only_hours,args.date)
