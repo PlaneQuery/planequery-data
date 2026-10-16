@@ -32,7 +32,7 @@ def record(ac,x,start,end):
         'first_baroaltitude':float(x['baroaltitude'][start]),'last_baroaltitude':float(x['baroaltitude'][end-1])}
 
 
-def infer(ac,states,airports,reprocess_empty=True,trim_before_filter=True,carry_raw=True):
+def infer(ac,states,airports,reprocess_empty=True,trim_before_filter=True,carry_raw=True,target_day=DAY):
     """Infer flights; defaults select the best measured configuration.
 
     These are empirically inferred batch semantics, not recovered production
@@ -42,7 +42,7 @@ def infer(ac,states,airports,reprocess_empty=True,trim_before_filter=True,carry_
                 trim_start=3,trim_end=6,split='median_quarter',trim_before_filter=trim_before_filter)
     carry=None
     output=[]
-    for day in [DAY-86400,DAY,DAY+86400]:
+    for day in [target_day-86400,target_day,target_day+86400]:
         new=states.filter(pl.col('time').is_between(day,day+86399)
             &pl.col('lat').is_finite()&pl.col('lon').is_finite()&pl.col('baroaltitude').is_finite()
             &((pl.col('time')-pl.col('lastposupdate'))<1)).select(

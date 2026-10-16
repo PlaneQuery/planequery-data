@@ -145,8 +145,8 @@ def reconstruct(aircraft: str, states: pl.DataFrame, rules: Rules):
     return output
 
 
-def evaluate(predictions: pl.DataFrame, reference: pl.DataFrame):
-    p = predictions.filter(pl.col('lastseen').is_between(DAY, DAY+86399))
+def evaluate(predictions: pl.DataFrame, reference: pl.DataFrame, day: int = DAY):
+    p = predictions.filter(pl.col('lastseen').is_between(day, day+86399))
     r = reference.drop_nulls('firstseen')
     result = {'reference':r.height, 'predicted':p.height}
     result['exact_pairs'] = p.join(r, on=['icao24','firstseen','lastseen'], how='semi').height

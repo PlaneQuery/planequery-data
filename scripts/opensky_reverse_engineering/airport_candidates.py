@@ -16,12 +16,12 @@ def xyz(lat, lon):
     return np.column_stack((np.cos(lat)*np.cos(lon),np.cos(lat)*np.sin(lon),np.sin(lat)))
 
 
-def run(out=OUT, catalog='ourairports_2024-06-01.parquet'):
+def run(out=OUT, catalog='ourairports_2024-06-01.parquet', policies=None):
     airports=pl.read_parquet(out/catalog).drop_nulls(['latitude_deg','longitude_deg','elevation_ft'])
     f=pl.read_parquet(out/'reference_flights.parquet')
     e=select_endpoint_states(pl.read_parquet(sorted((out/'endpoint_hours').glob('*.parquet'))))
     metrics=[]
-    for policy in ['all','gps_code','fixed_wing','fixed_wing_gps']:
+    for policy in policies if policies is not None else ['all','gps_code','fixed_wing','fixed_wing_gps']:
         a=airports
         if 'gps' in policy:
             a=a.filter(pl.col('gps_code').is_not_null())

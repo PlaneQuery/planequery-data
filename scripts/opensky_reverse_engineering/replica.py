@@ -38,8 +38,8 @@ class AirportIndex:
         return sorted(result,key=lambda x:(x[1],x[0]))
 
 
-def export(hypothesis, out=OUT):
-    predictions=pl.read_parquet(out/'hypotheses'/f'{hypothesis}.parquet').filter(pl.col('lastseen').is_between(DAY,DAY+86399))
+def export(hypothesis, out=OUT, day=DAY):
+    predictions=pl.read_parquet(out/'hypotheses'/f'{hypothesis}.parquet').filter(pl.col('lastseen').is_between(day,day+86399))
     if 'first_baroaltitude' not in predictions.columns:
         # Refresh an older research cache with endpoint altitude fields.
         metrics=json.loads((out/'segmentation_metrics.json').read_text())
@@ -51,7 +51,7 @@ def export(hypothesis, out=OUT):
                 pl.col('icao24').is_in(aircraft[start:start+32])).collect().sort('icao24','time')
             for (ac,),group in data.partition_by('icao24',as_dict=True).items():
                 records.extend(reconstruct(ac,group,rules))
-        refreshed=pl.DataFrame(records).filter(pl.col('lastseen').is_between(DAY,DAY+86399))
+        refreshed=pl.DataFrame(records).filter(pl.col('lastseen').is_between(day,day+86399))
         keys=['icao24','firstseen','lastseen']
         if not refreshed.select(keys).sort(keys).equals(predictions.select(keys).sort(keys)):
             raise ValueError('Refreshed model boundaries changed; rerun the analysis')

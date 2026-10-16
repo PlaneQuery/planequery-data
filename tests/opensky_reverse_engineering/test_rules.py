@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import polars as pl
@@ -12,6 +13,7 @@ from analyze_endpoints import select_endpoint_states  # noqa: E402
 from replica import AirportIndex  # noqa: E402
 from analyze_endpoints import RADIUS  # noqa: E402
 from daily_replay import infer  # noqa: E402
+from extract import extract  # noqa: E402
 
 
 def states(seconds, longitude=None):
@@ -124,3 +126,47 @@ def test_evaluation_retains_reference_aircraft_with_no_prediction():
     assert metrics['reference']==2
     assert pairs.height==2
     assert pairs.filter(pl.col('icao24')=='bbbbbb')['firstseen_pred'].item() is None
+
+
+def test_replay_is_invariant_to_changing_utc_date():
+    catalog=pl.DataFrame({'gps_code':['TEST'],'latitude_deg':[0.],'longitude_deg':[0.],
+                         'elevation_ft':[0.],'type':['small_airport']})
+    t=np.r_[np.arange(-1000,0),np.arange(0,1001)]
+    s=states(t)
+    index=AirportIndex(catalog)
+    original=infer('abcdef',s,index)
+    target=int(datetime(2026,3,1,tzinfo=timezone.utc).timestamp())
+    shift=target-DAY
+    moved=s.with_columns(pl.col('time')+shift,pl.col('lastposupdate')+shift)
+    shifted=infer('abcdef',moved,index,target_day=target)
+    assert len(original)==len(shifted)==1
+    expected=dict(original[0],firstseen=original[0]['firstseen']+shift,lastseen=original[0]['lastseen']+shift)
+    assert shifted[0]==expected
+    pred=pl.DataFrame(shifted)
+    reference=pred.with_row_index('flight_id')
+    metrics,_=evaluate(pred,reference,day=target)
+    assert metrics['exact_pairs']==1
+    assert metrics['predicted']==1
+
+
+def test_extraction_selects_requested_date_across_year_boundary(tmp_path):
+    target=date(2026,1,1)
+    epoch=int(datetime(2026,1,1,tzinfo=timezone.utc).timestamp())
+    flight_path=tmp_path/'raw/flights_data4/year=2026/month=01/day=01/data.parquet'
+    flight_path.parent.mkdir(parents=True)
+    pl.DataFrame({'icao24':['abcdef'],'firstseen':[epoch+10],'lastseen':[epoch+700]}).write_parquet(flight_path)
+    for offset in [-1,0,1]:
+        day=target+timedelta(days=offset)
+        for hour in range(24):
+            path=tmp_path/'raw/state_vectors_data4'/day.strftime('year=%Y/month=%m/day=%d')/f'hour={hour:02d}/data.parquet'
+            path.parent.mkdir(parents=True)
+            time=epoch+offset*86400+hour*3600+10
+            s=states([0]).with_columns(pl.lit(time).alias('time'),pl.lit(float(time)-.25).alias('lastposupdate'),
+                pl.lit('abcdef').alias('icao24'),pl.lit(1000.).alias('geoaltitude'),pl.lit(float(time)-.25).alias('lastcontact'))
+            s.write_parquet(path)
+    out=tmp_path/'output'
+    extract(tmp_path/'raw',out,sample_size=1,only_hours=['2026-01-01-00'],target_date=target)
+    cached=pl.read_parquet(out/'sample_hours/2026-01-01-00.parquet')
+    assert cached.height==1
+    assert cached['time'].item()==epoch+10
+    assert len(list((out/'sample_hours').glob('*.parquet')))==1
