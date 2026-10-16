@@ -75,3 +75,97 @@ a temporary directory, creates `data/intermediate/eurocontrol/YYYYMM.parquet`,
 and writes daily files under `data/flights/source=eurocontrol/version=3/`.
 Temporary gzip/CSV files are removed automatically. Existing legacy extracted
 inputs remain supported as fallbacks.
+
+## OpenSky reconstruction
+
+`opensky-reverse-eng` derives flights from raw OpenSky `state_vectors_data4`
+using the rules inferred on June 1, 2024 and validated on March 1, 2026:
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-reverse-eng \
+  --adsb-source opensky --workers 4
+```
+
+It is an `ADSBFlightSource` and supports the normal flight cache, airport
+provenance, evaluation, and aircraft-batch workers. It currently requires the
+OpenSky provider. The existing `opensky` source continues to read published
+`flights_data4` records.
+
+The reconstruction cannot use canonical `read_adsb(source=OPENSKY)`: that
+pipeline removes the snapshot clock and original fractional position clock,
+collapses repeated updates, rounds altitudes, cleans tracks, and normalizes
+callsigns. Those changes affect density, median filtering, gap decisions, and
+endpoint times. The source-specific reader reuses the existing raw OpenSky file
+validation and ADS-B aircraft buckets. It preserves both clocks, metre
+altitudes, and original callsigns; no ground flag, reported velocity, or
+published flight records are needed for inference.
+
+For takeoffs on day D, all 24 raw hours must exist for D−1 through D+2. Two
+three-day replays reconstruct OpenSky arrival partitions D and D+1, then select
+takeoffs on D, matching the existing published OpenSky provider's convention.
+Missing raw hours fail explicitly. For the example above, the required raw
+partitions are February 28 through March 3, 2026. The lower-level
+`reconstruct_arrival_day` function accepts just the three-day context and is
+used to compare against the research arrival-day benchmark.
+
+The reader builds a separate filtered, aircraft-sorted cache once per day:
+
+```text
+$OUTPUT_DIR/data/intermediate/opensky/reverse-eng-states/version=1/
+```
+
+Only finite positions with `snapshot time - lastposupdate < 1 second` enter
+this cache; duplicates and valid ground positions remain. Hourly writes bound
+memory, and a per-day lock protects overlapping workers. The normal flight
+output is stored at:
+
+```text
+$OUTPUT_DIR/data/flights/source=opensky-reverse-eng/adsb_source=opensky/version=1/
+```
+
+Flight manifests identify the raw-input cache format/version rather than a
+canonical ADS-B Parquet version. Bump the flight-source version if changes to
+input processing affect predictions. `--no-save-adsb-downloads` retains this
+intermediate cache; that option removes canonical ADS-B downloads, which this
+source does not generate.
+
+The inferred algorithm uses four or more samples per epoch-aligned 30-second
+bin, seven-point median checks, and removal of three leading and six trailing
+samples per replay batch. Gaps split only when longer than 600 seconds and
+slower than one quarter of the batch's median displacement speed. Unfinished
+raw tails are replayed the next day, including days without new observations.
+Finalized tracks must be strictly longer than 600 integer seconds. This differs
+from the paper's 15-minute description.
+
+Airport assignment uses the retained endpoints with horizontal/vertical gates
+of 15 km/2 km for departure and 30 km/2.5 km for arrival. The shared dated
+OurAirports catalog supplies stable IDs and canonical identifiers, restricted
+to fixed-wing airports with GPS codes and elevations. It is an approximation
+of OpenSky's unavailable airport catalog, and differs from the fixed June 2024
+catalog used in the research benchmark. First/last contact times populate
+both the flight boundary and message-time fields; they are not observed runway
+events. Callsign mode is computed before trimming its surrounding whitespace.
+Unknown aircraft metadata uses the standard flight-schema defaults.
+
+Recheck the source against an existing research sample without rereading all
+raw state vectors:
+
+```bash
+python scripts/opensky_reverse_engineering/check_source.py --date 2026-03-01
+```
+
+This compares the new implementation with the saved predictions using the
+frozen research catalog, and separately measures the shared dated catalog.
+Results are written beside the sample as `source_validation.json` and
+`source_validation_{frozen,shared}.parquet`.
+
+The March 1, 2026 integration check covered 2,048 aircraft and 5,241 published
+flights with known starts. All 5,237 reconstructed boundary pairs, callsigns,
+and airport labels match the saved research predictions when using the frozen
+catalog (after canonical callsign normalization). With the shared dated
+catalog, 5,200/5,241 reference flights have exact boundaries (99.22%), and
+5,219/5,241 match within 30 seconds (99.58%). Exact boundaries, callsign, and
+both airport labels agree for 4,735/5,241 flights (90.35%); the frozen catalog
+scores 4,761/5,241 (90.84%). These are sampled arrival-day results, not a
+full-population accuracy estimate or an exact reproduction of OpenSky's
+candidate-distance fields.

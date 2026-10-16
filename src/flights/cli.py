@@ -17,6 +17,7 @@ from flights.flight_source import (
     flight_path,
     write_flights,
 )
+from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
@@ -30,6 +31,7 @@ from planequery_data.utils import date_range
 PARALLEL_ALGORITHM_SOURCES = (
     AlgorithmNearestFlightSource,
     AlgorithmNNFlightSource,
+    OpenSkyReverseEngFlightSource,
 )
 _RANGE_WORKER_SOURCE: FlightSource | None = None
 _RANGE_WORKER_ADSB_SOURCE: ADSBSource | None = None
