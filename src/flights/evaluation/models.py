@@ -26,6 +26,8 @@ _METRIC_COLUMNS = (
     "precision",
     "recall",
     "f1",
+    "fully_correct_flight_count",
+    "fully_correct_flight_pct",
     "takeoff_airport_id_total_count",
     "takeoff_airport_id_match_count",
     "takeoff_airport_id_incorrect_match_count",
@@ -44,6 +46,7 @@ _RATE_COLUMNS = {
     "precision",
     "recall",
     "f1",
+    "fully_correct_flight_pct",
     "takeoff_airport_id_match_pct",
     "landing_airport_id_match_pct",
     "airport_id_match_pct",
@@ -201,6 +204,19 @@ class EvaluationStats:
         )
 
     @property
+    def fully_correct_flight_count(self) -> int:
+        """Matched flight segments with both endpoint airport IDs correct."""
+        return self.airport_id_match_count
+
+    @property
+    def fully_correct_flight_pct(self) -> float:
+        """Fraction of gold flights with correct segmentation and airports."""
+        return _ratio(
+            self.fully_correct_flight_count,
+            self.true_positive + self.false_negative,
+        )
+
+    @property
     def takeoff_airport_id_match_pct(self) -> float:
         return _ratio(
             self.takeoff_airport_id_match_count,
@@ -232,6 +248,8 @@ class EvaluationStats:
             "true_positive": self.true_positive,
             "false_positive": self.false_positive,
             "false_negative": self.false_negative,
+            "fully_correct_flight_count": self.fully_correct_flight_count,
+            "fully_correct_flight_pct": self.fully_correct_flight_pct,
             "takeoff_airport_id_total_count": self.true_positive,
             "takeoff_airport_id_match_count": self.takeoff_airport_id_match_count,
             "takeoff_airport_id_incorrect_match_count": (

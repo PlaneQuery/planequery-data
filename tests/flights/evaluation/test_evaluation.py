@@ -136,6 +136,8 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
         "precision": 0.5,
         "recall": 0.5,
         "f1": 0.5,
+        "fully_correct_flight_count": 1,
+        "fully_correct_flight_pct": 0.5,
         "takeoff_airport_id_total_count": 1,
         "takeoff_airport_id_match_count": 1,
         "takeoff_airport_id_incorrect_match_count": 0,
