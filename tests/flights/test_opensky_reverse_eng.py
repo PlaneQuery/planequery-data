@@ -6,7 +6,9 @@ import numpy as np
 import polars as pl
 import pytest
 
+from airports.matcher import AirportMatcher
 from airports.models import (
+    FIXED_WING_AIRPORT_TYPES,
     Airport,
     AirportCatalogProvenance,
     AirportMatchProvenance,
@@ -24,6 +26,7 @@ from flights.opensky_reverse_eng import (
     _clean_batch,
     reconstruct_arrival_day,
 )
+from flights.opensky_reverse_eng_nearest import OpenSkyReverseEngNearestFlightSource
 from flights.sources import FLIGHT_SOURCES_BY_NAME
 
 DAY = date(2026, 3, 1)
@@ -43,7 +46,7 @@ def catalog(airports=None):
             gps_code="GPS",
         )
     ]
-    return SimpleNamespace(
+    result = SimpleNamespace(
         airports=tuple(airports),
         airport_provenance={
             a.id: AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE for a in airports
@@ -53,6 +56,12 @@ def catalog(airports=None):
             DAY, "observed", date(2026, 4, 1), "knowledge", date(2026, 4, 1), "test"
         ),
     )
+    result.matcher = AirportMatcher(
+        tuple(a for a in airports if a.type in FIXED_WING_AIRPORT_TYPES),
+        result.airport_provenance,
+        result.source_commit_by_airport_id,
+    )
+    return result
 
 
 def states(seconds, *, icao="abcdef", longitude=None, altitude=1000.0):
@@ -79,8 +88,9 @@ def epochs(frame):
     ).rows()
 
 
-def test_registration_input_window_and_provider_restriction():
-    source = FLIGHT_SOURCES_BY_NAME["opensky-reverse-eng"]
+@pytest.mark.parametrize("name", ["opensky-reverse-eng", "opensky-reverse-eng-nearest"])
+def test_registration_input_window_and_provider_restriction(name):
+    source = FLIGHT_SOURCES_BY_NAME[name]
     assert isinstance(source, pipeline.ADSBFlightSource)
     assert source.version == 2
     assert (
@@ -257,6 +267,115 @@ def test_airports_rank_horizontal_distance_after_vertical_gate():
     assert airports.candidate(0.0, 0.0, 1900.0, departure=True).id == 2
 
 
+AIRPORT_COLUMNS = (
+    "takeoff_airport_id",
+    "takeoff_airport_ident",
+    "landing_airport_id",
+    "landing_airport_ident",
+)
+
+
+def test_nearest_preserves_segments_and_ignores_distance_and_altitude_gates():
+    base = catalog().airports[0]
+    airports = catalog(
+        [
+            replace(base, id=2, ident="NEAR", lon=0, elevation_ft=-4000),
+            replace(base, id=3, ident="LEVEL", lon=0.02, elevation_ft=0),
+        ]
+    )
+    data = states(np.arange(100, 1101), longitude=np.linspace(0, 1, 1001))
+    original = OpenSkyReverseEngFlightSource().create_flights_for_day(
+        DAY, data, airports
+    )
+    nearest = OpenSkyReverseEngNearestFlightSource().create_flights_for_day(
+        DAY, data, airports
+    )
+    assert original.height == nearest.height == 1
+    assert original.select(AIRPORT_COLUMNS).row(0) == (3, "LEVEL", None, None)
+    # Departure selects the closer airport despite its altitude difference;
+    # arrival selects an airport even though it is more than 100 km away.
+    assert nearest.select(AIRPORT_COLUMNS).row(0) == (2, "NEAR", 3, "LEVEL")
+    assert nearest.drop(AIRPORT_COLUMNS).equals(original.drop(AIRPORT_COLUMNS))
+
+
+def test_nearest_uses_fixed_wing_catalog_without_gps_or_elevation_requirement():
+    base = catalog().airports[0]
+    airports = catalog(
+        [
+            replace(base, lon=0.02),
+            replace(
+                base, id=2, ident="LOCAL", lon=0.001, gps_code=None, elevation_ft=None
+            ),
+            replace(base, id=3, ident="HELI", type=AirportType.HELIPORT),
+        ]
+    )
+    data = states(np.arange(100, 1101), longitude=np.zeros(1001))
+    original = OpenSkyReverseEngFlightSource().create_flights_for_day(
+        DAY, data, airports
+    )
+    nearest = OpenSkyReverseEngNearestFlightSource().create_flights_for_day(
+        DAY, data, airports
+    )
+    assert original.select(AIRPORT_COLUMNS).row(0) == (1, "CANONICAL", 1, "CANONICAL")
+    assert nearest.select(AIRPORT_COLUMNS).row(0) == (2, "LOCAL", 2, "LOCAL")
+    assert nearest.drop(AIRPORT_COLUMNS).equals(original.drop(AIRPORT_COLUMNS))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_nearest_reuses_base_cache_without_reading_or_segmenting(
+    tmp_path, monkeypatch, empty
+):
+    base = OpenSkyReverseEngFlightSource()
+    source = OpenSkyReverseEngNearestFlightSource()
+    airports = catalog()
+    data = pl.concat(
+        [
+            states(np.arange(100, 1101), icao="000001"),
+            states(np.arange(2000, 3101), icao="000002"),
+        ]
+    )
+    original = base.create_flights_for_day(DAY, data, airports)
+    if empty:
+        original = original.clear()
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    path = pipeline.flight_path(base, DAY, ADSBSource.OPENSKY)
+    path.parent.mkdir(parents=True)
+    original.write_parquet(path)
+    base.flight_manifest(airports.provenance, ADSBSource.OPENSKY).write(
+        flight_manifest_path(path)
+    )
+    monkeypatch.setattr(
+        OpenSkyReverseEngFlightSource,
+        "read_adsb",
+        lambda *a, **kw: pytest.fail("cached endpoints do not need state vectors"),
+    )
+    monkeypatch.setattr(
+        OpenSkyReverseEngFlightSource,
+        "create_flights_for_day",
+        lambda *a, **kw: pytest.fail("cached segments must be reused"),
+    )
+    monkeypatch.setattr(
+        OpenSkyReverseEngFlightSource, "adsb_icao_batch_size", lambda self: 1
+    )
+    nearest = pipeline.get_flights_for_catalog(
+        source, DAY, airports, ADSBSource.OPENSKY
+    )
+    assert nearest.drop(AIRPORT_COLUMNS).equals(original.drop(AIRPORT_COLUMNS))
+    assert nearest.schema == original.schema
+    if not empty:
+        assert (
+            nearest.select(AIRPORT_COLUMNS).rows()
+            == [(1, "CANONICAL", 1, "CANONICAL")] * 2
+        )
+    nearest_path = pipeline.flight_path(source, DAY, ADSBSource.OPENSKY)
+    assert nearest_path != path
+    assert pl.read_parquet(nearest_path).equals(nearest)
+    assert pl.read_parquet(path).equals(original)
+    assert pipeline.get_flights_for_catalog(
+        source, DAY, airports, ADSBSource.OPENSKY
+    ).equals(nearest)
+
+
 def write_raw_days(tmp_path, monkeypatch, data, days):
     by_day = {}
     raw = data.rename({"icao": "icao24"}).with_columns(pl.lit(True).alias("onground"))
@@ -313,7 +432,12 @@ def test_raw_reader_preserves_samples_both_clocks_and_ground_altitude(
     )
 
 
-def test_pipeline_batches_raw_reader_and_writes_honest_manifest(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "source_type", [OpenSkyReverseEngFlightSource, OpenSkyReverseEngNearestFlightSource]
+)
+def test_pipeline_batches_raw_reader_and_writes_honest_manifest(
+    tmp_path, monkeypatch, source_type
+):
     data = pl.concat(
         [
             states(np.arange(100, 1101), icao="000001", longitude=np.zeros(1001)),
@@ -332,7 +456,7 @@ def test_pipeline_batches_raw_reader_and_writes_honest_manifest(tmp_path, monkey
     monkeypatch.setattr(
         OpenSkyReverseEngFlightSource, "adsb_icao_batch_size", lambda self: 1
     )
-    source = OpenSkyReverseEngFlightSource()
+    source = source_type()
     result = pipeline.get_flights_for_catalog(
         source, DAY, catalog(), ADSBSource.OPENSKY
     )
@@ -349,11 +473,14 @@ def test_pipeline_batches_raw_reader_and_writes_honest_manifest(tmp_path, monkey
     ).equals(result)
 
 
-def test_evaluation_cache_tracks_only_input_versions_actually_used():
+@pytest.mark.parametrize(
+    "source_type", [OpenSkyReverseEngFlightSource, OpenSkyReverseEngNearestFlightSource]
+)
+def test_evaluation_cache_tracks_only_input_versions_actually_used(source_type):
     from flights.evaluation.cache import EvaluationCacheKey
     from flights.sources import ALGORITHM_NEAREST_SOURCE, OPENSKY_SOURCE
 
-    source = OpenSkyReverseEngFlightSource()
+    source = source_type()
     raw_only = EvaluationCacheKey.from_inputs(
         DAY, source, OPENSKY_SOURCE, ADSBSource.OPENSKY, catalog()
     )

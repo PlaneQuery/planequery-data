@@ -287,11 +287,10 @@ class OpenSkyReverseEngFlightSource(ADSBFlightSource):
         # Read the departure day plus one day of context on each side.
         return midnight - timedelta(days=1), midnight + timedelta(days=2)
 
-    @staticmethod
-    def _validate_provider(source: ADSBSource | None) -> None:
+    def _validate_provider(self, source: ADSBSource | None) -> None:
         if source is not ADSBSource.OPENSKY:
             raise ValueError(
-                "opensky-reverse-eng requires --adsb-source opensky and raw state_vectors_data4"
+                f"{self.name} requires --adsb-source opensky and raw state_vectors_data4"
             )
 
     def adsb_read_interval_for_source(
