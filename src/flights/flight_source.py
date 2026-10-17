@@ -87,6 +87,7 @@ class ADSBFlightSource(FlightSource):
         return None
 
     def adsb_columns_for_reused_flights(self) -> Sequence[str] | None:
+        """Columns needed in addition to cached flights; empty skips ADS-B reads."""
         return self.adsb_columns()
 
     def adsb_icao_batch_size_for_reused_flights(self) -> int | None:
@@ -183,7 +184,10 @@ def _create_adsb_batch(
     }
     if columns is not None:
         kwargs["columns"] = columns
-    df_adsb = source.read_adsb(start, end, **kwargs)
+    if reused and columns is not None and len(columns) == 0:
+        df_adsb = pl.DataFrame()
+    else:
+        df_adsb = source.read_adsb(start, end, **kwargs)
     if reused:
         assert task.reused_flights is not None
         flights = source.create_flights_from_reused_flights(

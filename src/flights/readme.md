@@ -154,6 +154,29 @@ both the flight boundary and message-time fields; they are not observed runway
 events. Callsign mode is computed before trimming its surrounding whitespace.
 Unknown aircraft metadata uses the standard flight-schema defaults.
 
+For a plain nearest-airport comparison on exactly the same segments, use:
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-reverse-eng-nearest \
+  --adsb-source opensky --workers 4
+```
+
+This source runs the same reconstruction and replaces only the departure and
+arrival airport IDs and identifiers. Departure uses the first retained position;
+arrival uses the last. The existing shared matcher selects the closest fixed-wing
+airport in the dated catalog by geographic distance, with no distance or altitude
+cutoff and no requirement for GPS codes or elevations. All segmentation rules,
+including the original airport-elevation check for closing pending tracks, remain
+unchanged. Times, coordinates, callsigns, and other flight fields stay identical.
+
+When a valid `opensky-reverse-eng` flight cache exists for the same day, provider,
+and airport catalog, its segments are reused without reading state vectors.
+Otherwise, the source uses the same raw reader and three-day input window as
+`opensky-reverse-eng`. Results have a separate cache under
+`data/flights/source=opensky-reverse-eng-nearest/adsb_source=opensky/version=2/`.
+The source inherits the reconstruction version so segmentation changes invalidate
+both sources' caches.
+
 Run the production source's regression tests with:
 
 ```bash
