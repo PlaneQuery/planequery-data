@@ -35,8 +35,9 @@ def test_evaluation_stats_are_explicit_and_round_trip_through_rows():
     assert stats.precision == pytest.approx(2 / 3)
     assert stats.recall == pytest.approx(1 / 2)
     assert stats.f1 == pytest.approx(4 / 7)
-    assert stats.fully_correct_flight_count == 1
-    assert stats.fully_correct_flight_pct == pytest.approx(1 / 4)
+    assert stats.fully_correct_precision == pytest.approx(1 / 3)
+    assert stats.fully_correct_recall == pytest.approx(1 / 4)
+    assert stats.fully_correct_f1 == pytest.approx(2 / 7)
     assert stats.airport_id_match_pct == 0.5
     assert stats.gold_icao_missing_from_test_pct == 0.25
     assert EvaluationStats.from_row(stats.to_row()) == stats
@@ -68,8 +69,9 @@ def test_evaluation_stats_are_created_directly_from_comparison():
     assert stats.gold_icao_missing_from_test_pct == pytest.approx(1 / 3)
     assert stats.precision == pytest.approx(2 / 3)
     assert stats.recall == pytest.approx(2 / 3)
-    assert stats.fully_correct_flight_count == 1
-    assert stats.fully_correct_flight_pct == pytest.approx(1 / 3)
+    assert stats.fully_correct_precision == pytest.approx(1 / 3)
+    assert stats.fully_correct_recall == pytest.approx(1 / 3)
+    assert stats.fully_correct_f1 == pytest.approx(1 / 3)
     assert stats.takeoff_airport_id_match_pct == 0.5
     assert stats.landing_airport_id_match_pct == 1.0
     assert stats.airport_id_match_pct == 0.5
