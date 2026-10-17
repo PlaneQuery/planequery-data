@@ -36,9 +36,28 @@ class FlightSource(ABC):
         """Optional ADS-B enrichment dependency for cache paths and manifests."""
         return None
 
+    def flight_manifest(
+        self,
+        provenance: AirportCatalogProvenance,
+        adsb_src: ADSBSource | None,
+    ) -> FlightManifest:
+        return FlightManifest.from_provenance(
+            provenance,
+            adsb_source=adsb_src or self.enrichment_adsb_source(),
+        )
+
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    def read_adsb(
+        self,
+        start: date | datetime,
+        end: datetime | None = None,
+        **kwargs,
+    ) -> pl.DataFrame | pl.LazyFrame:
+        """Read source input; override when canonical ADS-B loses required data."""
+        return read_adsb(start, end, **kwargs)
+
     def adsb_icao_batch_size(self) -> int | None:
         """Maximum number of complete aircraft traces to load at once."""
         return None
@@ -75,6 +94,7 @@ class ADSBFlightSource(FlightSource):
         return None
 
     def adsb_columns_for_reused_flights(self) -> Sequence[str] | None:
+        """Columns needed in addition to cached flights; empty skips ADS-B reads."""
         return self.adsb_columns()
 
     def adsb_icao_batch_size_for_reused_flights(self) -> int | None:
@@ -171,7 +191,10 @@ def _create_adsb_batch(
     }
     if columns is not None:
         kwargs["columns"] = columns
-    df_adsb = read_adsb(start, end, **kwargs)
+    if reused and columns is not None and len(columns) == 0:
+        df_adsb = pl.DataFrame()
+    else:
+        df_adsb = source.read_adsb(start, end, **kwargs)
     if reused:
         assert task.reused_flights is not None
         flights = source.create_flights_from_reused_flights(
@@ -275,10 +298,7 @@ def _read_cached_flights_for_catalog(
     if not path.is_file() or not manifest_path.is_file():
         return None
 
-    current_manifest = FlightManifest.from_provenance(
-        airport_catalog.provenance,
-        adsb_source=adsb_src or source.enrichment_adsb_source(),
-    )
+    current_manifest = source.flight_manifest(airport_catalog.provenance, adsb_src)
     cached_manifest = FlightManifest.read(manifest_path)
     if cached_manifest.flight_cache_key != current_manifest.flight_cache_key:
         return None
@@ -395,13 +415,13 @@ def _create_flights_for_catalog(
                 kwargs["columns"] = columns
             if source_icaos is not None:
                 kwargs["icaos"] = source_icaos
-            df_adsb = read_adsb(start, end, **kwargs)
+            df_adsb = source.read_adsb(start, end, **kwargs)
             return source.create_flights_for_day(dt, df_adsb, airport_catalog)
         if batch_size <= 0:
             raise ValueError("adsb_icao_batch_size must be positive")
 
         if source_icaos is None:
-            icao_scan = read_adsb(
+            icao_scan = source.read_adsb(
                 start,
                 end,
                 source=adsb_src,
@@ -557,8 +577,7 @@ def write_flights_for_catalog(
         batch_workers,
     )
     df_flights.write_parquet(path)
-    FlightManifest.from_provenance(
-        airport_catalog.provenance,
-        adsb_source=adsb_src or source.enrichment_adsb_source(),
-    ).write(flight_manifest_path(path))
+    source.flight_manifest(airport_catalog.provenance, adsb_src).write(
+        flight_manifest_path(path)
+    )
     return df_flights
