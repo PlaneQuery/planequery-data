@@ -53,7 +53,7 @@ def adsb_dates_for_run(
     """Return every ADS-B partition needed by the source read windows."""
     input_dates = set()
     for target_date in target_dates:
-        start, end = source.adsb_read_interval_for_source(
+        start, end = source.adsb_input_interval(
             target_date,
             adsb_source,
         )
@@ -244,6 +244,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="ADS-B provider for flight sources or EUROCONTROL callsigns (default: adsblol).",
     )
     parser.add_argument(
+        "--target-day-adsb",
+        action="store_true",
+        help=(
+            "Use only each target UTC day's ADS-B data ([00:00, next 00:00)), "
+            "before segmentation and inference. Requires an ADS-B flight "
+            "source. Default: provider-specific windows."
+        ),
+    )
+    parser.add_argument(
         "--airport-nn-model",
         type=Path,
         help=f"Checkpoint used by {ALGORITHM_NN_SOURCE.name}.",
@@ -290,6 +299,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.airport_nn_model is not None:
         assert isinstance(source, AlgorithmNNFlightSource)
         source = replace(source, model_path=args.airport_nn_model)
+    if args.target_day_adsb:
+        if not isinstance(source, ADSBFlightSource):
+            raise SystemExit("--target-day-adsb requires an ADS-B flight source")
+        source = replace(source, target_day_adsb=True)
     if args.no_save_adsb_downloads and not isinstance(source, ADSBFlightSource):
         raise SystemExit("--no-save-adsb-downloads requires an ADS-B flight source")
 

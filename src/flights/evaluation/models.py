@@ -15,6 +15,7 @@ EVALUATION_METADATA_COLUMNS = (
     "adsb_src",
     "test_src",
     "gold_src",
+    "target_day_adsb",
 )
 _METRIC_COLUMNS = (
     "gold_icao_count",
@@ -56,6 +57,7 @@ _RATE_COLUMNS = {
 }
 EVALUATION_STATS_SCHEMA = {
     **dict.fromkeys(EVALUATION_METADATA_COLUMNS, pl.String),
+    "target_day_adsb": pl.Boolean,
     **{
         column: pl.Float64 if column in _RATE_COLUMNS else pl.Int64
         for column in _METRIC_COLUMNS
@@ -90,6 +92,7 @@ class EvaluationStats:
     takeoff_airport_id_match_count: int
     landing_airport_id_match_count: int
     airport_id_match_count: int
+    target_day_adsb: bool = False
 
     def __post_init__(self) -> None:
         counts = (
@@ -122,6 +125,7 @@ class EvaluationStats:
         gold_source: str,
         gold_icao_count: int,
         gold_icao_missing_from_test_count: int,
+        target_day_adsb: bool = False,
     ) -> Self:
         def count(expression: pl.Expr) -> int:
             return comparison.filter(expression).height
@@ -131,6 +135,7 @@ class EvaluationStats:
             adsb_source=adsb_source,
             test_source=test_source,
             gold_source=gold_source,
+            target_day_adsb=target_day_adsb,
             gold_icao_count=gold_icao_count,
             gold_icao_missing_from_test_count=gold_icao_missing_from_test_count,
             true_positive=count(pl.col("match_status") == "both"),
@@ -164,6 +169,7 @@ class EvaluationStats:
             ),
             test_source=str(row["test_src"]),
             gold_source=str(row["gold_src"]),
+            target_day_adsb=row.get("target_day_adsb", False),
             gold_icao_count=_count(row, "gold_icao_count"),
             gold_icao_missing_from_test_count=_count(
                 row, "gold_icao_missing_from_test_count"
@@ -253,6 +259,7 @@ class EvaluationStats:
             "adsb_src": self.adsb_source.value if self.adsb_source else None,
             "test_src": self.test_source,
             "gold_src": self.gold_source,
+            "target_day_adsb": self.target_day_adsb,
             "gold_icao_count": self.gold_icao_count,
             "gold_icao_missing_from_test_count": (
                 self.gold_icao_missing_from_test_count
@@ -319,7 +326,7 @@ class EvaluationResults:
 
         frame = frame.with_columns(pl.col(_METRIC_COLUMNS).cast(pl.Float64))
         averages = (
-            frame.group_by(["adsb_src", "test_src", "gold_src"])
+            frame.group_by(["adsb_src", "test_src", "gold_src", "target_day_adsb"])
             .agg([pl.col(column).mean() for column in _METRIC_COLUMNS])
             .with_columns(pl.lit("average").alias("test_date"))
             .select(frame.columns)

@@ -168,6 +168,20 @@ def _with_airport_nn_model(
     ]
 
 
+def _with_target_day_adsb(
+    sources: Sequence[FlightSource],
+    enabled: bool,
+) -> list[FlightSource]:
+    if not enabled:
+        return list(sources)
+    return [
+        replace(source, target_day_adsb=True)
+        if isinstance(source, ADSBFlightSource)
+        else source
+        for source in sources
+    ]
+
+
 def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     return flights.filter(
         (pl.col("takeoff_time").dt.date() == target_date)
@@ -248,6 +262,7 @@ def evaluate(
     ) = DEFAULT_ADSB_SOURCE,
     *,
     airport_nn_model_path: Path | None = None,
+    target_day_adsb: bool = False,
     refresh_cache: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> EvaluationResults:
@@ -257,6 +272,10 @@ def evaluate(
     ICAOs present in gold. Detailed comparisons and their daily stats are
     cached together. Set
     ``refresh_cache=True`` to recompute and replace matching entries.
+
+    ``target_day_adsb=True`` limits ADS-B inputs to each target UTC day before
+    segmentation and inference. False preserves provider-specific windows.
+    Target-day-only inputs use separate flight and evaluation cache entries.
     """
     test_sources = _with_airport_nn_model(
         _as_source_list(test_source),
@@ -266,6 +285,8 @@ def evaluate(
         _as_source_list(gold_source),
         airport_nn_model_path,
     )
+    test_sources = _with_target_day_adsb(test_sources, target_day_adsb)
+    gold_sources = _with_target_day_adsb(gold_sources, target_day_adsb)
     dates = _as_date_list(test_dates)
     adsb_sources = _as_adsb_source_list(adsb_source)
     for parameter, values in (
@@ -299,6 +320,17 @@ def evaluate(
 
     for resolved_test_source in test_sources:
         for resolved_gold_source in gold_sources:
+            input_settings = {
+                source.target_day_adsb
+                for source in (resolved_test_source, resolved_gold_source)
+                if isinstance(source, ADSBFlightSource)
+            }
+            if len(input_settings) > 1:
+                raise ValueError(
+                    "ADS-B test and gold sources must use the same "
+                    "target_day_adsb setting; pass target_day_adsb=True to override both"
+                )
+            pair_target_day_adsb = next(iter(input_settings), False)
             pair_adsb_sources = adsb_sources_for_evaluation(
                 resolved_test_source,
                 resolved_gold_source,
@@ -368,6 +400,7 @@ def evaluate(
                             adsb_source=selected_adsb_source,
                             test_source=resolved_test_source.name,
                             gold_source=resolved_gold_source.name,
+                            target_day_adsb=pair_target_day_adsb,
                             gold_icao_count=len(gold_icaos),
                             gold_icao_missing_from_test_count=len(
                                 gold_icaos - test_icaos
@@ -411,16 +444,20 @@ def list_cached_evaluations(
     gold_source: str | Sequence[str] | None = None,
     adsb_source: ADSBSource | str | Sequence[ADSBSource | str] | None = None,
     test_dates: date | Sequence[date] | None = None,
+    target_day_adsb: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> pl.DataFrame:
     """List cached daily stats matching the supplied source/date filters."""
     cache = evaluation_cache or default_evaluation_cache()
-    return cache.list_entries(
+    frame = cache.list_entries(
         test_source=test_source,
         gold_source=gold_source,
         adsb_source=adsb_source,
         test_dates=test_dates,
     )
+    if target_day_adsb:
+        frame = frame.filter(pl.col("target_day_adsb"))
+    return frame
 
 
 def export_cached_evaluations(
@@ -431,6 +468,7 @@ def export_cached_evaluations(
     gold_source: str | Sequence[str] | None = None,
     adsb_source: ADSBSource | str | Sequence[ADSBSource | str] | None = None,
     test_dates: date | Sequence[date] | None = None,
+    target_day_adsb: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> tuple[pl.DataFrame, Path]:
     """Filter cached daily results and export selected columns to CSV."""
@@ -439,6 +477,7 @@ def export_cached_evaluations(
         gold_source=gold_source,
         adsb_source=adsb_source,
         test_dates=test_dates,
+        target_day_adsb=target_day_adsb,
         evaluation_cache=evaluation_cache,
     )
     selected = select_output_columns(cached, columns)
@@ -484,6 +523,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Checkpoint to use for an algorithm-nn source.",
     )
     parser.add_argument(
+        "--target-day-adsb",
+        action="store_true",
+        help=(
+            "Use only each target UTC day's ADS-B data for every provider "
+            "([00:00, next 00:00)), before segmentation and inference. "
+            "Default: provider-specific windows. With --list-cache, filter "
+            "by this setting."
+        ),
+    )
+    parser.add_argument(
         "--refresh-cache",
         action="store_true",
         help="Recalculate requested evaluations and replace matching cache entries.",
@@ -509,6 +558,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             gold_source=args.gold_source,
             adsb_source=args.adsb_source,
             test_dates=args.test_dates,
+            target_day_adsb=args.target_day_adsb,
         )
         cached = select_output_columns(cached, args.columns)
         if cached.is_empty():
@@ -523,6 +573,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         test_dates=args.test_dates or [DEFAULT_TARGET_DATE],
         adsb_source=args.adsb_source or [DEFAULT_ADSB_SOURCE],
         airport_nn_model_path=args.airport_nn_model,
+        target_day_adsb=args.target_day_adsb,
         refresh_cache=args.refresh_cache,
     )
     stats_output = write_evaluation_csv(

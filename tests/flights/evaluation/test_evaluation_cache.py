@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -134,6 +135,66 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     )
     assert first_results.stats == second_results.stats
     assert first_results.stats[0].precision == 1.0
+
+
+def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
+    monkeypatch, tmp_path,
+):
+    source = _algorithm_nn_source(tmp_path)
+    cache = EvaluationCache(tmp_path / "cache")
+    frame = flights_to_flights_df([_flight()])
+    configured_sources = []
+
+    def frame_for_source(resolved):
+        configured_sources.append(resolved)
+        return frame
+
+    reads = _patch_inputs(monkeypatch, source, frame_for_source)
+    ordinary = _evaluate(source, cache)
+    single_day = _evaluate(source, cache, target_day_adsb=True)
+    repeated = _evaluate(replace(source, target_day_adsb=True), cache)
+
+    assert len(reads) == 4
+    assert configured_sources[0].target_day_adsb is False
+    assert configured_sources[2].target_day_adsb is True
+    assert configured_sources[2].model_path == source.model_path
+    assert ordinary.stats[0].target_day_adsb is False
+    assert single_day.stats[0].target_day_adsb is True
+    assert repeated.stats == single_day.stats
+    assert cache.list_entries().height == 2
+    listed = evaluation.list_cached_evaluations(
+        target_day_adsb=True, evaluation_cache=cache,
+    )
+    assert listed.height == 1
+    assert listed["target_day_adsb"].to_list() == [True]
+
+
+def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path):
+    source = _algorithm_nn_source(tmp_path)
+    cache = EvaluationCache(tmp_path / "cache")
+    frame = flights_to_flights_df([_flight()])
+    sources = []
+    _patch_inputs(monkeypatch, source, lambda resolved: sources.append(resolved) or frame)
+    results = evaluation.evaluate(
+        test_source=source, gold_source=ALGORITHM_NEAREST_SOURCE,
+        test_dates=TARGET_DATE, adsb_source=list(ADSBSource),
+        target_day_adsb=True, evaluation_cache=cache,
+    )
+    assert len(sources) == 6
+    assert all(resolved.target_day_adsb for resolved in sources)
+    assert {stats.adsb_source for stats in results.stats} == set(ADSBSource)
+    assert all(stats.target_day_adsb for stats in results.stats)
+
+
+def test_target_day_adsb_is_an_optional_flag():
+    assert evaluation.parse_args([]).target_day_adsb is False
+    assert evaluation.parse_args(["--target-day-adsb"]).target_day_adsb is True
+
+
+@pytest.mark.parametrize("value", ["0", "1", "true"])
+def test_target_day_adsb_rejects_values(value):
+    with pytest.raises(SystemExit):
+        evaluation.parse_args(["--target-day-adsb", value])
 
 
 @pytest.mark.parametrize("unreadable_file", [RESULT_FILENAME, STATS_FILENAME])
@@ -423,6 +484,7 @@ def test_cli_writes_csv(monkeypatch, tmp_path):
 
     evaluation.main(
         [
+            "--target-day-adsb",
             "--test-dates",
             TARGET_DATE.isoformat(),
             "--columns",
@@ -431,6 +493,7 @@ def test_cli_writes_csv(monkeypatch, tmp_path):
     )
 
     assert "write_csv" not in evaluate_kwargs
+    assert evaluate_kwargs["target_day_adsb"] is True
     assert pl.read_csv(output_csv).to_dict(as_series=False) == {
         "precision": [1.0]
     }
@@ -456,6 +519,7 @@ def test_evaluate_rejects_empty_input_sequences(empty_parameter):
 @pytest.mark.parametrize(
     ("option", "value"),
     [
+        ("--adsb-context-days", "0"),
         ("--test_src", "algorithm-nn"),
         ("--test-src", "algorithm-nn"),
         ("--gold_src", "bts"),

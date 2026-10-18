@@ -95,6 +95,37 @@ part of the source version, so regenerate a day when changing checkpoints. The
 default checkpoint remains
 `data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.
 
+For a provider comparison with the same ADS-B observation window, use:
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn --gold-source bts \
+  --adsb-source adsblol adsbx opensky --test-dates 2026-03-01 \
+  --target-day-adsb
+```
+
+This reads exactly `[2026-03-01 00:00, 2026-03-02 00:00)` UTC for every
+provider, before segmentation and airport inference. The flag applies to
+ADS-B flight sources on either side of the comparison. It changes the input
+window, not the flight-scoring rules. Omitting it preserves provider-specific
+windows. The flag takes no value. Each date in `--test-dates` gets its own window.
+
+Target-day-only runs have separate flight and evaluation caches, including
+reused `algorithm-nearest` segments. CSV output includes the boolean
+`target_day_adsb`. Use `--list-cache --target-day-adsb` to list only evaluations
+using the target day's observations.
+
+To generate flight files with the same target-day-only inputs, use:
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 algorithm-nn \
+  --adsb-source adsblol --target-day-adsb
+```
+
+The flag applies separately to each day in the `[start, end)` range and requires
+an ADS-B flight source. Bad-day checks, release preparation, and
+`--no-save-adsb-downloads` cleanup use only the target days in this mode.
+
 The canonical `flights.cli` command automatically reuses a matching cached
 `algorithm-nearest` day and reads only the trajectory columns needed by the NN.
 If that day is absent or its airport-catalog manifest is stale, inference falls
