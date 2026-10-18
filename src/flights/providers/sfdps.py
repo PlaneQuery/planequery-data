@@ -29,6 +29,8 @@ ADSB_ICAO_INFO_COLUMNS = [
 ]
 
 SFDPS_AIRPORT_CODE_PRIORITY = ICAO_AIRPORT_CODE_PRIORITY
+# Allow small reporting-clock differences, but not future actual arrivals.
+ACTUAL_LANDING_CLOCK_SKEW = timedelta(minutes=2)
 
 GUFI_FLIGHT_SCHEMA = {
     "gufi": pl.String,
@@ -98,7 +100,11 @@ def gufi_state_machine(df: pl.DataFrame) -> pl.DataFrame:
             takeoff_time = row["takeoff_time"]
         if row["takeoff_airport_icao"] is not None:
             takeoff_airport = row["takeoff_airport_icao"]
-        if row["landing_time"] is not None:
+        if (
+            row["landing_time"] is not None
+            and row["timestamp"] is not None
+            and row["landing_time"] <= row["timestamp"] + ACTUAL_LANDING_CLOCK_SKEW
+        ):
             landing_time = row["landing_time"]
         if row["landing_airport_icao"] is not None:
             landing_airport = row["landing_airport_icao"]
@@ -234,7 +240,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 11
+    version: int = 12
 
     def create_flights_for_day(
         self,
