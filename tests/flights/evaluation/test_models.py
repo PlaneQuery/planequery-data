@@ -27,6 +27,8 @@ def _stats(test_date: date, *, true_positive: int = 2) -> EvaluationStats:
         takeoff_airport_id_match_count=true_positive,
         landing_airport_id_match_count=true_positive - 1,
         airport_id_match_count=true_positive - 1,
+        takeoff_airport_id_non_null_count=true_positive,
+        landing_airport_id_non_null_count=true_positive,
     )
 
 
@@ -43,6 +45,8 @@ def test_evaluation_stats_are_explicit_and_round_trip_through_rows():
     assert stats.gold_icao_missing_from_test_pct == 0.25
     assert stats.takeoff_airport_id_null_pct == 0.0
     assert stats.landing_airport_id_null_pct == 0.0
+    assert stats.takeoff_airport_id_non_null_match_pct == 1.0
+    assert stats.landing_airport_id_non_null_match_pct == 0.5
     assert EvaluationStats.from_row(stats.to_row()) == stats
 
 
@@ -84,7 +88,35 @@ def test_evaluation_stats_are_created_directly_from_comparison():
     assert stats.landing_airport_id_null_count == 1
     assert stats.takeoff_airport_id_null_pct == pytest.approx(2 / 3)
     assert stats.landing_airport_id_null_pct == pytest.approx(1 / 3)
+    assert stats.takeoff_airport_id_non_null_count == 1
+    assert stats.landing_airport_id_non_null_count == 2
+    assert stats.takeoff_airport_id_non_null_match_pct == 1.0
+    assert stats.landing_airport_id_non_null_match_pct == 1.0
     assert EvaluationStats.from_row(stats.to_row()) == stats
+
+
+def test_non_null_accuracy_excludes_null_and_unmatched_test_airports():
+    comparison = pl.DataFrame({
+        "match_status": ["both", "both", "both", "df0_only", "df1_only"],
+        "takeoff_airport_id": [1, 9, None, 1, None],
+        "landing_airport_id": [2, None, 9, None, None],
+        "same_takeoff_airport_id": [True, False, False, False, False],
+        "same_landing_airport_id": [True, False, False, False, False],
+        "same_airport_id": [True, False, False, False, False],
+    })
+    stats = EvaluationStats.from_comparison(
+        comparison,
+        test_date=date(2026, 3, 1),
+        adsb_source=None,
+        test_source="opensky",
+        gold_source="bts",
+        gold_icao_count=1,
+        gold_icao_missing_from_test_count=0,
+    )
+    for endpoint in ("takeoff", "landing"):
+        assert getattr(stats, f"{endpoint}_airport_id_non_null_count") == 2
+        assert getattr(stats, f"{endpoint}_airport_id_non_null_match_pct") == 0.5
+        assert getattr(stats, f"{endpoint}_airport_id_match_pct") == pytest.approx(1 / 3)
 
 
 @pytest.mark.parametrize("statuses", [[], ["df1_only"], ["both", "df0_only"]])
@@ -111,6 +143,10 @@ def test_null_airport_metrics_with_empty_or_all_null_test_flights(statuses):
     assert stats.landing_airport_id_null_count == expected_count
     assert stats.takeoff_airport_id_null_pct == float(expected_count > 0)
     assert stats.landing_airport_id_null_pct == float(expected_count > 0)
+    assert stats.takeoff_airport_id_non_null_count == 0
+    assert stats.landing_airport_id_non_null_count == 0
+    assert stats.takeoff_airport_id_non_null_match_pct == 0.0
+    assert stats.landing_airport_id_non_null_match_pct == 0.0
 
 
 def test_evaluation_results_offer_an_explicit_frame_adapter():
@@ -139,6 +175,10 @@ def test_evaluation_results_offer_an_explicit_frame_adapter():
     assert average.item(0, "landing_airport_id_null_count") == 1.0
     assert average.item(0, "takeoff_airport_id_null_pct") == pytest.approx(1 / 6)
     assert average.item(0, "landing_airport_id_null_pct") == pytest.approx(1 / 3)
+    assert average.item(0, "takeoff_airport_id_non_null_count") == 3.0
+    assert average.item(0, "landing_airport_id_non_null_count") == 3.0
+    assert average.item(0, "takeoff_airport_id_non_null_match_pct") == 1.0
+    assert average.item(0, "landing_airport_id_non_null_match_pct") == 0.625
 
 
 def test_evaluation_averages_do_not_mix_input_windows():
@@ -179,4 +219,6 @@ def test_evaluation_stats_reject_impossible_match_counts():
             takeoff_airport_id_match_count=2,
             landing_airport_id_match_count=1,
             airport_id_match_count=1,
+            takeoff_airport_id_non_null_count=1,
+            landing_airport_id_non_null_count=1,
         )
