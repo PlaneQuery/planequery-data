@@ -9,15 +9,15 @@ from flights.evaluation import evaluation
 from flights.evaluation.cache import EvaluationCache
 from flights.evaluation.models import EvaluationResults, EvaluationStats
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import BTS_SOURCE, SFDPS_SOURCE
+from flights.sources import BTS_SOURCE, OPENSKY_SOURCE, SFDPS_SOURCE
 
 
 def _flight(
     icao: str,
     takeoff_time: datetime,
     *,
-    takeoff_airport_id: int = 1,
-    landing_airport_id: int = 2,
+    takeoff_airport_id: int | None = 1,
+    landing_airport_id: int | None = 2,
 ) -> Flight:
     return Flight(
         icao=icao,
@@ -158,6 +158,64 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
     assert {key: row[key] for key in expected_metrics} == pytest.approx(
         expected_metrics
     )
+
+
+def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, capsys):
+    target_date = date(2026, 3, 1)
+    noon = datetime(2026, 3, 1, 12)
+    frames = {
+        OPENSKY_SOURCE.name: flights_to_flights_df([
+            _flight("shared", noon, takeoff_airport_id=None),
+            _flight("shared", noon + timedelta(hours=3), landing_airport_id=None),
+            _flight("shared", noon + timedelta(hours=6), landing_airport_id=None),
+            _flight("test-only", noon, takeoff_airport_id=None),
+            _flight("shared", noon + timedelta(days=1), takeoff_airport_id=None),
+        ]),
+        BTS_SOURCE.name: flights_to_flights_df([
+            _flight("shared", noon),
+            _flight("shared", noon + timedelta(hours=3)),
+            _flight("gold-only", noon),
+        ]),
+    }
+    monkeypatch.setattr(
+        evaluation, "source_flights_reader",
+        lambda source, adsb_source=None: lambda _: frames[source.name].clone(),
+    )
+    monkeypatch.setattr(evaluation, "airport_catalog_for_date", _airport_catalog)
+    cache = EvaluationCache(tmp_path / "cache")
+    results = evaluation.evaluate(
+        OPENSKY_SOURCE, BTS_SOURCE, target_date, evaluation_cache=cache,
+    )
+    stats = results.stats[0]
+    assert stats.true_positive == 2
+    assert stats.false_positive == 1
+    assert stats.false_negative == 1
+    assert stats.takeoff_airport_id_null_count == 1
+    assert stats.landing_airport_id_null_count == 2
+    assert stats.takeoff_airport_id_null_pct == pytest.approx(1 / 3)
+    assert stats.landing_airport_id_null_pct == pytest.approx(2 / 3)
+    report = (
+        "Null airports in opensky (3 retained test flights): "
+        "takeoff 1 (33.33%), landing 2 (66.67%)"
+    )
+    assert report in capsys.readouterr().out
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Cached evaluation should not read source flights")
+
+    monkeypatch.setattr(evaluation, "source_flights_reader", unexpected_read)
+    cached = evaluation.evaluate(
+        OPENSKY_SOURCE, BTS_SOURCE, target_date, evaluation_cache=cache,
+    )
+    assert cached.stats == results.stats
+    assert report in capsys.readouterr().out
+    _, path = evaluation.export_cached_evaluations(
+        tmp_path / "stats.csv", test_source="opensky", evaluation_cache=cache,
+    )
+    row = pl.read_csv(path).row(0, named=True)
+    for endpoint, count in (("takeoff", 1), ("landing", 2)):
+        assert row[f"{endpoint}_airport_id_null_count"] == count
+        assert row[f"{endpoint}_airport_id_null_pct"] == pytest.approx(count / 3)
 
 
 def test_gold_icao_coverage_uses_unique_input_aircraft_before_matching(

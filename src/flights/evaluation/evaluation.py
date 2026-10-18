@@ -434,6 +434,15 @@ def evaluate(
                         f"{stats.gold_icao_count} "
                         f"({stats.gold_icao_missing_from_test_pct:.2%})"
                     )
+                    test_flight_count = stats.true_positive + stats.false_positive
+                    print(
+                        f"Null airports in {resolved_test_source.name} "
+                        f"({test_flight_count} retained test flights): "
+                        f"takeoff {stats.takeoff_airport_id_null_count} "
+                        f"({stats.takeoff_airport_id_null_pct:.2%}), "
+                        f"landing {stats.landing_airport_id_null_count} "
+                        f"({stats.landing_airport_id_null_pct:.2%})"
+                    )
 
     return EvaluationResults(entries=tuple(daily_results))
 
