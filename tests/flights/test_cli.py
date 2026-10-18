@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 import polars as pl
@@ -98,6 +98,30 @@ def test_range_with_only_bad_days_does_not_start_pool(monkeypatch):
         date(2026, 4, 29), date(2026, 5, 2),
         cli.ALGORITHM_NN_SOURCE, workers=4,
     )
+
+
+@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+def test_target_day_range_skips_only_bad_target_days(
+    monkeypatch, tmp_path, capsys, source_name
+):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "_write_flights_day",
+        lambda source, dt, adsb_source, **kwargs: (
+            calls.append(dt) or dt, 0, tmp_path / "data.parquet"
+        ),
+    )
+    source = replace(cli.FLIGHT_SOURCES_BY_NAME[source_name], target_day_adsb=True)
+
+    cli.write_flights_range(
+        date(2026, 4, 29), date(2026, 5, 3), source, workers=1,
+    )
+
+    assert calls == [date(2026, 4, 29), date(2026, 5, 1), date(2026, 5, 2)]
+    output = capsys.readouterr().out
+    assert output.count("[SKIP]") == 1
+    assert "requires known bad adsblol day(s): 2026-04-30" in output
 
 
 @pytest.mark.parametrize(
@@ -217,6 +241,15 @@ def test_non_adsblol_algorithm_dates_use_provider_window(
         [date(2026, 1, 1)],
         adsb_source,
     ) == expected
+
+
+@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("adsb_source", list(ADSBSource))
+def test_target_day_dates_exclude_adjacent_days(source_name, adsb_source):
+    source = replace(cli.FLIGHT_SOURCES_BY_NAME[source_name], target_day_adsb=True)
+    target_dates = [date(2026, 1, 1), date(2026, 1, 2)]
+
+    assert cli.adsb_dates_for_run(source, target_dates, adsb_source) == target_dates
 
 
 def test_range_worker_reuses_initialized_source(monkeypatch, tmp_path):
@@ -375,6 +408,48 @@ def test_main_passes_explicit_worker_override(monkeypatch):
     assert prepared_years == [{2026}]
 
 
+@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("target_day_adsb", [False, True])
+def test_main_configures_target_day_adsb_before_planning(
+    monkeypatch, tmp_path, source_name, target_day_adsb
+):
+    from data_engineering.adsblol import check_for_new_release
+
+    sources = []
+    prepared_years = []
+    monkeypatch.setattr(
+        cli, "write_flights_range",
+        lambda start, end, source, **kwargs: sources.append(source),
+    )
+    monkeypatch.setattr(
+        check_for_new_release, "prepare_releases_for_run",
+        lambda years: prepared_years.append(set(years)),
+    )
+    args = ["2026-01-01", "2026-01-02", source_name]
+    model_path = tmp_path / "model.pt"
+    if source_name == "algorithm-nn":
+        args.extend(["--airport-nn-model", str(model_path)])
+    if target_day_adsb:
+        args.append("--target-day-adsb")
+
+    cli.main(args)
+
+    assert len(sources) == 1
+    assert sources[0].target_day_adsb is target_day_adsb
+    assert prepared_years == [{2026} if target_day_adsb else {2025, 2026}]
+    assert cli.FLIGHT_SOURCES_BY_NAME[source_name].target_day_adsb is False
+    if source_name == "algorithm-nn":
+        assert sources[0].model_path == model_path
+
+
+@pytest.mark.parametrize("source_name", ["bts", "eurocontrol-verified"])
+def test_target_day_adsb_rejects_non_adsb_source(source_name):
+    with pytest.raises(SystemExit, match="--target-day-adsb requires an ADS-B flight source"):
+        cli.main([
+            "2026-03-01", "2026-03-02", source_name, "--target-day-adsb",
+        ])
+
+
 def test_no_save_adsb_downloads_removes_only_run_created_artifacts(
     monkeypatch,
     tmp_path,
@@ -432,8 +507,9 @@ def test_no_save_adsb_downloads_rejects_non_adsb_source():
 
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("target_day_adsb", [False, True])
 def test_no_save_cleans_between_batches_and_preserves_shared_inputs(
-    monkeypatch, tmp_path, workers, fail
+    monkeypatch, tmp_path, workers, fail, target_day_adsb
 ):
     from data_engineering.adsb import canonical, download_adsb_to_parquet
     from data_engineering.adsblol import check_for_new_release
@@ -456,6 +532,8 @@ def test_no_save_cleans_between_batches_and_preserves_shared_inputs(
         days = list(cli.date_range(start, end))
         assert len(days) <= workers
         inputs = set(cli.adsb_dates_for_run(source, days, provider))
+        if target_day_adsb:
+            assert inputs == set(days)
         if calls:
             # Overlapping partitions survive; expired partitions are already gone.
             for day in previous_inputs:
@@ -476,6 +554,8 @@ def test_no_save_cleans_between_batches_and_preserves_shared_inputs(
         "2026-03-01", "2026-03-06", "algorithm-nn",
         "--workers", str(workers), "--no-save-adsb-downloads",
     ]
+    if target_day_adsb:
+        args.append("--target-day-adsb")
     if fail:
         with pytest.raises(RuntimeError, match="conversion failed"):
             cli.main(args)

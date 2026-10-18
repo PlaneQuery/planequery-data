@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 import polars as pl
@@ -95,6 +96,29 @@ def test_evaluation_results_offer_an_explicit_frame_adapter():
     )
     average = results.to_frame().filter(pl.col("test_date") == "average")
     assert average.item(0, "true_positive") == 3.0
+
+
+def test_evaluation_averages_do_not_mix_input_windows():
+    results = EvaluationResults(entries=(
+        EvaluationResult(
+            comparison=pl.DataFrame(),
+            stats=_stats(date(2026, 3, 1), true_positive=2),
+        ),
+        EvaluationResult(
+            comparison=pl.DataFrame(),
+            stats=replace(
+                _stats(date(2026, 3, 2), true_positive=4), target_day_adsb=True,
+            ),
+        ),
+    ))
+    averages = results.to_frame().filter(pl.col("test_date") == "average")
+    assert averages.height == 2
+    assert averages.filter(pl.col("target_day_adsb")).item(
+        0, "true_positive",
+    ) == 4.0
+    assert averages.filter(~pl.col("target_day_adsb")).item(
+        0, "true_positive",
+    ) == 2.0
 
 
 def test_evaluation_stats_reject_impossible_match_counts():

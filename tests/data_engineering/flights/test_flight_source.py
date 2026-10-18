@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -137,6 +137,104 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
         tmp_path,
         "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=7",
         "year=2026/month=03/day=01/data.parquet",
+    )
+
+
+@pytest.mark.parametrize("adsb_source", tuple(ADSBSource))
+@pytest.mark.parametrize("reuse_single_day", [False, True])
+def test_single_day_nn_inputs_and_caches(
+    monkeypatch, tmp_path, adsb_source, reuse_single_day,
+):
+    target_date = date(2026, 3, 1)
+    start = datetime(2026, 3, 1)
+    end = datetime(2026, 3, 2)
+    catalog = fake_airport_catalog(target_date)
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+    source = AlgorithmNNFlightSource(
+        model_path=tmp_path / "model.pt", target_day_adsb=True,
+    )
+
+    def cache_flights(cached_source, label):
+        path = flight_path(cached_source, target_date, adsb_source)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pl.DataFrame({"icao": ["abc123"], "label": [label]}).write_parquet(path)
+        cached_source.flight_manifest(catalog.provenance, adsb_source).write(
+            flight_manifest_path(path)
+        )
+
+    # Neither ordinary NN flights nor ordinary nearest segments may be reused.
+    cache_flights(AlgorithmNNFlightSource(), "wrong-nn-context")
+    cache_flights(AlgorithmNearestFlightSource(), "wrong-nearest-context")
+    if reuse_single_day:
+        cache_flights(AlgorithmNearestFlightSource(target_day_adsb=True), "reused")
+
+    messages = pl.DataFrame({
+        "icao": ["abc123"] * 4,
+        "time": [
+            start - timedelta(microseconds=1), start,
+            end - timedelta(microseconds=1), end,
+        ],
+    })
+    reads = []
+
+    def read_adsb(read_start, read_end, *, source, lazy=False, **kwargs):
+        assert (read_start, read_end) == (start, end)
+        assert source == adsb_source
+        reads.append(lazy)
+        frame = messages.filter(
+            (pl.col("time") >= read_start) & (pl.col("time") < read_end)
+        )
+        return frame.lazy() if lazy else frame
+
+    expected_times = [start, end - timedelta(microseconds=1)]
+    segmented = []
+
+    def segment(self, dt, frame, airport_catalog):
+        assert not reuse_single_day
+        assert frame["time"].to_list() == expected_times
+        segmented.append(dt)
+        return pl.DataFrame({"icao": ["abc123"], "label": ["segmented"]})
+
+    predictions = []
+
+    def predict(flights, frame, loaded_model, airport_catalog):
+        assert frame["time"].to_list() == expected_times
+        predictions.append(flights)
+        return flights
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+    monkeypatch.setattr(AlgorithmNearestFlightSource, "create_flights_for_day", segment)
+    monkeypatch.setattr(model, "load_model", lambda path: "model")
+    monkeypatch.setattr(inference, "predict_flights", predict)
+
+    result = get_flights(source, target_date, adsb_source)
+    assert result["label"].to_list() == ["reused" if reuse_single_day else "segmented"]
+    assert segmented == ([] if reuse_single_day else [target_date])
+    assert reads == ([False] if reuse_single_day else [True, False])
+    assert len(predictions) == 1
+
+    path = flight_path(source, target_date, adsb_source)
+    manifest = FlightManifest.read(flight_manifest_path(path))
+    assert manifest.target_day_adsb is True
+    assert manifest.flight_cache_key != AlgorithmNNFlightSource().flight_manifest(
+        catalog.provenance, adsb_source,
+    ).flight_cache_key
+    assert get_flights(source, target_date, adsb_source).equals(result)
+    assert len(predictions) == 1
+
+
+def test_target_day_adsb_reaches_unbatched_reads(monkeypatch, tmp_path):
+    monkeypatch.setattr(flight_source_module, "OUTPUT_DIR", tmp_path)
+
+    def read_adsb(start, end, **kwargs):
+        assert start == datetime(2026, 3, 1)
+        assert end == datetime(2026, 3, 2)
+        return pl.DataFrame({"icao": ["abc123"]})
+
+    monkeypatch.setattr(flight_source_module, "read_adsb", read_adsb)
+    get_flights(
+        DummyADSBFlightSource(target_day_adsb=True),
+        date(2026, 3, 1), ADSBSource.ADSBX, use_cache=False,
     )
 
 

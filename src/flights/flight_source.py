@@ -4,8 +4,8 @@ import multiprocessing
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, replace
-from datetime import date, datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -49,6 +49,18 @@ class FlightSource(ABC):
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    target_day_adsb: bool = field(default=False, kw_only=True)
+
+    def flight_manifest(
+        self,
+        provenance: AirportCatalogProvenance,
+        adsb_src: ADSBSource | None,
+    ) -> FlightManifest:
+        return replace(
+            super().flight_manifest(provenance, adsb_src),
+            target_day_adsb=self.target_day_adsb,
+        )
+
     def read_adsb(
         self,
         start: date | datetime,
@@ -88,6 +100,18 @@ class ADSBFlightSource(FlightSource):
         if reusable_source is not None:
             return reusable_source.adsb_read_interval_for_source(dt, adsb_src)
         return self.adsb_read_interval(dt)
+
+    def adsb_input_interval(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[date | datetime, datetime | None]:
+        """Use the provider's input window unless target-day-only is enabled."""
+        default_interval = self.adsb_read_interval_for_source(dt, adsb_src)
+        if not self.target_day_adsb:
+            return default_interval
+        start = datetime.combine(dt, datetime.min.time())
+        return start, start + timedelta(days=1)
 
     def reusable_flight_source(self) -> ADSBFlightSource | None:
         """Flights from the same ADS-B provider that can replace segmentation."""
@@ -184,7 +208,7 @@ def _create_adsb_batch(
         if reused
         else source.adsb_columns()
     )
-    start, end = source.adsb_read_interval_for_source(dt, adsb_src)
+    start, end = source.adsb_input_interval(dt, adsb_src)
     kwargs = {
         "source": adsb_src,
         "icaos": list(task.icaos),
@@ -277,6 +301,9 @@ def flight_path(
     if adsb_src is not None:
         path /= f"adsb_source={adsb_src.value}"
 
+    if isinstance(source, ADSBFlightSource) and source.target_day_adsb:
+        path /= "target_day_adsb=true"
+
     return (
         path
         / f"version={source.version}"
@@ -314,6 +341,8 @@ def _reusable_flights_for_source(
     reusable_source = source.reusable_flight_source()
     if reusable_source is None:
         return None
+    if source.target_day_adsb:
+        reusable_source = replace(reusable_source, target_day_adsb=True)
 
     flights = _read_cached_flights_for_catalog(
         reusable_source,
@@ -405,7 +434,7 @@ def _create_flights_for_catalog(
                 adsb_src,
                 batch_workers,
             )
-        start, end = source.adsb_read_interval_for_source(dt, adsb_src)
+        start, end = source.adsb_input_interval(dt, adsb_src)
         columns = source.adsb_columns()
         batch_size = source.adsb_icao_batch_size()
         source_icaos = source.adsb_icaos(dt, airport_catalog)
