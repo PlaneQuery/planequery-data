@@ -6,7 +6,7 @@ import polars as pl
 
 from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import scan_adsb
-from data_engineering.swim.read_sfdps import read_sfdps
+from data_engineering.swim.read_sfdps import read_sfdps, sort_sfdps_messages
 from data_engineering.swim.utils import MISSING_SFDPS_DAYS
 from flights.airport_reference import (
     ICAO_AIRPORT_CODE_PRIORITY,
@@ -147,7 +147,7 @@ def sfdps_to_flights(current_day: datetime) -> pl.DataFrame:
     df = pl.concat([
         read_sfdps(current_day),
         read_sfdps(current_day + timedelta(days=1)),
-    ]).sort(["gufi", "timestamp"])
+    ]).pipe(sort_sfdps_messages)
     df = df.group_by("gufi").map_groups(gufi_state_machine)
     df = (
         df.rename(
@@ -234,7 +234,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 10
+    version: int = 11
 
     def create_flights_for_day(
         self,

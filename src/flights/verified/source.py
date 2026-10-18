@@ -20,7 +20,7 @@ class VerifiedFlightSource(NonADSBFlightSource):
 
     def __init__(self, source: NonADSBFlightSource):
         if isinstance(source, SFDPSFlightSource):
-            version = 6
+            version = 7
         elif isinstance(source, BTSFlightSource):
             version = 1
         elif isinstance(source, EurocontrolFlightSource):
