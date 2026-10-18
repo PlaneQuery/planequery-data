@@ -34,16 +34,22 @@ _METRIC_COLUMNS = (
     "takeoff_airport_id_match_count",
     "takeoff_airport_id_incorrect_match_count",
     "takeoff_airport_id_match_pct",
+    "takeoff_airport_id_null_count",
+    "takeoff_airport_id_null_pct",
     "landing_airport_id_total_count",
     "landing_airport_id_match_count",
     "landing_airport_id_incorrect_match_count",
     "landing_airport_id_match_pct",
+    "landing_airport_id_null_count",
+    "landing_airport_id_null_pct",
     "airport_id_total_count",
     "airport_id_match_count",
     "airport_id_incorrect_match_count",
     "airport_id_match_pct",
 )
 _RATE_COLUMNS = {
+    "takeoff_airport_id_null_pct",
+    "landing_airport_id_null_pct",
     "gold_icao_missing_from_test_pct",
     "precision",
     "recall",
@@ -92,6 +98,8 @@ class EvaluationStats:
     takeoff_airport_id_match_count: int
     landing_airport_id_match_count: int
     airport_id_match_count: int
+    takeoff_airport_id_null_count: int = 0
+    landing_airport_id_null_count: int = 0
     target_day_adsb: bool = False
 
     def __post_init__(self) -> None:
@@ -107,6 +115,14 @@ class EvaluationStats:
             raise ValueError("Evaluation counts cannot be negative")
         if any(value > self.true_positive for value in counts[3:]):
             raise ValueError("Airport match counts cannot exceed true_positive")
+        for null_count in (
+            self.takeoff_airport_id_null_count,
+            self.landing_airport_id_null_count,
+        ):
+            if not 0 <= null_count <= self.true_positive + self.false_positive:
+                raise ValueError(
+                    "Airport null counts must be between zero and test flight count"
+                )
         if not 0 <= self.gold_icao_missing_from_test_count <= self.gold_icao_count:
             raise ValueError(
                 "Missing gold ICAO count must be between zero and gold_icao_count"
@@ -148,6 +164,14 @@ class EvaluationStats:
                 pl.col("same_landing_airport_id")
             ),
             airport_id_match_count=count(pl.col("same_airport_id")),
+            takeoff_airport_id_null_count=count(
+                pl.col("match_status").is_in(["both", "df0_only"])
+                & pl.col("takeoff_airport_id").is_null()
+            ),
+            landing_airport_id_null_count=count(
+                pl.col("match_status").is_in(["both", "df0_only"])
+                & pl.col("landing_airport_id").is_null()
+            ),
         )
 
     @classmethod
@@ -184,6 +208,28 @@ class EvaluationStats:
                 row, "landing_airport_id_match_count"
             ),
             airport_id_match_count=_count(row, "airport_id_match_count"),
+            takeoff_airport_id_null_count=_count(
+                row, "takeoff_airport_id_null_count"
+            ),
+            landing_airport_id_null_count=_count(
+                row, "landing_airport_id_null_count"
+            ),
+        )
+
+    @property
+    def takeoff_airport_id_null_pct(self) -> float:
+        """Fraction of retained test flights with no resolved takeoff airport."""
+        return _ratio(
+            self.takeoff_airport_id_null_count,
+            self.true_positive + self.false_positive,
+        )
+
+    @property
+    def landing_airport_id_null_pct(self) -> float:
+        """Fraction of retained test flights with no resolved landing airport."""
+        return _ratio(
+            self.landing_airport_id_null_count,
+            self.true_positive + self.false_positive,
         )
 
     @property
@@ -290,7 +336,11 @@ class EvaluationStats:
             "recall": self.recall,
             "f1": self.f1,
             "takeoff_airport_id_match_pct": self.takeoff_airport_id_match_pct,
+            "takeoff_airport_id_null_count": self.takeoff_airport_id_null_count,
+            "takeoff_airport_id_null_pct": self.takeoff_airport_id_null_pct,
             "landing_airport_id_match_pct": self.landing_airport_id_match_pct,
+            "landing_airport_id_null_count": self.landing_airport_id_null_count,
+            "landing_airport_id_null_pct": self.landing_airport_id_null_pct,
             "airport_id_match_pct": self.airport_id_match_pct,
         }
 

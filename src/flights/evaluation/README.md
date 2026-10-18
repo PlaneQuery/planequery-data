@@ -14,6 +14,18 @@ date, test source, gold source, and, where applicable, ADS-B source. Multiple
 values form the full combination set. The CSV contains every metric column by
 default.
 
+`takeoff_airport_id_null_count` and `landing_airport_id_null_count` count
+missing resolved airport IDs in retained **test-source** flights, including
+unmatched test flights. Their corresponding `_null_pct` columns divide by
+`true_positive + false_positive` (stored as fractions from 0 to 1; zero when
+there are no retained test flights). Gold-only rows are excluded, as are
+test-only aircraft and flights discarded by the comparison's boundary grace
+period. This includes OpenSky flights with missing or unresolved airports.
+Existing airport match metrics still use matched flights only, and null
+airports remain incorrect matches. Console output also displays null counts
+and formatted percentages. These metrics are included in CSVs, cached stats,
+and daily averages. Cache version 7 recalculates older evaluations on demand.
+
 ```bash
 python -m flights.evaluation.evaluation \
   --test-source algorithm-nn \
