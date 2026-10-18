@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -11,6 +12,7 @@ from airports.models import (
     AirportMatchProvenance,
     AirportType,
 )
+from airports.matcher import AirportMatcher
 from flights.segmentation import algorithm
 from flights.segmentation.algorithm import (
     AdsbPositionMessage,
@@ -334,6 +336,43 @@ def test_airport_assignment_does_not_decide_if_a_flight_exists(monkeypatch):
         "takeoff_airport_id",
         "landing_airport_id",
     ).row(0) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    "nearby_type",
+    [AirportType.SMALL_AIRPORT, AirportType.MEDIUM_AIRPORT, AirportType.LARGE_AIRPORT],
+)
+def test_airport_assignment_uses_closest_endpoint_independently(nearby_type):
+    closest = fake_airport_catalog().airport
+    nearby = replace(closest, id=102, ident="NEARBY", type=nearby_type, lon=0.04)
+    airports = (closest, nearby)
+    catalog = SimpleNamespace(
+        matcher=AirportMatcher(
+            airports,
+            {a.id: AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE for a in airports},
+            {a.id: "test-commit" for a in airports},
+        ),
+        id_index={a.id: a for a in airports},
+    )
+    segments = [
+        algorithm.FlightSegment(
+            icao=ICAO,
+            takeoff_time=START + timedelta(minutes=start),
+            landing_time=START + timedelta(minutes=start + 10),
+            takeoff_message=message(start, 1000, lon=lon),
+            landing_message=message(start + 10, 0, on_ground=True, lon=lon),
+        )
+        for start, lon in [(0, 0.0), (20, 0.04)]
+    ]
+
+    flights = _segments_to_flights_df(segments, catalog)
+
+    # A larger nearby airport and the next departure must not override
+    # the airport closest to the first flight's own endpoint positions.
+    assert flights.select("takeoff_airport_id", "landing_airport_id").rows() == [
+        (101, 101),
+        (102, 102),
+    ]
 
 
 def test_marks_new_leg_during_ground_interval_between_descent_and_climb():
