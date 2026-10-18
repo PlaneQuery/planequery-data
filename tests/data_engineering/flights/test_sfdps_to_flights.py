@@ -148,7 +148,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 11
+    assert sfdps.SFDPSFlightSource().version == 12
 
 
 def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
@@ -325,7 +325,7 @@ def test_sfdps_requires_following_day_logs(monkeypatch):
 
 
 def test_sfdps_verified_cache_version_changes_without_changing_bts():
-    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 7
+    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 8
     assert VerifiedFlightSource(BTSFlightSource()).version == 1
 
 
@@ -419,8 +419,72 @@ def test_timestamp_ties_are_deterministic_through_reconstruction(
             )
             result = sfdps.sfdps_to_flights(day)
             assert result.height == 1
-            assert result["landing_time"][0] == landings[expected_index]
+            # Even if the next-day arrival sorts first, it is implausible at
+            # this message timestamp and must not complete the flight.
+            assert result["landing_time"][0] == landings[0]
             assert result["icao"][0] == "a096a1"
+
+
+def _landing_update(timestamp, landing_time, **overrides):
+    return {
+        "gufi": "gufi-1",
+        "timestamp": timestamp,
+        "aircraft_identification": "EJA137",
+        "aircraft_address": "A096A1",
+        "aircraft_registration": "N137QS",
+        "aircraft_type": "C680",
+        "flightStatus": "COMPLETED",
+        "takeoff_time": datetime(2026, 3, 1, 19, 47),
+        "takeoff_airport_icao": "KBCT",
+        "landing_time": landing_time,
+        "landing_airport_icao": "KFRG",
+        "estimated_takeoff_time": None,
+        "estimated_landing_time": None,
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("offset, accepted", [
+    (timedelta(minutes=-1), True),
+    (timedelta(0), True),
+    (timedelta(minutes=2), True),
+    (timedelta(minutes=2, microseconds=1), False),
+    (timedelta(days=1), False),
+])
+def test_actual_landing_clock_skew_boundary(offset, accepted):
+    timestamp = datetime(2026, 3, 1, 22, 22)
+    landing = timestamp + offset
+    result = sfdps.gufi_state_machine(pl.DataFrame([
+        _landing_update(timestamp, landing),
+    ]))
+
+    assert result.height == int(accepted)
+    if accepted:
+        assert result["landing_time"][0] == landing
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+def test_future_actual_arrival_is_not_carried_into_later_updates(corrected):
+    timestamp = datetime(2026, 3, 1, 22, 22, 56, 564000)
+    implausible = datetime(2026, 3, 2, 22, 4)
+    valid = datetime(2026, 3, 1, 22, 22)
+    estimate = datetime(2026, 3, 3)
+    rows = [
+        _landing_update(timestamp, implausible, estimated_landing_time=estimate),
+        _landing_update(
+            # The later message cannot make the rejected earlier value valid.
+            implausible + timedelta(hours=1), valid if corrected else None,
+            takeoff_time=None,
+        ),
+    ]
+
+    result = sfdps.gufi_state_machine(pl.DataFrame(rows))
+
+    assert result.height == int(corrected)
+    if corrected:
+        assert result["landing_time"][0] == valid
+        assert result["takeoff_time"][0] == rows[0]["takeoff_time"]
+        assert result["estimated_landing_time"][0] == estimate
 
 
 @pytest.mark.parametrize("addresses, expected", [
