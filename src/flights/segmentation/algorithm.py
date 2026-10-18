@@ -11,7 +11,7 @@ from concurrent.futures import ProcessPoolExecutor
 import polars as pl
 
 from airports.catalog import AirportCatalogView
-from airports.models import Airport, AirportCatalogProvenance
+from airports.models import AirportCatalogProvenance
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.adsb_messages_types import AdsbMessageRow
 from data_engineering.adsb.read_adsb import (
@@ -24,18 +24,10 @@ from flights.segmentation.readsb_legs import mark_leg_indexes
 from flights.workers import default_worker_count
 
 
-AIRPORT_CANDIDATE_RADIUS_KM = 40.0
-AIRPORT_SIZE_BONUS_KM = 5.0
-MAX_AIRPORT_IDENT_DISTANCE_KM = 8.0
 DB_FLAG_MILITARY = 1
 DB_FLAG_INTERESTING = 2
 DB_FLAG_PIA = 4
 DB_FLAG_LADD = 8
-AIRPORT_SIZE_RANK = {
-    "small_airport": 0,
-    "medium_airport": 1,
-    "large_airport": 2,
-}
 MAX_AIRPORT_CATALOG_WORKERS = 8
 MIN_FLIGHT_DURATION = timedelta(minutes=5)
 MIN_FLIGHT_DISTANCE_KM = 5.0
@@ -556,63 +548,17 @@ def _position_message_rows(df: pl.DataFrame):
     return df.select(expressions).iter_rows()
 
 
-def _airport_rank(airport: Airport) -> int:
-    return AIRPORT_SIZE_RANK.get(str(airport.type), 0)
-
-
-def _airport_distance_to_message(
-    airport: Airport,
-    message: AdsbMessageRow | AdsbPositionMessage,
-) -> float:
-    return haversine_km(
-        message.lat,
-        message.lon,
-        airport.lat,
-        airport.lon,
-    )
-
-
 def _airport_guess_for_message(
     airport_catalog: AirportCatalogView,
     message: AdsbMessageRow | AdsbPositionMessage,
 ) -> AirportGuess:
-    matches = airport_catalog.matcher.within_radius(
-        message.lat,
-        message.lon,
-        AIRPORT_CANDIDATE_RADIUS_KM,
-    )
-    if not matches:
-        matches = (airport_catalog.matcher.nearest(message.lat, message.lon),)
-
-    best_match = min(
-        matches,
-        key=lambda match: (
-            match.distance_km
-            - AIRPORT_SIZE_BONUS_KM * _airport_rank(match.airport)
-        ),
-    )
+    """Choose the geographically closest airport to this endpoint."""
+    best_match = airport_catalog.matcher.nearest(message.lat, message.lon)
     return AirportGuess(
         id=best_match.id,
         ident=best_match.ident,
         distance_km=best_match.distance_km,
     )
-
-
-def _airport_guess_for_id(
-    airport_catalog: AirportCatalogView,
-    airport_id: int,
-    message: AdsbMessageRow | AdsbPositionMessage,
-) -> AirportGuess:
-    airport = airport_catalog.id_index[airport_id]
-    return AirportGuess(
-        id=airport.id,
-        ident=airport.ident,
-        distance_km=_airport_distance_to_message(airport, message),
-    )
-
-
-def _airport_guess_is_confident(guess: AirportGuess) -> bool:
-    return guess.distance_km <= MAX_AIRPORT_IDENT_DISTANCE_KM
 
 
 def _airport_guesses_for_segments(
@@ -627,24 +573,6 @@ def _airport_guesses_for_segments(
         _airport_guess_for_message(airport_catalog, segment.landing_message)
         for segment in segments
     ]
-
-    sorted_indices = sorted(
-        range(len(segments)),
-        key=lambda index: (segments[index].icao, segments[index].takeoff_time),
-    )
-    for previous_index, current_index in zip(sorted_indices, sorted_indices[1:]):
-        previous_segment = segments[previous_index]
-        current_segment = segments[current_index]
-        if previous_segment.icao != current_segment.icao:
-            continue
-
-        shared_guess = _airport_guess_for_id(
-            airport_catalog,
-            takeoff_guesses[current_index].id,
-            previous_segment.landing_message,
-        )
-        if _airport_guess_is_confident(shared_guess):
-            landing_guesses[previous_index] = shared_guess
 
     return takeoff_guesses, landing_guesses
 
