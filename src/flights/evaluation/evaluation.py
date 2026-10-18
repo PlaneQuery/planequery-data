@@ -443,6 +443,12 @@ def evaluate(
                         f"landing {stats.landing_airport_id_null_count} "
                         f"({stats.landing_airport_id_null_pct:.2%})"
                     )
+                    if resolved_test_source.name == "opensky":
+                        print(
+                            "Non-null airport accuracy in opensky (matched flights): "
+                            f"takeoff {stats.takeoff_airport_id_non_null_match_pct:.2%}, "
+                            f"landing {stats.landing_airport_id_non_null_match_pct:.2%}"
+                        )
 
     return EvaluationResults(entries=tuple(daily_results))
 

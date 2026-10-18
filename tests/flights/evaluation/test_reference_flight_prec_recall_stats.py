@@ -24,6 +24,8 @@ def _stats(gold_source: str, adsb_source: ADSBSource) -> EvaluationStats:
         takeoff_airport_id_match_count=true_positive,
         landing_airport_id_match_count=true_positive,
         airport_id_match_count=true_positive,
+        takeoff_airport_id_non_null_count=true_positive,
+        landing_airport_id_non_null_count=true_positive,
     )
 
 

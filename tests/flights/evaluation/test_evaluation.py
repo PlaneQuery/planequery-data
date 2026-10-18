@@ -194,11 +194,21 @@ def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, ca
     assert stats.landing_airport_id_null_count == 2
     assert stats.takeoff_airport_id_null_pct == pytest.approx(1 / 3)
     assert stats.landing_airport_id_null_pct == pytest.approx(2 / 3)
+    assert stats.takeoff_airport_id_non_null_count == 1
+    assert stats.landing_airport_id_non_null_count == 1
+    assert stats.takeoff_airport_id_non_null_match_pct == 1.0
+    assert stats.landing_airport_id_non_null_match_pct == 1.0
     report = (
         "Null airports in opensky (3 retained test flights): "
         "takeoff 1 (33.33%), landing 2 (66.67%)"
     )
-    assert report in capsys.readouterr().out
+    accuracy_report = (
+        "Non-null airport accuracy in opensky (matched flights): "
+        "takeoff 100.00%, landing 100.00%"
+    )
+    output = capsys.readouterr().out
+    assert report in output
+    assert accuracy_report in output
 
     def unexpected_read(*args, **kwargs):
         raise AssertionError("Cached evaluation should not read source flights")
@@ -208,7 +218,9 @@ def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, ca
         OPENSKY_SOURCE, BTS_SOURCE, target_date, evaluation_cache=cache,
     )
     assert cached.stats == results.stats
-    assert report in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert report in output
+    assert accuracy_report in output
     _, path = evaluation.export_cached_evaluations(
         tmp_path / "stats.csv", test_source="opensky", evaluation_cache=cache,
     )
@@ -216,6 +228,8 @@ def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, ca
     for endpoint, count in (("takeoff", 1), ("landing", 2)):
         assert row[f"{endpoint}_airport_id_null_count"] == count
         assert row[f"{endpoint}_airport_id_null_pct"] == pytest.approx(count / 3)
+        assert row[f"{endpoint}_airport_id_non_null_count"] == 1
+        assert row[f"{endpoint}_airport_id_non_null_match_pct"] == 1.0
 
 
 def test_gold_icao_coverage_uses_unique_input_aircraft_before_matching(

@@ -24,7 +24,17 @@ period. This includes OpenSky flights with missing or unresolved airports.
 Existing airport match metrics still use matched flights only, and null
 airports remain incorrect matches. Console output also displays null counts
 and formatted percentages. These metrics are included in CSVs, cached stats,
-and daily averages. Cache version 7 recalculates older evaluations on demand.
+and daily averages.
+
+`takeoff_airport_id_non_null_match_pct` and
+`landing_airport_id_non_null_match_pct` report accuracy among matched flights
+whose corresponding **test-source** airport ID is non-null. Each divides the
+airport match count by its `_non_null_count` column. Unmatched flights are
+excluded; a non-null test airport with a null gold airport still counts as
+incorrect. Values are fractions from 0 to 1, or zero if no eligible airports
+exist. These columns are available for all sources and are also displayed as
+formatted percentages for OpenSky. They are included in CSVs, cached stats,
+and daily averages. Cache version 8 recalculates older evaluations on demand.
 
 ```bash
 python -m flights.evaluation.evaluation \
