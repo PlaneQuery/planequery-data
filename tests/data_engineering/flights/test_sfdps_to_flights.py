@@ -148,7 +148,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 9
+    assert sfdps.SFDPSFlightSource().version == 11
 
 
 def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
@@ -157,6 +157,7 @@ def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
     source = pl.DataFrame(
         {
             "gufi": [f"gufi-{index}" for index in range(len(callsigns))],
+            "sup_msg_seq_no": list(range(len(callsigns))),
             "timestamp": [datetime(2026, 3, 1, 2, 0)] * len(callsigns),
             "aircraft_identification": callsigns,
             "aircraft_address": [None] * len(callsigns),
@@ -203,6 +204,7 @@ def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
     source = pl.DataFrame(
         {
             "gufi": [f"gufi-{index}" for index in range(4)],
+            "sup_msg_seq_no": list(range(4)),
             "timestamp": [landing] * 4,
             "aircraft_identification": [callsign] * 4,
             "aircraft_address": ["A91349", "012ABC", None, ""],
@@ -254,6 +256,7 @@ def test_reconstructs_overnight_flights_from_both_days(monkeypatch, day):
     def message(gufi, timestamp, takeoff, landing):
         return {
             "gufi": gufi,
+            "sup_msg_seq_no": 1,
             "timestamp": timestamp,
             "aircraft_identification": "UAL123",
             "aircraft_address": "A123BC" if takeoff is not None else None,
@@ -322,7 +325,7 @@ def test_sfdps_requires_following_day_logs(monkeypatch):
 
 
 def test_sfdps_verified_cache_version_changes_without_changing_bts():
-    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 5
+    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 7
     assert VerifiedFlightSource(BTSFlightSource()).version == 1
 
 
@@ -330,6 +333,7 @@ def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):
     parquet_path = tmp_path / "sfdps.parquet"
     pl.DataFrame({
         "gufi": ["gufi-1"] * 3,
+        "sup_msg_seq_no": [1, 2, 3],
         "timestamp": [datetime(2026, 3, 1, hour) for hour in (1, 2, 3)],
         "aircraft_identification": ["UAL123"] * 3,
         "aircraft_address": ["ABC123", "DEF456", None],
@@ -362,6 +366,63 @@ def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):
     ] * 3
 
 
+@pytest.mark.parametrize("sequences, expected_index", [
+    (["30212946", "30212947"], 0),  # EJA137's conflicting arrival updates.
+    (["10", "9"], 1),  # Numeric sequence, not lexical or earliest-arrival order.
+    ([None, "9"], 1),
+    (["9", "9"], 0),  # Duplicate sequence: fall back to contents.
+    ([None, None], 0),
+])
+def test_timestamp_ties_are_deterministic_through_reconstruction(
+    monkeypatch, tmp_path, sequences, expected_index,
+):
+    day = datetime(2026, 3, 1)
+    landings = [datetime(2026, 3, 1, 22, 22), datetime(2026, 3, 2, 22, 4)]
+    rows = [{
+        "gufi": "1f5310df-fe92-49a5-a841-2af1f50897d6",
+        "timestamp": datetime(2026, 3, 1, 22, 22, 56, 564000),
+        "aircraft_identification": "EJA137",
+        "aircraft_address": "A096A1",
+        "aircraft_registration": "N137QS",
+        "aircraft_type": "C680",
+        "flight_status": "COMPLETED",
+        "departure_point": "KBCT",
+        "departure_actual_time": day + timedelta(hours=19, minutes=47),
+        "departure_estimated_time": None,
+        "arrival_point": "KFRG",
+        "arrival_actual_time": landing,
+        "arrival_estimated_time": None,
+    } for landing in landings]
+    for row, sequence in zip(rows, sequences):
+        row["sup_msg_seq_no"] = sequence
+    raw = pl.DataFrame(rows, schema_overrides={
+        "departure_estimated_time": pl.Datetime("us"),
+        "arrival_estimated_time": pl.Datetime("us"),
+    })
+    parquet_path = tmp_path / "sfdps.parquet"
+    monkeypatch.setattr(sfdps_reader, "_parquet_path", lambda _day: parquet_path)
+
+    for input_rows in (raw, raw.reverse()):
+        input_rows.write_parquet(parquet_path)
+        messages = sfdps_reader.read_sfdps(day)
+        assert messages["sup_msg_seq_no"].dtype == pl.UInt64
+        assert messages["landing_time"][0] == landings[expected_index]
+
+        # Put the tied records on opposite sides of the daily merge in both
+        # orders: reconstruction must preserve the same tie-break policy.
+        for merged_rows in (messages, messages.reverse()):
+            monkeypatch.setattr(
+                sfdps, "read_sfdps",
+                lambda current_day: (
+                    merged_rows.head(1) if current_day == day else merged_rows.tail(1)
+                ),
+            )
+            result = sfdps.sfdps_to_flights(day)
+            assert result.height == 1
+            assert result["landing_time"][0] == landings[expected_index]
+            assert result["icao"][0] == "a096a1"
+
+
 @pytest.mark.parametrize("addresses, expected", [
     (["ABC123", None], "abc123"),
     ([None, "DEF456"], "def456"),
@@ -372,6 +433,7 @@ def test_reconstruction_carries_aircraft_address_state(monkeypatch, addresses, e
     day = datetime(2026, 3, 1)
     source = pl.DataFrame({
         "gufi": ["gufi-1"] * 2,
+        "sup_msg_seq_no": [1, 2],
         "timestamp": [day + timedelta(hours=1), day + timedelta(hours=2)],
         "aircraft_identification": ["UAL123"] * 2,
         "aircraft_address": addresses,
