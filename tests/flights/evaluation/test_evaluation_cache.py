@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -9,7 +10,11 @@ import pytest
 from airports.models import AirportCatalogProvenance
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn.source import AlgorithmNNFlightSource
-from flights.evaluation import evaluation
+from flights.evaluation import airport_exposure, evaluation
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
 from flights.evaluation.cache import (
     CachedEvaluationStats,
     EvaluationCache,
@@ -112,6 +117,31 @@ def test_default_cache_directory_is_under_output_dir(monkeypatch, tmp_path):
     assert evaluation.default_evaluation_cache().root == (
         tmp_path / "data" / "cache" / "evaluation"
     )
+
+
+def test_airport_exposure_reuses_cached_comparison(monkeypatch, tmp_path):
+    monkeypatch.setattr(airport_exposure, "OUTPUT_DIR", tmp_path)
+    source = _algorithm_nn_source(tmp_path)
+    _patch_inputs(monkeypatch, source, lambda _: flights_to_flights_df([_flight()]))
+    cache = EvaluationCache(tmp_path / "cache")
+    fresh = _evaluate(source, cache)
+
+    part = tmp_path / "data/processed/flights_airport_nn/february-2026/2026-02-01/part-0000.parquet"
+    part.parent.mkdir(parents=True)
+    pl.DataFrame({"truth_id": [1], "eligible": [True], "target": [0]}).write_parquet(part)
+    manifest = tmp_path / "training.json"
+    manifest.write_text(json.dumps({"inputs": {"train": [[str(part.relative_to(tmp_path)), 0, 0]]}}))
+    training = load_training_airports(manifest)
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Exposure reporting must reuse cached flights")
+
+    monkeypatch.setattr(evaluation, "source_flights_reader", unexpected_read)
+    cached = _evaluate(source, cache)
+    assert airport_exposure_report(cached, training).equals(
+        airport_exposure_report(fresh, training)
+    )
+    assert cached.stats == fresh.stats
 
 
 def test_identical_evaluation_uses_cached_comparison_and_stats(

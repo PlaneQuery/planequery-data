@@ -15,6 +15,10 @@ from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import OUTPUT_DIR
 from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
 from flights.evaluation.cache import EvaluationCache
 from flights.evaluation.models import (
     EVALUATION_METADATA_COLUMNS,
@@ -538,6 +542,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Checkpoint to use for algorithm-nn or opensky-nn sources.",
     )
     parser.add_argument(
+        "--airport-nn-training",
+        type=Path,
+        help=(
+            "Optional training.json manifest (relative paths use OUTPUT_DIR). "
+            "Write separate airport-exposure and training-airport CSVs "
+            "alongside the normal stats CSV."
+        ),
+    )
+    parser.add_argument(
         "--target-day-adsb",
         action="store_true",
         help=(
@@ -562,11 +575,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         nargs="+",
         help="CSV columns in output order (default: every applicable column).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.list_cache and args.airport_nn_training is not None:
+        parser.error(
+            "--airport-nn-training requires detailed comparisons; omit --list-cache "
+            "to evaluate the requested dates using cached results when available."
+        )
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
+    training = (
+        load_training_airports(args.airport_nn_training)
+        if args.airport_nn_training is not None
+        else None
+    )
     if args.list_cache:
         cached = list_cached_evaluations(
             test_source=args.test_source,
@@ -597,6 +621,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         columns=args.columns,
     )
     print(f"Stats CSV saved to {stats_output}")
+    if training is not None:
+        exposure_output = write_evaluation_csv(
+            airport_exposure_report(results, training),
+            stats_output.with_name(f"{stats_output.stem}_airport_exposure.csv"),
+        )
+        training_output = write_evaluation_csv(
+            training.airport_counts,
+            stats_output.with_name(f"{stats_output.stem}_training_airports.csv"),
+        )
+        print(f"Airport exposure CSV saved to {exposure_output}")
+        print(
+            f"Training airport IDs and endpoint counts saved to {training_output} "
+            f"({training.airport_counts.height} airports)"
+        )
 
 
 if __name__ == "__main__":
