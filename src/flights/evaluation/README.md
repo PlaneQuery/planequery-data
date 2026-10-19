@@ -7,6 +7,16 @@ negatives while test-only aircraft are outside the evaluation cohort. Daily
 comparison details and metric rows are cached under
 `OUTPUT_DIR/data/cache/evaluation`.
 
+BTS excludes an aircraft's entire UTC takeoff day when a non-cancelled,
+non-diverted report is missing `air_time`, `wheels_on`, or `arr_delay`. The
+exclusion uses the mapped ICAO and also removes that aircraft's diversion legs
+on the affected day, while retaining its other days. Departure timing determines
+the UTC day; when the departure day is uncertain, the exclusion covers the
+reported local day and a possible overnight departure (including their UTC date
+boundaries). Diversion reports use their separate timing fields and do not
+trigger this missing-field rule. BTS cache version 15 and BTS-verified version 2
+apply this policy.
+
 ## Get or create evaluation data
 
 A normal run checks the cache first and calculates only missing combinations of

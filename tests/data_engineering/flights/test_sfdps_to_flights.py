@@ -324,9 +324,9 @@ def test_sfdps_requires_following_day_logs(monkeypatch):
         sfdps.create_sfdps_flights_day(date(2026, 3, 1), FakeAirportCatalog())
 
 
-def test_sfdps_verified_cache_version_changes_without_changing_bts():
+def test_verified_cache_versions():
     assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 8
-    assert VerifiedFlightSource(BTSFlightSource()).version == 1
+    assert VerifiedFlightSource(BTSFlightSource()).version == 2
 
 
 def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):

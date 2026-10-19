@@ -89,6 +89,7 @@ BTS_CARRIER_ICAO_CODES = {
 
 BTS_OVERNIGHT_ROLLOVER_THRESHOLD_MINUTES = 12 * 60
 MAX_DIVERSION_LEG_DURATION = timedelta(hours=20)
+BTS_REQUIRED_TIMING_FIELDS = ("air_time", "wheels_on", "arr_delay")
 
 
 def _bts_callsign_expr() -> pl.Expr:
@@ -681,6 +682,78 @@ def _remove_overlapping_flights(
     return df.sort(["icao", "takeoff_time"])
 
 
+def _incomplete_bts_takeoff_dates(row: dict) -> list[date]:
+    """Find UTC days to exclude when a regular flight has incomplete timing.
+
+    Departure delay anchors the actual local day even for multi-day delays.
+    Without it, cover both the reported local day and an overnight departure.
+    """
+    local_date = row["fl_date"]
+    wheels_off = _coerce_hhmm(row.get("wheels_off"))
+    scheduled_time = _coerce_hhmm(row.get("crs_dep_time"))
+    has_departure_anchor = (
+        scheduled_time is not None and _has_value(row.get("dep_delay"))
+    )
+    timezone_name = row.get("origin_timezone")
+    if not timezone_name:
+        if has_departure_anchor:
+            if wheels_off is not None:
+                local_date = _diverted_takeoff_datetime(row, "UTC").date()
+            else:
+                local_date = (
+                    _local_datetime(local_date, scheduled_time, "UTC")
+                    + timedelta(minutes=float(row["dep_delay"]))
+                ).date()
+        # Unknown origin timezone: cover the UTC extent of both local days.
+        return [local_date + timedelta(days=offset) for offset in (-1, 0, 1, 2)]
+
+    if wheels_off is not None and has_departure_anchor:
+        return [_diverted_takeoff_datetime(row, timezone_name).date()]
+    if wheels_off is not None:
+        return sorted({
+            _local_datetime(local_date + timedelta(days=offset), wheels_off, timezone_name)
+            .astimezone(UTC).date()
+            for offset in (0, 1)
+        })
+
+    if has_departure_anchor:
+        start = _local_datetime(local_date, scheduled_time, timezone_name).astimezone(UTC)
+        start += timedelta(minutes=float(row["dep_delay"]))
+        end = start + timedelta(days=1)
+    else:
+        start = _local_datetime(local_date, 0, timezone_name).astimezone(UTC)
+        end = _local_datetime(local_date + timedelta(days=2), 0, timezone_name).astimezone(UTC)
+        end -= timedelta(microseconds=1)
+    return [
+        start.date() + timedelta(days=offset)
+        for offset in range((end.date() - start.date()).days + 1)
+    ]
+
+
+def _incomplete_bts_aircraft_days(
+    incomplete_rows: pl.DataFrame,
+    registration_mapping: pl.DataFrame,
+    airport_mapping: pl.DataFrame,
+    timezone_mapping: pl.DataFrame,
+) -> pl.DataFrame:
+    # Identify aircraft before airport joins can discard incomplete reports.
+    origins = airport_mapping.join(timezone_mapping, on="airport_id").select(
+        pl.col("iata").alias("origin"),
+        pl.col("timezone").alias("origin_timezone"),
+    )
+    mapped_rows = incomplete_rows.join(registration_mapping, on="registration").join(
+        origins, on="origin", how="left"
+    )
+    return pl.DataFrame(
+        [
+            {"icao": row["icao"].lower(), "_excluded_date": affected_date}
+            for row in mapped_rows.drop_nulls("icao").iter_rows(named=True)
+            for affected_date in _incomplete_bts_takeoff_dates(row)
+        ],
+        schema={"icao": pl.String, "_excluded_date": pl.Date},
+    ).unique()
+
+
 def _bts_month_paths(year: int, month: int) -> list[Path]:
     """Return source files that can contribute to a UTC takeoff month."""
     month_start = date(year, month, 1)
@@ -809,9 +882,16 @@ def _create_flights_from_bts_month(
     diversion_report = _diversion_report_expr()
     regular_df = df.filter(
         (pl.col("cancelled") == 0) & ~diversion_report
-    ).drop_nulls(["air_time", "wheels_on", "arr_delay"]).rename(
-        {"tail_num": "registration"}
+    ).rename({"tail_num": "registration"})
+    excluded_days = _incomplete_bts_aircraft_days(
+        regular_df.filter(pl.any_horizontal(
+            pl.col(field).is_null() for field in BTS_REQUIRED_TIMING_FIELDS
+        )),
+        registration_mapping,
+        airport_mapping,
+        timezone_mapping,
     )
+    regular_df = regular_df.drop_nulls(BTS_REQUIRED_TIMING_FIELDS)
     regular_df = _join_bts_identifiers(
         regular_df,
         registration_mapping,
@@ -888,7 +968,12 @@ def _create_flights_from_bts_month(
         airport_mapping,
     )
     diverted_df = _to_bts_flight_schema(diverted_df)
-    return pl.concat([regular_df, diverted_df])
+    return (
+        pl.concat([regular_df, diverted_df])
+        .with_columns(pl.col("takeoff_time").dt.date().alias("_excluded_date"))
+        .join(excluded_days, on=["icao", "_excluded_date"], how="anti")
+        .drop("_excluded_date")
+    )
 
 
 def create_flights_from_bts(
@@ -911,7 +996,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 14
+    version: int = 15
 
     def create_flights_for_day(
         self,
