@@ -154,6 +154,41 @@ python -m flights.airport_nn.train --cache /tmp/airport-nn-cache \
   --validation-dates
 ```
 
+### OpenSky segments with NN airports
+
+The `opensky-nn` source keeps the published `opensky` flights (including their
+`firstseen`/`lastseen` boundaries, row order, and metadata) and replaces their
+departure/arrival airport IDs and identifiers with the same NN used by
+`algorithm-nn`. It always uses canonical OpenSky ADS-B observations. The
+`--adsb-source` option does not change this source's observation provider.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-nn
+python -m flights.evaluation.evaluation \
+  --test-source opensky-nn --gold-source bts \
+  --test-dates 2026-03-01
+```
+
+Both commands accept `--airport-nn-model /path/to/model.pt`; the default is the
+same checkpoint as `algorithm-nn`. Published flights are read through the
+catalog-aware `opensky` cache. Building that cache requires the departure day's
+and following day's downloaded `flights_data4` partitions. OpenSky observation
+data must cover the flights through their latest arrivals, including overnight
+arrivals.
+
+Inference reads observations in batches of at most 2,048 published flights.
+For each flight, it selects the same aircraft's first and last ten minutes,
+clipped to the supplied boundaries, and samples at most 32 observations per
+endpoint. Original OpenSky airport labels are not model inputs. Flights without
+usable endpoint observations remain in the output with null airport references.
+
+Output is cached under
+`data/flights/source=opensky-nn/adsb_source=opensky/version=1/` with OpenSky
+observation provenance. As with `algorithm-nn`, regenerate flight files with
+`flights.cli` when changing checkpoints, then use evaluation's `--refresh-cache`.
+`--workers` parallelizes days for this source; each day's flight batches run
+sequentially. `--target-day-adsb` is not supported for `opensky-nn`.
+
 ## Code
 
 - `features.py`: candidate search and trajectory features shared by training/inference.
