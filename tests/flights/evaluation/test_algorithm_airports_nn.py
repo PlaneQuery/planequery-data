@@ -3,10 +3,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from data_engineering.adsb.read_adsb import ADSBSource
-from flights.airport_nn.source import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.evaluation import evaluation
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import ADSBX_SOURCE, BTS_SOURCE, OPENSKY_SOURCE
+from flights.sources import ADSBX_SOURCE, BTS_SOURCE, OPENSKY_NN_SOURCE, OPENSKY_SOURCE
 
 
 def test_algorithm_nn_source_uses_checkpoint(
@@ -56,9 +56,10 @@ def test_algorithm_nn_source_uses_checkpoint(
     ) == [ADSBSource.ADSBLOL, ADSBSource.ADSBX]
 
 
-def test_algorithm_nn_requires_checkpoint(tmp_path):
+@pytest.mark.parametrize("source_type", [AlgorithmNNFlightSource, OpenSkyNNFlightSource])
+def test_airport_nn_requires_checkpoint(tmp_path, source_type):
     reader = evaluation.source_flights_reader(
-        AlgorithmNNFlightSource(model_path=tmp_path / "missing.pt")
+        source_type(model_path=tmp_path / "missing.pt")
     )
     with pytest.raises(FileNotFoundError, match="--airport-nn-model"):
         reader(date(2026, 3, 1))
@@ -84,7 +85,7 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
     ) == [None]
 
 
-@pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE])
+@pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE, OPENSKY_NN_SOURCE])
 def test_independent_source_is_evaluated_once_across_adsb_sources(source):
     assert evaluation.resolve_source(source.name) is source
     assert evaluation.adsb_sources_for_evaluation(
@@ -92,3 +93,29 @@ def test_independent_source_is_evaluated_once_across_adsb_sources(source):
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.OPENSKY, ADSBSource.ADSBX],
     ) == [None]
+
+
+def test_opensky_nn_evaluation_uses_custom_checkpoint_and_fixed_provider(
+    monkeypatch, tmp_path,
+):
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    sources = evaluation._with_airport_nn_model(
+        [OPENSKY_NN_SOURCE, BTS_SOURCE], checkpoint,
+    )
+    assert sources[1] is BTS_SOURCE
+    source = sources[0]
+    assert source.model_path == checkpoint
+    assert source.enrichment_adsb_source() is ADSBSource.OPENSKY
+    calls = []
+    monkeypatch.setattr(
+        evaluation, "get_flights",
+        lambda *args: calls.append(args) or flights_to_flights_df([]),
+    )
+
+    evaluation.source_flights_reader(source, ADSBSource.ADSBX)(date(2026, 3, 1))
+
+    assert calls == [(source, date(2026, 3, 1), None)]
+    assert evaluation.parse_args(["--test-source", "opensky-nn"]).test_source == [
+        "opensky-nn"
+    ]

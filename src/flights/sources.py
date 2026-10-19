@@ -1,4 +1,4 @@
-from flights.airport_nn import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.ground_truth.source import GroundTruthFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
@@ -22,6 +22,7 @@ GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
 BTS_VERIFIED_SOURCE = VerifiedFlightSource(BTS_SOURCE)
 MIKE_SOURCE = MikeFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
+OPENSKY_NN_SOURCE = OpenSkyNNFlightSource()
 OPENSKY_REVERSE_ENG_SOURCE = OpenSkyReverseEngFlightSource()
 OPENSKY_REVERSE_ENG_NEAREST_SOURCE = OpenSkyReverseEngNearestFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
@@ -38,6 +39,7 @@ FLIGHT_SOURCES = (
     GROUND_TRUTH_SOURCE,
     MIKE_SOURCE,
     OPENSKY_SOURCE,
+    OPENSKY_NN_SOURCE,
     OPENSKY_REVERSE_ENG_SOURCE,
     OPENSKY_REVERSE_ENG_NEAREST_SOURCE,
     SFDPS_SOURCE,

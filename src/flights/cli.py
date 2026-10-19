@@ -10,7 +10,7 @@ from typing import Sequence
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.adsb.known_bad_days import ADSBLOL_SKIP_DAYS
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.airport_nn import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.flight_source import (
     ADSBFlightSource,
     FlightSource,
@@ -255,7 +255,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--airport-nn-model",
         type=Path,
-        help=f"Checkpoint used by {ALGORITHM_NN_SOURCE.name}.",
+        help="Checkpoint used by algorithm-nn or opensky-nn.",
     )
     parser.add_argument(
         "--mike-input",
@@ -297,7 +297,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)
     if args.airport_nn_model is not None:
-        assert isinstance(source, AlgorithmNNFlightSource)
+        assert isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
         source = replace(source, model_path=args.airport_nn_model)
     if args.target_day_adsb:
         if not isinstance(source, ADSBFlightSource):

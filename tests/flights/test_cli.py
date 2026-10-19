@@ -596,3 +596,26 @@ def test_source_names_come_from_flight_source_objects():
     assert list(cli.FLIGHT_SOURCES_BY_NAME) == [
         source.name for source in cli.FLIGHT_SOURCES
     ]
+
+
+def test_opensky_nn_cli_uses_checkpoint_and_fixed_provider(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        cli, "write_flights",
+        lambda *args: calls.append(args) or empty_flights(),
+    )
+    monkeypatch.setattr(cli, "flight_path", lambda *args: tmp_path / "data.parquet")
+    checkpoint = tmp_path / "model.pt"
+
+    cli.main([
+        "2026-03-01", "2026-03-02", "opensky-nn",
+        "--airport-nn-model", str(checkpoint),
+    ])
+
+    assert len(calls) == 1
+    source, day, adsb_source = calls[0]
+    assert isinstance(source, cli.OpenSkyNNFlightSource)
+    assert source.model_path == checkpoint
+    assert source.enrichment_adsb_source() is ADSBSource.OPENSKY
+    assert day == date(2026, 3, 1)
+    assert adsb_source is None

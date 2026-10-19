@@ -14,7 +14,7 @@ from airports.catalog import AirportCatalogView
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import OUTPUT_DIR
-from flights.airport_nn.source import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.evaluation.cache import EvaluationCache
 from flights.evaluation.models import (
     EVALUATION_METADATA_COLUMNS,
@@ -109,7 +109,7 @@ def source_flights_reader(
 
     def read_source(target_date: date) -> pl.DataFrame:
         if (
-            isinstance(source, AlgorithmNNFlightSource)
+            isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
             and not source.model_path.is_file()
         ):
             raise FileNotFoundError(
@@ -162,7 +162,7 @@ def _with_airport_nn_model(
         return list(sources)
     return [
         replace(source, model_path=model_path)
-        if isinstance(source, AlgorithmNNFlightSource)
+        if isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
         else source
         for source in sources
     ]
@@ -535,7 +535,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--airport-nn-model",
         type=Path,
-        help="Checkpoint to use for an algorithm-nn source.",
+        help="Checkpoint to use for algorithm-nn or opensky-nn sources.",
     )
     parser.add_argument(
         "--target-day-adsb",
