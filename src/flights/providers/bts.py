@@ -809,7 +809,9 @@ def _create_flights_from_bts_month(
     diversion_report = _diversion_report_expr()
     regular_df = df.filter(
         (pl.col("cancelled") == 0) & ~diversion_report
-    ).rename({"tail_num": "registration"})
+    ).drop_nulls(["air_time", "wheels_on", "arr_delay"]).rename(
+        {"tail_num": "registration"}
+    )
     regular_df = _join_bts_identifiers(
         regular_df,
         registration_mapping,
@@ -909,7 +911,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 13
+    version: int = 14
 
     def create_flights_for_day(
         self,

@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 import polars as pl
+import pytest
 
 from flights.providers import bts as bts_module
 from flights.providers.bts import (
@@ -172,9 +173,21 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
     }
 
 
-def test_create_flights_from_bts_month_keeps_short_flights(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "missing_fields",
+    [
+        (),
+        ("AIR_TIME",),
+        ("WHEELS_ON",),
+        ("ARR_DELAY",),
+        ("AIR_TIME", "WHEELS_ON", "ARR_DELAY"),
+    ],
+)
+def test_create_flights_from_bts_month_keeps_short_flights_and_drops_incomplete_rows(
+    monkeypatch, tmp_path, missing_fields,
+):
     source_path = tmp_path / "T_ONTIME_REPORTING.csv"
-    pl.DataFrame(
+    source_df = pl.DataFrame(
         {
             "FL_DATE": ["03/01/2026 12:00:00 AM"],
             "OP_UNIQUE_CARRIER": ["AA"],
@@ -191,7 +204,17 @@ def test_create_flights_from_bts_month_keeps_short_flights(monkeypatch, tmp_path
             "ARR_DELAY": [0],
             "TAIL_NUM": ["N12345"],
         }
-    ).write_csv(source_path)
+    )
+    if missing_fields:
+        incomplete_df = source_df.with_columns(
+            pl.lit(456, dtype=pl.Int64).alias("OP_CARRIER_FL_NUM"),
+            *[
+                pl.lit(None, dtype=source_df.schema[field]).alias(field)
+                for field in missing_fields
+            ],
+        )
+        source_df = pl.concat([source_df, incomplete_df])
+    source_df.write_csv(source_path)
 
     monkeypatch.setattr(
         bts_module,
@@ -230,6 +253,7 @@ def test_create_flights_from_bts_month_keeps_short_flights(monkeypatch, tmp_path
         FakeAirportCatalog(),
     )
 
+    assert result.height == 1
     assert result.select(
         "icao",
         "callsign",
@@ -634,4 +658,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 13
+    assert bts_module.BTSFlightSource().version == 14
