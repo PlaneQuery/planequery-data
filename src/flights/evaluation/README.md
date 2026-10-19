@@ -61,6 +61,93 @@ python -m flights.evaluation.evaluation \
 
 Use `--refresh-cache` to recalculate and replace matching entries.
 
+## Compare training and nontraining airports
+
+Add `--airport-nn-training /path/to/training.json` to optionally report airport
+accuracy by exposure to positive training labels:
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn \
+  --gold-source sfdps bts-verified \
+  --adsb-source adsblol \
+  --test-dates 2026-03-01 \
+  --airport-nn-training data/models/flights_airport_nn/algorithm-airport-refactored/training.json
+```
+
+Use the manifest belonging to the evaluated checkpoint (selected separately
+with `--airport-nn-model` when needed). Only Parquet metadata files explicitly
+listed in `inputs["train"]` are read. A relative manifest argument resolves under
+`OUTPUT_DIR`. Each metadata file is located by its dataset/date/filename suffix
+under `OUTPUT_DIR/data/processed/flights_airport_nn`, for example
+`OUTPUT_DIR/data/processed/flights_airport_nn/february-2026/2026-02-01/part-0000.parquet`.
+The recorded machine prefix does not affect local lookup, and the raw manifest
+is never modified. The files must exist under the configured output directory.
+Membership uses rows with `eligible == True` and `target >= 0`, combining
+takeoff and landing labels. Numeric `truth_id` labels are used directly; airport
+codes in `truth` are resolved to IDs through the catalog for each training date.
+Unresolved codes raise an error. Validation files and NPZ feature arrays are
+not required.
+
+Two additional CSVs are written alongside the normal stats CSV, using the same
+filename stem:
+
+- `*_airport_exposure.csv`: six rows per daily comparison—takeoff and landing,
+  each split into `training`, `nontraining`, and `unknown` gold-airport groups.
+- `*_training_airports.csv`: the training airport IDs and their contributing
+  endpoint counts, preserving the membership used for that report.
+
+Each endpoint is grouped by its **gold** airport ID, independently of the
+other endpoint or the prediction. The summary preserves date, test/gold
+source, ADS-B provider, and input-window settings, and records the manifest
+path and SHA-256. Counts and rates have these definitions:
+
+| Column | Meaning |
+| --- | --- |
+| `gold_endpoint_count` | Retained matched and unmatched gold endpoints in the group |
+| `gold_airport_count` | Distinct known gold airport IDs across those endpoints |
+| `matched_endpoint_count` | Endpoints on matched flights |
+| `matched_airport_count` | Distinct known gold airport IDs on matched flights |
+| `correct_count` | Matched endpoints whose predicted airport ID equals gold |
+| `incorrect_count` | Matched endpoints with an incorrect or null prediction |
+| `null_prediction_count` | Matched endpoints with no predicted airport ID |
+| `airport_accuracy` | Correct / matched endpoints (flight weighted) |
+| `airport_macro_accuracy` | Mean of each airport's matched-endpoint accuracy (equal airport weight) |
+| `flight_match_coverage` | Matched / all retained gold endpoints |
+| `correct_endpoint_recall` | Correct / all retained gold endpoints |
+
+Unknown gold airport IDs have counts and flight-match coverage but null
+correct/incorrect counts and accuracy/recall metrics. Rates with an empty
+denominator are null, rather than zero. Rates are fractions from 0 to 1.
+Test-only rows and flights previously discarded by the boundary grace period
+are excluded. Results remain daily; the report does not average daily rates.
+
+`nontraining` means absent from positive training labels. It can include airports
+seen during validation or as negative candidates, so it is not a claim of no
+model exposure. Use evaluation dates outside the training dates when measuring
+generalization; comparing airport types within each group can help distinguish
+airport composition from training effects.
+
+The report is derived after matching and reuses cached comparisons. It does not
+change cache keys or cached stats. Without the option, training files are never
+read and no additional CSVs are written. `--columns` still controls only the
+normal stats CSV. `--list-cache` lists stats only and cannot be combined with
+this option; run the normal evaluation command to reuse detailed cache entries.
+
+The same report can be created from an existing Python result without running
+another evaluation:
+
+```python
+from pathlib import Path
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
+
+training = load_training_airports(Path("/path/to/training.json"))
+report = airport_exposure_report(results, training)
+```
+
 ## Inspect existing cache entries
 
 `--list-cache` is read-only. With no filters it lists every day in the active
