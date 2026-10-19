@@ -116,7 +116,7 @@ def test_create_flights_writes_single_bts_day_to_canonical_path(
     assert pl.read_parquet(path).equals(expected)
     assert path == (
         tmp_path
-        / "data/flights/source=bts/version=13"
+        / f"data/flights/source=bts/version={BTSFlightSource().version}"
         / "year=2026/month=03/day=01/data.parquet"
     )
     assert FlightManifest.read(
@@ -135,7 +135,8 @@ def test_algorithm_nearest_path_includes_adsb_source(monkeypatch, tmp_path):
 
     assert path == Path(
         tmp_path,
-        "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=7",
+        "data/flights/source=algorithm-nearest/adsb_source=adsblol/"
+        f"version={AlgorithmNearestFlightSource().version}",
         "year=2026/month=03/day=01/data.parquet",
     )
 

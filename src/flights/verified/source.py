@@ -22,7 +22,7 @@ class VerifiedFlightSource(NonADSBFlightSource):
         if isinstance(source, SFDPSFlightSource):
             version = 8
         elif isinstance(source, BTSFlightSource):
-            version = 1
+            version = 2
         elif isinstance(source, EurocontrolFlightSource):
             version = 1
         else:

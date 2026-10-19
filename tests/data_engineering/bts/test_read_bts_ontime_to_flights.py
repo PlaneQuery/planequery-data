@@ -174,6 +174,44 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
 
 
 @pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ({}, [date(2026, 3, 2)]),
+        ({"dep_delay": 2880}, [date(2026, 3, 4)]),
+        ({"dep_delay": None}, [date(2026, 3, 2), date(2026, 3, 3)]),
+        ({"wheels_off": None}, [date(2026, 3, 2), date(2026, 3, 3)]),
+        (
+            {"wheels_off": None, "dep_delay": None},
+            [date(2026, 3, 1), date(2026, 3, 2), date(2026, 3, 3)],
+        ),
+        (
+            {"origin_timezone": None},
+            [date(2026, 2, 28), date(2026, 3, 1), date(2026, 3, 2), date(2026, 3, 3)],
+        ),
+        (
+            {"origin_timezone": None, "dep_delay": 2880},
+            [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5)],
+        ),
+        (
+            {"wheels_off": 10, "crs_dep_time": 2355, "dep_delay": 10},
+            [date(2026, 3, 2)],
+        ),
+    ],
+)
+def test_incomplete_bts_takeoff_dates_respect_utc_rollover_and_uncertainty(overrides, expected):
+    row = {
+        "fl_date": date(2026, 3, 1),
+        "origin_timezone": "America/New_York",
+        "crs_dep_time": 2300,
+        "wheels_off": 2310,
+        "dep_delay": 0,
+        **overrides,
+    }
+    assert bts_module._incomplete_bts_takeoff_dates(row) == expected
+
+
+@pytest.mark.parametrize("incomplete_destination", ["BBB", "UNKNOWN"])
+@pytest.mark.parametrize(
     "missing_fields",
     [
         (),
@@ -183,8 +221,8 @@ def test_compute_bts_timestamps_uses_arrival_delay_for_same_day_flight():
         ("AIR_TIME", "WHEELS_ON", "ARR_DELAY"),
     ],
 )
-def test_create_flights_from_bts_month_keeps_short_flights_and_drops_incomplete_rows(
-    monkeypatch, tmp_path, missing_fields,
+def test_create_flights_from_bts_month_excludes_only_incomplete_aircraft_day(
+    monkeypatch, tmp_path, missing_fields, incomplete_destination,
 ):
     source_path = tmp_path / "T_ONTIME_REPORTING.csv"
     source_df = pl.DataFrame(
@@ -202,18 +240,25 @@ def test_create_flights_from_bts_month_keeps_short_flights_and_drops_incomplete_
             "CRS_DEP_TIME": [600],
             "CRS_ARR_TIME": [620],
             "ARR_DELAY": [0],
+            "DEP_DELAY": [0],
             "TAIL_NUM": ["N12345"],
         }
     )
     if missing_fields:
         incomplete_df = source_df.with_columns(
             pl.lit(456, dtype=pl.Int64).alias("OP_CARRIER_FL_NUM"),
+            pl.lit("N54321").alias("TAIL_NUM"),
+            pl.lit(incomplete_destination).alias("DEST"),
             *[
                 pl.lit(None, dtype=source_df.schema[field]).alias(field)
                 for field in missing_fields
             ],
         )
-        source_df = pl.concat([source_df, incomplete_df])
+        next_day_df = source_df.with_columns(
+            pl.lit("03/02/2026 12:00:00 AM").alias("FL_DATE"),
+        )
+        other_aircraft_df = source_df.with_columns(pl.lit("N99999").alias("TAIL_NUM"))
+        source_df = pl.concat([source_df, incomplete_df, next_day_df, other_aircraft_df])
     source_df.write_csv(source_path)
 
     monkeypatch.setattr(
@@ -225,7 +270,10 @@ def test_create_flights_from_bts_month_keeps_short_flights_and_drops_incomplete_
         bts_module,
         "get_registration_to_icao",
         lambda at_date=None: pl.DataFrame(
-            {"registration": ["N12345"], "icao": ["ABC123"]}
+            {
+                "registration": ["N12345", "N54321", "N99999"],
+                "icao": ["ABC123", "ABC123", "DEF456"],
+            }
         ),
     )
     monkeypatch.setattr(
@@ -253,6 +301,12 @@ def test_create_flights_from_bts_month_keeps_short_flights_and_drops_incomplete_
         FakeAirportCatalog(),
     )
 
+    if missing_fields:
+        assert result.select("icao", "takeoff_time").sort("icao").rows() == [
+            ("abc123", datetime(2026, 3, 2, 6)),
+            ("def456", datetime(2026, 3, 1, 6)),
+        ]
+        return
     assert result.height == 1
     assert result.select(
         "icao",
@@ -522,12 +576,14 @@ def test_diverted_flight_rows_keep_airborne_cancelled_fly_return():
     assert (rows[0]["origin"], rows[0]["dest"]) == ("AAA", "AAA")
 
 
+@pytest.mark.parametrize("incomplete_regular_flight", [False, True])
 def test_create_flights_from_bts_month_includes_diversion_tail_swap(
     monkeypatch,
     tmp_path,
+    incomplete_regular_flight,
 ):
     source_path = tmp_path / "T_ONTIME_REPORTING.csv"
-    pl.DataFrame(
+    source_df = pl.DataFrame(
         {
             "FL_DATE": ["03/01/2026 12:00:00 AM"],
             "OP_UNIQUE_CARRIER": ["AA"],
@@ -551,7 +607,14 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
             "DIV1_WHEELS_OFF": [10],
             "DIV1_TAIL_NUM": ["N222BB"],
         }
-    ).write_csv(source_path)
+    )
+    if incomplete_regular_flight:
+        incomplete_df = source_df.with_columns(
+            pl.lit(0).alias("DIVERTED"),
+            pl.lit(0).alias("DIV_AIRPORT_LANDINGS"),
+        )
+        source_df = pl.concat([source_df, incomplete_df], how="vertical_relaxed")
+    source_df.write_csv(source_path)
 
     monkeypatch.setattr(
         bts_module,
@@ -596,6 +659,18 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
         FakeAirportCatalog(),
     ).sort("takeoff_time")
 
+    expected_rows = [
+        (
+            "abc111", "AAL123", "N111AA", "KAAA", "KBBB",
+            datetime(2026, 3, 1, 23, 10), datetime(2026, 3, 1, 23, 50),
+        ),
+        (
+            "abc222", "AAL123", "N222BB", "KBBB", "KCCC",
+            datetime(2026, 3, 2, 0, 10), datetime(2026, 3, 2, 1, 30),
+        ),
+    ]
+    if incomplete_regular_flight:
+        expected_rows = expected_rows[1:]
     assert result.select(
         "icao",
         "callsign",
@@ -604,26 +679,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
         "landing_airport_ident",
         "takeoff_time",
         "landing_time",
-    ).rows() == [
-        (
-            "abc111",
-            "AAL123",
-            "N111AA",
-            "KAAA",
-            "KBBB",
-            datetime(2026, 3, 1, 23, 10),
-            datetime(2026, 3, 1, 23, 50),
-        ),
-        (
-            "abc222",
-            "AAL123",
-            "N222BB",
-            "KBBB",
-            "KCCC",
-            datetime(2026, 3, 2, 0, 10),
-            datetime(2026, 3, 2, 1, 30),
-        ),
-    ]
+    ).rows() == expected_rows
 
 
 def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
@@ -658,4 +714,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 14
+    assert bts_module.BTSFlightSource().version == 15
