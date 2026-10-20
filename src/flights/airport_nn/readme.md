@@ -40,10 +40,10 @@ Early stopping follows three epochs without improvement.
 
 Preparation independently segments observations before matching references by
 aircraft and time, allowing 15 minutes at each end. Ambiguous matches, overlapping
-references and cross-UTC-day flights are excluded. BTS labels are accepted
-directly; SFDPS-only labels require three ground/low observations within 2 km over
-at least ten seconds. This supervision is imperfect and favors some traffic and
-reception conditions; measured agreement is not accuracy on all flights.
+references and cross-UTC-day flights are excluded. BTS and SFDPS labels are accepted
+without requiring ground/low-altitude observations near the labeled airport.
+Conflicting airport labels are excluded. This supervision is imperfect; measured
+agreement is not accuracy on all flights.
 
 Caches contain feature arrays, endpoint labels and a source manifest. Labels,
 candidate membership, conflicts, targets and evaluation correctness all use the
