@@ -41,11 +41,16 @@ def files_for(root, days):
         folder = Path(root) / str(day)
         manifest = json.loads((folder / "manifest.json").read_text())
         if (
-            manifest["date"] != str(day)
-            or manifest["network"] != "adsblol"
-            or manifest["airport_identity"] != "ourairports_id"
+            manifest.get("date") != str(day)
+            or manifest.get("network") != "adsblol"
+            or manifest.get("airport_identity") != "ourairports_id"
         ):
-            raise ValueError(f"Wrong training source: {folder}")
+            raise ValueError(
+                f"Incompatible training cache: {folder}. Expected ADSB.lol data "
+                "with stable OurAirports IDs. Rebuild using "
+                "python -m flights.airport_nn.data --output <new-cache-directory> "
+                "and pass that directory with --cache."
+            )
         parts = [folder / f"part-{i:04d}.npz" for i in range(manifest["parts"])]
         if any(not p.exists() or not p.with_suffix(".parquet").exists() for p in parts):
             raise FileNotFoundError(f"Incomplete data preparation: {folder}")
