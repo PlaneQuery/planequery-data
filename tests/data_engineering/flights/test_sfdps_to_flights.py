@@ -148,7 +148,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 12
+    assert sfdps.SFDPSFlightSource().version == 14
 
 
 def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
@@ -246,6 +246,64 @@ def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
     assert result.select("icao", "callsign", "registration", "aircraft_type").to_dicts() == [
         {"icao": "012abc", "callsign": callsign, "registration": "", "aircraft_type": ""},
         {"icao": "a91349", "callsign": callsign, "registration": "N684NK", "aircraft_type": "A321"},
+    ]
+
+
+def test_sfdps_registration_and_aircraft_type_take_precedence_over_adsb(monkeypatch):
+    day = datetime(2026, 3, 1)
+    flights = sfdps.with_flight_schema_columns(
+        pl.DataFrame(
+            {
+                "icao": ["abc123", "def456", "789abc"],
+                "registration": ["N-SFDPS", "", None],
+                "aircraft_type": ["SFDPS-TYPE", "   ", None],
+            },
+            schema_overrides={
+                "registration": pl.String,
+                "aircraft_type": pl.String,
+            },
+        )
+    )
+    adsb_info = sfdps.with_flight_schema_columns(
+        pl.DataFrame(
+            {
+                "icao": ["abc123", "def456"],
+                "registration": ["N-ADSB", "N-FALLBACK"],
+                "aircraft_type": ["ADSB-TYPE", "FALLBACK-TYPE"],
+                "owner": ["Owner 1", "Owner 2"],
+            }
+        )
+    ).with_columns(pl.lit(day).alias("time"))
+
+    monkeypatch.setattr(
+        sfdps,
+        "scan_adsb",
+        lambda *_args, columns, **_kwargs: adsb_info.select(columns).lazy(),
+    )
+
+    result = sfdps.add_adsb_icao_info(flights, day)
+
+    assert result.select(
+        "icao", "registration", "aircraft_type", "owner"
+    ).to_dicts() == [
+        {
+            "icao": "abc123",
+            "registration": "N-SFDPS",
+            "aircraft_type": "SFDPS-TYPE",
+            "owner": "Owner 1",
+        },
+        {
+            "icao": "def456",
+            "registration": "N-FALLBACK",
+            "aircraft_type": "FALLBACK-TYPE",
+            "owner": "Owner 2",
+        },
+        {
+            "icao": "789abc",
+            "registration": "",
+            "aircraft_type": "",
+            "owner": "",
+        },
     ]
 
 

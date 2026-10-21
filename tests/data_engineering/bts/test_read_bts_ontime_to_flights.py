@@ -62,6 +62,75 @@ def test_iata_airport_mapping_omits_ambiguous_code():
     assert result.is_empty()
 
 
+def test_registration_mapping_includes_openairframes_aircraft_info(monkeypatch):
+    target_date = date(2026, 3, 1)
+
+    def scan_faa(*, real_icao_column, at_date):
+        assert real_icao_column == "icao"
+        assert at_date == target_date
+        return pl.DataFrame(
+            {
+                "registration": ["N12345", "N54321"],
+                "icao": ["abc123", "def456"],
+            }
+        ).lazy()
+
+    def openairframes_snapshot(*, at_date):
+        assert at_date == target_date
+        return pl.DataFrame(
+            {
+                "icao": ["abc123"],
+                "registration": ["STALE-REGISTRATION"],
+                "aircraft_type": ["A320"],
+                "owner": ["Actual Owner"],
+                "aircraft_description": ["Airliner"],
+                "category": ["A2"],
+                "pia": [True],
+                "ladd": [False],
+                "military": [False],
+                "interesting": [True],
+            }
+        )
+
+    monkeypatch.setattr(
+        bts_module,
+        "scan_latest_faa_registration_icao_for_join",
+        scan_faa,
+    )
+    monkeypatch.setattr(
+        bts_module,
+        "get_openairframes_snapshot",
+        openairframes_snapshot,
+    )
+
+    result = bts_module.get_registration_to_icao(target_date)
+
+    assert result.row(0, named=True) == {
+        "registration": "N12345",
+        "icao": "abc123",
+        "aircraft_type": "A320",
+        "owner": "Actual Owner",
+        "aircraft_description": "Airliner",
+        "category": "A2",
+        "pia": True,
+        "ladd": False,
+        "military": False,
+        "interesting": True,
+    }
+    assert result.row(1, named=True) == {
+        "registration": "N54321",
+        "icao": "def456",
+        "aircraft_type": None,
+        "owner": None,
+        "aircraft_description": None,
+        "category": None,
+        "pia": None,
+        "ladd": None,
+        "military": None,
+        "interesting": None,
+    }
+
+
 def test_diversion_report_recognizes_positive_counts_without_dropping_zero_or_null():
     result = pl.DataFrame(
         {
@@ -273,6 +342,14 @@ def test_create_flights_from_bts_month_excludes_only_incomplete_aircraft_day(
             {
                 "registration": ["N12345", "N54321", "N99999"],
                 "icao": ["ABC123", "ABC123", "DEF456"],
+                "aircraft_type": ["A320", "A320", "B789"],
+                "owner": ["Actual Owner", "Actual Owner", "Other Owner"],
+                "aircraft_description": ["Airliner", "Airliner", "Widebody"],
+                "category": ["A2", "A2", "A5"],
+                "pia": [True, True, False],
+                "ladd": [False, False, True],
+                "military": [False, False, False],
+                "interesting": [True, True, False],
             }
         ),
     )
@@ -311,11 +388,27 @@ def test_create_flights_from_bts_month_excludes_only_incomplete_aircraft_day(
     assert result.select(
         "icao",
         "callsign",
+        "aircraft_type",
+        "owner",
+        "aircraft_description",
+        "category",
+        "pia",
+        "ladd",
+        "military",
+        "interesting",
         "takeoff_time",
         "landing_time",
     ).row(0) == (
         "abc123",
         "AAL123",
+        "A320",
+        "Actual Owner",
+        "Airliner",
+        "A2",
+        True,
+        False,
+        False,
+        True,
         datetime(2026, 3, 1, 6),
         datetime(2026, 3, 1, 6, 20),
     )
@@ -628,6 +721,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
             {
                 "registration": ["N111AA", "N222BB"],
                 "icao": ["ABC111", "ABC222"],
+                "category": ["A3", "A5"],
             }
         ),
     )
@@ -661,11 +755,11 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
 
     expected_rows = [
         (
-            "abc111", "AAL123", "N111AA", "KAAA", "KBBB",
+            "abc111", "AAL123", "N111AA", "A3", "KAAA", "KBBB",
             datetime(2026, 3, 1, 23, 10), datetime(2026, 3, 1, 23, 50),
         ),
         (
-            "abc222", "AAL123", "N222BB", "KBBB", "KCCC",
+            "abc222", "AAL123", "N222BB", "A5", "KBBB", "KCCC",
             datetime(2026, 3, 2, 0, 10), datetime(2026, 3, 2, 1, 30),
         ),
     ]
@@ -675,6 +769,7 @@ def test_create_flights_from_bts_month_includes_diversion_tail_swap(
         "icao",
         "callsign",
         "registration",
+        "category",
         "takeoff_airport_ident",
         "landing_airport_ident",
         "takeoff_time",
@@ -714,4 +809,4 @@ def test_create_flights_from_bts_returns_only_target_day(monkeypatch):
     result = create_flights_from_bts(date(2026, 3, 1), airport_catalog)
 
     assert result.get_column("icao").to_list() == ["def456"]
-    assert bts_module.BTSFlightSource().version == 15
+    assert bts_module.BTSFlightSource().version == 16

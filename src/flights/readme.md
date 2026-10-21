@@ -79,12 +79,21 @@ Daily partitions are selected by the takeoff date.
 
 The monthly cache is `data/intermediate/eurocontrol/version=2/YYYYMM.parquet`,
 and daily files are written under
-`data/flights/source=eurocontrol/adsb_source=adsblol/version=6/` by default.
+`data/flights/source=eurocontrol/adsb_source=adsblol/version=7/` by default.
 These versions bypass older caches that used off-block time for takeoff.
 Temporary CSV files are removed automatically. If the monthly ZIP is absent,
 the source reads the two required files directly from
 `data/raw/eurocontrol/YYYYMM/`, supporting both `.csv.gz` and `.csv` files.
 Existing extracted inputs are retained unchanged.
+
+Aircraft type, owner, description, category, and aircraft privacy/status flags
+come from the date-matched OpenAirframes snapshot for both EUROCONTROL and BTS
+flights. BTS continues to use the FAA snapshot as the authoritative mapping from
+registration to ICAO address.
+
+SFDPS flights retain non-empty `registration` and `aircraft_type` values from
+the raw SFDPS messages and use daily ADS-B metadata only as a fallback for those
+two fields. Their remaining aircraft metadata continues to come from ADS-B.
 
 Every EUROCONTROL build enriches callsigns using locally cached ADS-B data.
 ADSB.lol is the default provider; use `--adsb-source` to choose another:
@@ -108,7 +117,7 @@ three supporting minutes and 80% of valid votes; otherwise it remains empty.
 Missing observations are never filled from another flight.
 
 Enriched files use a separate provider-specific path, for example
-`data/flights/source=eurocontrol/adsb_source=adsblol/version=6/`, and their
+`data/flights/source=eurocontrol/adsb_source=adsblol/version=7/`, and their
 manifests track the ADS-B provider and Parquet version. Rerun the CLI to rebuild
 enriched flights after adding previously missing ADS-B partitions.
 

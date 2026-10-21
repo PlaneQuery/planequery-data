@@ -93,7 +93,18 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path, callsign
         eurocontrol_read,
         "get_openairframes_snapshot",
         lambda at_date: pl.DataFrame(
-            {"registration": ["N123AB"], "icao": ["abc123"]}
+            {
+                "registration": ["N123AB"],
+                "icao": ["abc123"],
+                "aircraft_type": ["A320"],
+                "owner": ["Actual Owner"],
+                "aircraft_description": ["Airliner"],
+                "category": ["A2"],
+                "pia": [True],
+                "ladd": [False],
+                "military": [False],
+                "interesting": [True],
+            }
         ),
     )
 
@@ -123,7 +134,7 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path, callsign
     )
     expected_dir = tmp_path / "data/flights/source=eurocontrol"
     expected_dir /= f"adsb_source={callsign_source.value}"
-    assert output_path == expected_dir / "version=6/year=2025/month=08/day=02/data.parquet"
+    assert output_path == expected_dir / "version=7/year=2025/month=08/day=02/data.parquet"
     manifest = FlightManifest.read(flight_manifest_path(output_path))
     assert manifest.adsb_source == callsign_source.value
     assert manifest.adsb_parquet_version == canonical.ADSB_PARQUET_VERSIONS[callsign_source]
@@ -151,7 +162,30 @@ def test_eurocontrol_zip_to_daily_flight_parquet(monkeypatch, tmp_path, callsign
         "takeoff_airport_ident",
         "landing_airport_id",
         "landing_airport_ident",
-    ).row(0) == ("abc123", "N123AB", 101, "KJFK", 202, "EGLL")
+        "aircraft_type",
+        "owner",
+        "aircraft_description",
+        "category",
+        "pia",
+        "ladd",
+        "military",
+        "interesting",
+    ).row(0) == (
+        "abc123",
+        "N123AB",
+        101,
+        "KJFK",
+        202,
+        "EGLL",
+        "A320",
+        "Actual Owner",
+        "Airliner",
+        "A2",
+        True,
+        False,
+        False,
+        True,
+    )
     assert result.filter(pl.col("takeoff_airport_id").is_null()).select(
         "takeoff_airport_id",
         "takeoff_airport_ident",

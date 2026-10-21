@@ -14,7 +14,7 @@ on the affected day, while retaining its other days. Departure timing determines
 the UTC day; when the departure day is uncertain, the exclusion covers the
 reported local day and a possible overnight departure (including their UTC date
 boundaries). Diversion reports use their separate timing fields and do not
-trigger this missing-field rule. BTS cache version 15 and BTS-verified version 2
+trigger this missing-field rule. BTS cache version 16 and BTS-verified version 2
 apply this policy.
 
 ## Get or create evaluation data
