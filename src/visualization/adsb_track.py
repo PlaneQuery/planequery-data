@@ -471,7 +471,7 @@ def main():
                      gap_seconds=args.gap_seconds, width=args.width, height=args.height,
                      start=datetime.combine(args.date, args.start) if args.start else None,
                      end=datetime.combine(args.date, args.end) if args.end else None,
-                     title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source,
+                     title=f"{args.icao.upper()} · {'ADS-B Exchange' if args.source == 'adsbx' else args.source.upper()}", event_source=args.event_source,
                      show_geometric=args.show_geometric, show_map=args.show_map,
                      map_events_only=args.map_events_only, nearby_airport_limit=args.nearby_airport_limit,
                      map_below=args.map_below, include_airports=tuple(c.upper() for c in args.include_airports),
