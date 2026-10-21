@@ -1,7 +1,7 @@
 import hashlib
 import json
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -158,8 +158,27 @@ def test_training_manifest_requires_metadata_parts(tmp_path, monkeypatch, missin
 
 
 def _results():
+    statuses = ["both"] * 5 + ["df1_only", "df0_only", "both"]
+    takeoffs = [datetime(2026, 3, 1) + timedelta(hours=2 * i) for i in range(8)]
+    landings = [takeoff + timedelta(hours=1) for takeoff in takeoffs]
     comparison = pl.DataFrame({
-        "match_status": ["both"] * 5 + ["df1_only", "df0_only", "both"],
+        "match_status": statuses,
+        "takeoff_time": [
+            None if status == "df1_only" else value
+            for status, value in zip(statuses, takeoffs)
+        ],
+        "landing_time": [
+            None if status == "df1_only" else value
+            for status, value in zip(statuses, landings)
+        ],
+        "takeoff_time_df1": [
+            None if status == "df0_only" else value
+            for status, value in zip(statuses, takeoffs)
+        ],
+        "landing_time_df1": [
+            None if status == "df0_only" else value
+            for status, value in zip(statuses, landings)
+        ],
         "takeoff_airport_id": [1, 1, None, 99, 1, None, 3, None],
         "takeoff_airport_id_df1": [1, 1, 1, 2, 3, 1, None, None],
         "landing_airport_id": [3, 2, None, 1, None, None, 1, 2],

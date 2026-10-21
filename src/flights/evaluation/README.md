@@ -44,7 +44,35 @@ excluded; a non-null test airport with a null gold airport still counts as
 incorrect. Values are fractions from 0 to 1, or zero if no eligible airports
 exist. These columns are available for all sources and are also displayed as
 formatted percentages for OpenSky. They are included in CSVs, cached stats,
-and daily averages. Cache version 8 recalculates older evaluations on demand.
+and daily averages.
+
+Timing quality is reported with the following columns:
+
+The existing `recall` column is segmentation recall: matched flights divided
+by matched plus unmatched retained gold flights.
+
+| Column | Meaning |
+| --- | --- |
+| `median_max_endpoint_time_error_minutes` | Median, among matched flights, of the larger absolute takeoff/landing error |
+| `p90_max_endpoint_time_error_minutes` | 90th percentile of that matched-flight maximum endpoint error |
+| `both_endpoints_within_5m_recall` | Retained gold flights matched with both endpoint errors at most 5 minutes, divided by all retained gold flights |
+| `both_endpoints_within_15m_recall` | The same recall at 15 minutes |
+| `both_endpoints_within_30m_recall` | The same recall at 30 minutes |
+| `takeoff_time_bias_minutes` | Mean signed matched-flight takeoff difference, test minus gold |
+| `landing_time_bias_minutes` | Mean signed matched-flight landing difference, test minus gold |
+
+The median, P90, and bias columns use only `match_status == "both"`; they are
+null when no flights match. Threshold recall includes unmatched gold flights
+in its denominator, so a source cannot improve by matching only easy flights.
+Negative bias means the test source is early and positive bias means it is
+late. For multi-date output, timing metrics in the `average` row are recomputed
+from all underlying flight comparisons instead of averaging daily medians,
+percentiles, or rates. Existing non-timing columns retain their daily-average
+behavior. The matcher itself requires both endpoint differences to be at most
+one hour, so the matched-only error distribution is bounded by that rule.
+
+Cache version 9 adds these timing metrics and recalculates older evaluations
+on demand.
 
 ```bash
 python -m flights.evaluation.evaluation \

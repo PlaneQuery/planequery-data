@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import polars as pl
 import pytest
@@ -11,6 +11,49 @@ from flights.evaluation.models import (
     EvaluationResults,
     EvaluationStats,
 )
+
+
+def _timing_comparison(
+    takeoff_errors_minutes: list[float],
+    landing_errors_minutes: list[float],
+    *,
+    statuses: list[str] | None = None,
+) -> pl.DataFrame:
+    if statuses is None:
+        statuses = ["both"] * len(takeoff_errors_minutes)
+    assert len(takeoff_errors_minutes) == len(landing_errors_minutes)
+    assert len(statuses) == len(takeoff_errors_minutes)
+
+    test_takeoffs: list[datetime | None] = []
+    test_landings: list[datetime | None] = []
+    gold_takeoffs: list[datetime | None] = []
+    gold_landings: list[datetime | None] = []
+    for index, (status, takeoff_error, landing_error) in enumerate(
+        zip(statuses, takeoff_errors_minutes, landing_errors_minutes)
+    ):
+        gold_takeoff = datetime(2026, 3, 1) + timedelta(hours=3 * index)
+        gold_landing = gold_takeoff + timedelta(hours=1)
+        test_takeoffs.append(
+            None
+            if status == "df1_only"
+            else gold_takeoff + timedelta(minutes=takeoff_error)
+        )
+        test_landings.append(
+            None
+            if status == "df1_only"
+            else gold_landing + timedelta(minutes=landing_error)
+        )
+        gold_takeoffs.append(None if status == "df0_only" else gold_takeoff)
+        gold_landings.append(None if status == "df0_only" else gold_landing)
+
+    datetime_type = pl.Datetime("us")
+    return pl.DataFrame({
+        "match_status": pl.Series(statuses, dtype=pl.String),
+        "takeoff_time": pl.Series(test_takeoffs, dtype=datetime_type),
+        "landing_time": pl.Series(test_landings, dtype=datetime_type),
+        "takeoff_time_df1": pl.Series(gold_takeoffs, dtype=datetime_type),
+        "landing_time_df1": pl.Series(gold_landings, dtype=datetime_type),
+    })
 
 
 def _stats(test_date: date, *, true_positive: int = 2) -> EvaluationStats:
@@ -51,15 +94,16 @@ def test_evaluation_stats_are_explicit_and_round_trip_through_rows():
 
 
 def test_evaluation_stats_are_created_directly_from_comparison():
-    comparison = pl.DataFrame(
-        {
-            "match_status": ["both", "both", "df0_only", "df1_only"],
-            "same_takeoff_airport_id": [True, False, False, False],
-            "same_landing_airport_id": [True, True, False, False],
-            "same_airport_id": [True, False, False, False],
-            "takeoff_airport_id": [1, None, None, None],
-            "landing_airport_id": [2, 2, None, None],
-        }
+    comparison = _timing_comparison(
+        [5, -10, 0, 0],
+        [5, 10, 0, 0],
+        statuses=["both", "both", "df0_only", "df1_only"],
+    ).with_columns(
+        pl.Series("same_takeoff_airport_id", [True, False, False, False]),
+        pl.Series("same_landing_airport_id", [True, True, False, False]),
+        pl.Series("same_airport_id", [True, False, False, False]),
+        pl.Series("takeoff_airport_id", [1, None, None, None], dtype=pl.Int64),
+        pl.Series("landing_airport_id", [2, 2, None, None], dtype=pl.Int64),
     )
 
     stats = EvaluationStats.from_comparison(
@@ -92,18 +136,28 @@ def test_evaluation_stats_are_created_directly_from_comparison():
     assert stats.landing_airport_id_non_null_count == 2
     assert stats.takeoff_airport_id_non_null_match_pct == 1.0
     assert stats.landing_airport_id_non_null_match_pct == 1.0
+    assert stats.median_max_endpoint_time_error_minutes == 7.5
+    assert stats.p90_max_endpoint_time_error_minutes == pytest.approx(9.5)
+    assert stats.both_endpoints_within_5m_recall == pytest.approx(1 / 3)
+    assert stats.both_endpoints_within_15m_recall == pytest.approx(2 / 3)
+    assert stats.both_endpoints_within_30m_recall == pytest.approx(2 / 3)
+    assert stats.takeoff_time_bias_minutes == pytest.approx(-2.5)
+    assert stats.landing_time_bias_minutes == pytest.approx(7.5)
     assert EvaluationStats.from_row(stats.to_row()) == stats
 
 
 def test_non_null_accuracy_excludes_null_and_unmatched_test_airports():
-    comparison = pl.DataFrame({
-        "match_status": ["both", "both", "both", "df0_only", "df1_only"],
-        "takeoff_airport_id": [1, 9, None, 1, None],
-        "landing_airport_id": [2, None, 9, None, None],
-        "same_takeoff_airport_id": [True, False, False, False, False],
-        "same_landing_airport_id": [True, False, False, False, False],
-        "same_airport_id": [True, False, False, False, False],
-    })
+    comparison = _timing_comparison(
+        [0] * 5,
+        [0] * 5,
+        statuses=["both", "both", "both", "df0_only", "df1_only"],
+    ).with_columns(
+        pl.Series("takeoff_airport_id", [1, 9, None, 1, None], dtype=pl.Int64),
+        pl.Series("landing_airport_id", [2, None, 9, None, None], dtype=pl.Int64),
+        pl.Series("same_takeoff_airport_id", [True, False, False, False, False]),
+        pl.Series("same_landing_airport_id", [True, False, False, False, False]),
+        pl.Series("same_airport_id", [True, False, False, False, False]),
+    )
     stats = EvaluationStats.from_comparison(
         comparison,
         test_date=date(2026, 3, 1),
@@ -121,14 +175,17 @@ def test_non_null_accuracy_excludes_null_and_unmatched_test_airports():
 
 @pytest.mark.parametrize("statuses", [[], ["df1_only"], ["both", "df0_only"]])
 def test_null_airport_metrics_with_empty_or_all_null_test_flights(statuses):
-    comparison = pl.DataFrame({
-        "match_status": pl.Series(statuses, dtype=pl.String),
-        "takeoff_airport_id": pl.Series([None] * len(statuses), dtype=pl.Int64),
-        "landing_airport_id": pl.Series([None] * len(statuses), dtype=pl.Int64),
-        "same_takeoff_airport_id": pl.Series([False] * len(statuses), dtype=pl.Boolean),
-        "same_landing_airport_id": pl.Series([False] * len(statuses), dtype=pl.Boolean),
-        "same_airport_id": pl.Series([False] * len(statuses), dtype=pl.Boolean),
-    })
+    comparison = _timing_comparison(
+        [0] * len(statuses),
+        [0] * len(statuses),
+        statuses=statuses,
+    ).with_columns(
+        pl.Series("takeoff_airport_id", [None] * len(statuses), dtype=pl.Int64),
+        pl.Series("landing_airport_id", [None] * len(statuses), dtype=pl.Int64),
+        pl.Series("same_takeoff_airport_id", [False] * len(statuses), dtype=pl.Boolean),
+        pl.Series("same_landing_airport_id", [False] * len(statuses), dtype=pl.Boolean),
+        pl.Series("same_airport_id", [False] * len(statuses), dtype=pl.Boolean),
+    )
     stats = EvaluationStats.from_comparison(
         comparison,
         test_date=date(2026, 3, 1),
@@ -147,11 +204,16 @@ def test_null_airport_metrics_with_empty_or_all_null_test_flights(statuses):
     assert stats.landing_airport_id_non_null_count == 0
     assert stats.takeoff_airport_id_non_null_match_pct == 0.0
     assert stats.landing_airport_id_non_null_match_pct == 0.0
+    if "both" not in statuses:
+        assert stats.median_max_endpoint_time_error_minutes is None
+        assert stats.p90_max_endpoint_time_error_minutes is None
+        assert stats.takeoff_time_bias_minutes is None
+        assert stats.landing_time_bias_minutes is None
 
 
 def test_evaluation_results_offer_an_explicit_frame_adapter():
     first = EvaluationResult(
-        comparison=pl.DataFrame({"match_status": ["both"]}),
+        comparison=_timing_comparison([1], [1]),
         stats=replace(
             _stats(date(2026, 2, 1), true_positive=2),
             takeoff_airport_id_null_count=1,
@@ -159,7 +221,11 @@ def test_evaluation_results_offer_an_explicit_frame_adapter():
         ),
     )
     second = EvaluationResult(
-        comparison=pl.DataFrame({"match_status": ["both", "both"]}),
+        comparison=_timing_comparison(
+            [10, 20, 0],
+            [10, 20, 0],
+            statuses=["both", "both", "df1_only"],
+        ),
         stats=_stats(date(2026, 3, 1), true_positive=4),
     )
     results = EvaluationResults(entries=(first, second))
@@ -179,16 +245,27 @@ def test_evaluation_results_offer_an_explicit_frame_adapter():
     assert average.item(0, "landing_airport_id_non_null_count") == 3.0
     assert average.item(0, "takeoff_airport_id_non_null_match_pct") == 1.0
     assert average.item(0, "landing_airport_id_non_null_match_pct") == 0.625
+    assert average.item(
+        0, "median_max_endpoint_time_error_minutes"
+    ) == 10.0
+    assert average.item(
+        0, "p90_max_endpoint_time_error_minutes"
+    ) == pytest.approx(18.0)
+    assert average.item(0, "both_endpoints_within_5m_recall") == 0.25
+    assert average.item(0, "both_endpoints_within_15m_recall") == 0.5
+    assert average.item(0, "both_endpoints_within_30m_recall") == 0.75
+    assert average.item(0, "takeoff_time_bias_minutes") == pytest.approx(31 / 3)
+    assert average.item(0, "landing_time_bias_minutes") == pytest.approx(31 / 3)
 
 
 def test_evaluation_averages_do_not_mix_input_windows():
     results = EvaluationResults(entries=(
         EvaluationResult(
-            comparison=pl.DataFrame(),
+            comparison=_timing_comparison([0], [0]),
             stats=_stats(date(2026, 3, 1), true_positive=2),
         ),
         EvaluationResult(
-            comparison=pl.DataFrame(),
+            comparison=_timing_comparison([0], [0]),
             stats=replace(
                 _stats(date(2026, 3, 2), true_positive=4), target_day_adsb=True,
             ),
@@ -202,6 +279,31 @@ def test_evaluation_averages_do_not_mix_input_windows():
     assert averages.filter(~pl.col("target_day_adsb")).item(
         0, "true_positive",
     ) == 2.0
+
+
+def test_timing_averages_support_source_pairs_without_adsb():
+    results = EvaluationResults(entries=(
+        EvaluationResult(
+            comparison=_timing_comparison([5], [5]),
+            stats=replace(
+                _stats(date(2026, 3, 1), true_positive=1),
+                adsb_source=None,
+            ),
+        ),
+        EvaluationResult(
+            comparison=_timing_comparison([15], [15]),
+            stats=replace(
+                _stats(date(2026, 3, 2), true_positive=1),
+                adsb_source=None,
+            ),
+        ),
+    ))
+
+    average = results.to_frame().filter(pl.col("test_date") == "average")
+
+    assert average.item(0, "adsb_src") is None
+    assert average.item(0, "median_max_endpoint_time_error_minutes") == 10.0
+    assert average.item(0, "both_endpoints_within_5m_recall") == 0.5
 
 
 def test_evaluation_stats_reject_impossible_match_counts():
