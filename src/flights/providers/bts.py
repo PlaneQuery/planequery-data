@@ -9,7 +9,11 @@ from timezonefinder import TimezoneFinder
 from airports.catalog import AirportCatalogView
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
-from data_engineering.openairframes.read import scan_latest_faa_registration_icao_for_join
+from data_engineering.openairframes.read import (
+    ICAO_INFO_COLUMNS,
+    get_openairframes_snapshot,
+    scan_latest_faa_registration_icao_for_join,
+)
 from data_engineering.utils import OUTPUT_DIR
 
 tf = TimezoneFinder()
@@ -653,12 +657,22 @@ def iata_airport_mapping(
 
 
 def get_registration_to_icao(at_date: date | None = None) -> pl.DataFrame:
-    return (
+    registration_mapping = (
         scan_latest_faa_registration_icao_for_join(
             real_icao_column="icao",
             at_date=at_date,
         )
         .collect()
+    )
+    aircraft_info = get_openairframes_snapshot(at_date=at_date).select(
+        "icao",
+        *[column for column in ICAO_INFO_COLUMNS if column != "registration"],
+    )
+    return registration_mapping.join(
+        aircraft_info,
+        on="icao",
+        how="left",
+        validate="m:1",
     )
 
 
@@ -822,16 +836,6 @@ def _join_bts_identifiers(
 
 
 def _to_bts_flight_schema(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.with_columns(
-        pl.lit(False).alias("pia"),
-        pl.lit(False).alias("ladd"),
-        pl.lit(False).alias("military"),
-        pl.lit(False).alias("interesting"),
-        pl.lit(None).cast(pl.String).alias("aircraft_type"),
-        pl.lit(None).cast(pl.String).alias("owner"),
-        pl.lit(None).cast(pl.String).alias("aircraft_description"),
-        pl.lit("A3").cast(pl.String).alias("category"),
-    )
     return with_flight_schema_columns(df).with_columns(
         pl.col("icao").str.to_lowercase()
     )
@@ -996,7 +1000,7 @@ def create_flights_from_bts(
 @dataclass(frozen=True)
 class BTSFlightSource(NonADSBFlightSource):
     name: str = "bts"
-    version: int = 15
+    version: int = 16
 
     def create_flights_for_day(
         self,

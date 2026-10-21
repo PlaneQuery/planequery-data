@@ -27,6 +27,7 @@ ADSB_ICAO_INFO_COLUMNS = [
     "military",
     "interesting",
 ]
+SFDPS_PREFERRED_AIRCRAFT_COLUMNS = ("registration", "aircraft_type")
 
 SFDPS_AIRPORT_CODE_PRIORITY = ICAO_AIRPORT_CODE_PRIORITY
 # Allow small reporting-clock differences, but not future actual arrivals.
@@ -209,12 +210,31 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
         .select(["icao", *ADSB_ICAO_INFO_COLUMNS])
         .collect(engine="streaming")
     )
+    sfdps_columns = {
+        column: f"_sfdps_{column}"
+        for column in SFDPS_PREFERRED_AIRCRAFT_COLUMNS
+    }
     df_flights = (
-        df_flights.drop(ADSB_ICAO_INFO_COLUMNS)
+        df_flights.rename(sfdps_columns)
+        .drop(
+            [
+                column
+                for column in ADSB_ICAO_INFO_COLUMNS
+                if column not in SFDPS_PREFERRED_AIRCRAFT_COLUMNS
+            ]
+        )
         .join(df_icao_info, on="icao", how="left")
         .with_columns(
-            pl.col("registration").fill_null(""),
-            pl.col("aircraft_type").fill_null(""),
+            *[
+                pl.when(
+                    pl.col(sfdps_column).str.strip_chars().fill_null("") != ""
+                )
+                .then(pl.col(sfdps_column))
+                .otherwise(pl.col(column))
+                .fill_null("")
+                .alias(column)
+                for column, sfdps_column in sfdps_columns.items()
+            ],
             pl.col("owner").fill_null(""),
             pl.col("aircraft_description").fill_null(""),
             pl.col("category").fill_null(""),
@@ -223,6 +243,7 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
             pl.col("military").fill_null(False),
             pl.col("interesting").fill_null(False),
         )
+        .drop(*sfdps_columns.values())
     )
     return with_flight_schema_columns(df_flights)
 
@@ -251,7 +272,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 13
+    version: int = 14
 
     def create_flights_for_day(
         self,
