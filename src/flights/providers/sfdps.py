@@ -194,7 +194,18 @@ def add_adsb_icao_info(df_flights: pl.DataFrame, current_day: datetime) -> pl.Da
         )
         .sort(["icao", "time"])
         .group_by("icao")
-        .last()
+        .agg(
+            *[
+                pl.col(column).last()
+                for column in ADSB_ICAO_INFO_COLUMNS
+                if column != "category"
+            ],
+            # Trace snapshots report category intermittently; a trailing blank
+            # must not erase the aircraft's last known category.
+            pl.col("category")
+            .filter(pl.col("category").str.strip_chars().fill_null("") != "")
+            .last(),
+        )
         .select(["icao", *ADSB_ICAO_INFO_COLUMNS])
         .collect(engine="streaming")
     )
@@ -240,7 +251,7 @@ def create_sfdps_flights_day(
 @dataclass(frozen=True)
 class SFDPSFlightSource(NonADSBFlightSource):
     name: str = "sfdps"
-    version: int = 12
+    version: int = 13
 
     def create_flights_for_day(
         self,
