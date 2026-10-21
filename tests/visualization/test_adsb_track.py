@@ -15,8 +15,10 @@ def test_sparse_track_preserves_missing_values_and_breaks_gaps():
         'baro_altitude_ft': [None, -50, 200, 300],
         'ground_speed_kt': [0., 80., 100., 110.],
         'on_ground': [True, False, None, False],
+        'lat': [43.6, 43.61, 43.5, 43.49],
+        'lon': [-84.2, -84.19, -83.9, -83.89],
     })
-    fig = plot_track(d, icao='ABC123', day=date(2026, 3, 1))
+    fig = plot_track(d, icao='ABC123', day=date(2026, 3, 1), show_map=True)
     altitude = fig.axes[0].lines[0].get_ydata()
     assert np.isnan(altitude[0])  # Ground altitude must not become zero.
     assert altitude[1] == -50
@@ -25,6 +27,10 @@ def test_sparse_track_preserves_missing_values_and_breaks_gaps():
     assert len(strips['on_ground=False'].get_segments()) == 0  # Gap is not filled.
     assert 'on_ground=unknown' not in strips
     assert len(fig.axes[0].patches) == 0  # No shading over missing observations.
+    map_axis = next(ax for ax in fig.axes if ax.get_title() == 'Observed positions')
+    assert np.isnan(map_axis.lines[0].get_xdata()[2])
+    assert np.isnan(map_axis.lines[0].get_ydata()[2])
+    assert len(map_axis.collections[0].get_offsets()) == 4  # Every actual position retained.
     plt.close(fig)
 
 
