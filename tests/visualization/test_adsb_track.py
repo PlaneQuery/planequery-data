@@ -40,3 +40,33 @@ def test_annotations_keep_supplied_times_and_unknown_airport():
                            'takeoff_airport_ident': [None], 'landing_time': [None]})
     assert flight_events(flights, 'ABC123', start, start + timedelta(hours=1)) == [
         (start, 'takeoff', 'unknown airport')]
+
+
+def test_nearby_airports_prioritize_segment_endpoints_over_midtrack():
+    start = datetime(2026, 3, 1)
+    observations = pl.DataFrame({
+        'icao': ['abc123'] * 3,
+        'time': [start + timedelta(seconds=s) for s in [0, 5, 10]],
+        'baro_altitude_ft': [100., 200., 100.],
+        'ground_speed_kt': [80., 90., 80.],
+        'on_ground': [False] * 3,
+        'lat': [30., 30., 30.], 'lon': [-97., -96.9, -96.8],
+    })
+    airports = pl.DataFrame({
+        'ident': ['END', 'MID'], 'type': ['small_airport'] * 2,
+        'latitude_deg': [30.001, 30.], 'longitude_deg': [-97., -96.9],
+    })
+    fig = plot_track(observations, icao='abc123', day=date(2026, 3, 1),
+                     show_map=True, airports=airports, nearby_airport_limit=1)
+    labels = [text.get_text() for ax in fig.axes for text in ax.texts]
+    assert 'END' in labels
+    assert 'MID' not in labels
+    plt.close(fig)
+    fig = plot_track(observations, icao='abc123', day=date(2026, 3, 1),
+                     show_map=True, map_below=True, airports=airports,
+                     nearby_airport_limit=1, include_airports=('MID',))
+    labels = [text.get_text() for ax in fig.axes for text in ax.texts]
+    assert 'MID' in labels
+    assert 'END' not in labels
+    assert fig.get_figheight() == 8.8
+    plt.close(fig)

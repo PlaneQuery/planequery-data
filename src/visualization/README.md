@@ -103,8 +103,9 @@ verified touchdown/liftoff positions.
 
 Use `--basemap` (implies `--show-map`) to add OpenStreetMap roads, waterways and
 place names in Web Mercator, with airport codes and locations overlaid. Green stars
-mark estimated endpoints; hollow diamonds mark other small, medium, and large
-airports in the viewport. Heliports and closed airports are omitted. Only the
+mark estimated endpoints; hollow diamonds mark up to eight other small, medium,
+and large airports in the viewport, selected by proximity to observed positions.
+Heliports and closed airports are omitted. Only the
 current viewport's tiles are fetched; they are cached in `data/cache/map_tiles/osm`
 and reused on subsequent renders. Network access is required on the first render.
 `--map-zoom` defaults to 11; reduce it for larger regions. This uses a raster
@@ -112,11 +113,24 @@ basemap beneath vector observations and labels, including visible attribution
 to [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
 The basemap represents current geography, not a historical snapshot of flight day.
 
+For a cleaner layout, use `--map-events-only` for code-only airport labels on
+the map and dashed takeoff/landing markers without timeline text callouts.
+Nearby airports are ranked by distance to the first or last ADS-B position of
+each observed segment (split at time gaps or missing coordinates), rather than
+distance to any point along the track. `--nearby-airport-limit 8` shows up to
+eight context airports (the default). This changes presentation only, not the supplied airport
+assignments or observation data.
+
+Use `--map-below` for a full-width map on a second row. For example,
+`--map-below --nearby-airport-limit 12 --include-airports KCXO` reserves a context
+label for KCXO, then fills the remaining slots by endpoint proximity. Requested
+airports must be inside the viewport; this does not change flight assignments.
+
 ```sh
 .venv/bin/python src/visualization/adsb_track.py \
   --icao a5144d --date 2026-03-01 --source adsbx \
   --observations tmp/difficult_adsbx_20260301/a5144d_observations.parquet \
   --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
-  --event-source 'algorithm flight estimates' --start 21:05 --end 21:35 \
+  --event-source 'algorithm flight estimates' --start 19:30 --end 21:40 \
   --basemap --output paper/figures/a5144d_20260301_adsbx_map
 ```
