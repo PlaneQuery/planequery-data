@@ -61,6 +61,7 @@ def plot_track(
     event_source: str = "supplied flight estimates",
     show_geometric: bool = False,
     show_map: bool = False, airports: pl.DataFrame | None = None,
+    basemap: bool = False, map_zoom: int = 11,
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -178,12 +179,18 @@ def plot_track(
             valid = np.isfinite(lon) & np.isfinite(lat)
             if not valid.any():
                 raise ValueError('No valid positions in the plotting interval')
+            if basemap:
+                from visualization.basemap import project, add_basemap
+                from matplotlib.ticker import FuncFormatter
+                px, py = project(lon, lat)
+            else:
+                px, py = lon, lat
             # Break on both missing coordinates and time gaps; never interpolate
             # a route across unobserved portions of the flight.
-            map_ax.plot(np.insert(lon, breaks, np.nan), np.insert(lat, breaks, np.nan),
+            map_ax.plot(np.insert(px, breaks, np.nan), np.insert(py, breaks, np.nan),
                         color='.5', lw=.8, zorder=1)
-            points = map_ax.scatter(lon[valid], lat[valid], c=t[valid], cmap='viridis',
-                                    s=25, edgecolors='white', linewidths=.4, zorder=3)
+            points = map_ax.scatter(px[valid], py[valid], c=t[valid], cmap='plasma' if basemap else 'viridis',
+                                    s=25, edgecolors='black' if basemap else 'white', linewidths=.5, zorder=3)
             points.set_gid('observed-map-positions')
             if airports is not None:
                 codes = {event[2] for event in events}
@@ -191,17 +198,62 @@ def plot_track(
                     x, y = airport['longitude_deg'], airport['latitude_deg']
                     if x is None or y is None:
                         continue
-                    map_ax.scatter([x], [y], marker='*', s=80, color='.2', zorder=4)
-                    map_ax.annotate(airport['ident'], (x, y), xytext=(5, -12),
-                                    textcoords='offset points', fontsize=8)
-            map_ax.set_aspect(1 / np.cos(np.deg2rad(np.nanmean(lat))), adjustable='box')
+                    if basemap:
+                        x, y = project(x, y)
+                    map_ax.scatter([x], [y], marker='*', s=110, color='#006633',
+                                   edgecolors='white', linewidths=.8, zorder=4)
+                    label = airport['ident']
+                    label_left = basemap and x > np.nanmean(px)
+                    map_ax.annotate(label, (x, y), xytext=(-9, 10) if label_left else (7, -12),
+                                    ha='right' if label_left else 'left',
+                                    va='bottom' if label_left else 'top',
+                                    textcoords='offset points', fontsize=7,
+                                    arrowprops={'arrowstyle': '-', 'lw': .7, 'color': '.2'} if basemap else None,
+                                    bbox={'facecolor': 'white', 'edgecolor': '.6', 'alpha': .95, 'pad': 2},
+                                    zorder=6)
+            map_ax.set_aspect(1 if basemap else 1 / np.cos(np.deg2rad(np.nanmean(lat))), adjustable='box')
             map_ax.margins(.18)
+            if airports is not None and 'type' in airports.columns:
+                # Add context only within the established flight viewport; nearby
+                # airports must not recursively expand the map extent.
+                xlim, ylim = map_ax.get_xlim(), map_ax.get_ylim()
+                nearby = airports.filter(
+                    pl.col('type').is_in(['small_airport', 'medium_airport', 'large_airport'])
+                    & ~pl.col('ident').is_in(codes)
+                )
+                for airport in nearby.to_dicts():
+                    x, y = airport['longitude_deg'], airport['latitude_deg']
+                    if x is None or y is None:
+                        continue
+                    if basemap:
+                        x, y = project(x, y)
+                    if not (xlim[0] <= x <= xlim[1] and ylim[0] <= y <= ylim[1]):
+                        continue
+                    map_ax.scatter([x], [y], marker='D', s=35, facecolors='white',
+                                   edgecolors='#404040', linewidths=1, zorder=4)
+                    map_ax.annotate(airport['ident'], (x, y), xytext=(-6, -10),
+                                    textcoords='offset points', ha='right', va='top', fontsize=7,
+                                    bbox={'facecolor': 'white', 'edgecolor': 'none', 'alpha': .9, 'pad': 1},
+                                    zorder=6)
+                map_ax.set_xlim(xlim)
+                map_ax.set_ylim(ylim)
+                map_ax.legend(handles=[
+                    Line2D([], [], marker='*', color='#006633', ls='none', markersize=8,
+                           label='Estimated endpoints'),
+                    Line2D([], [], marker='D', markerfacecolor='white', color='#404040',
+                           ls='none', markersize=4, label='Other airports'),
+                ], loc='upper left', fontsize=6, framealpha=.95, borderpad=.4)
             map_ax.set_xlabel('Longitude (°)')
             map_ax.set_ylabel('Latitude (°)')
-            map_ax.set_title('Observed positions', fontsize=10)
+            map_ax.set_title('Airports & observed positions' if basemap else 'Observed positions', fontsize=10)
             map_ax.ticklabel_format(useOffset=False, style='plain')
             map_ax.grid(color='.9', lw=.5)
             map_ax.locator_params(axis='both', nbins=5)
+            if basemap:
+                add_basemap(map_ax, zoom=map_zoom)
+                map_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{np.rad2deg(x / 6378137):.2f}'))
+                map_ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{np.rad2deg(np.arctan(np.sinh(y / 6378137))):.2f}'))
+                map_ax.grid(False)
             color_ax = fig.add_axes([.70, .105, .23, .02])
             colorbar = fig.colorbar(points, cax=color_ax, orientation='horizontal')
             colorbar.set_ticks([t[valid].min(), t[valid].max()])
@@ -223,6 +275,8 @@ def main():
     parser.add_argument("--gap-seconds", type=float, default=30)
     parser.add_argument('--show-geometric', action='store_true', help='Overlay geometric altitude on the altitude axis')
     parser.add_argument('--show-map', action='store_true', help='Add a lat/lon map beside the time series (adds 4 inches to width)')
+    parser.add_argument('--basemap', action='store_true', help='Use an OpenStreetMap basemap (downloads and caches viewport tiles); implies --show-map')
+    parser.add_argument('--map-zoom', type=int, default=11, help='Basemap tile zoom (default 11)')
     parser.add_argument('--airports', type=Path, default=Path('data/raw/ourairports/airports.csv'),
                         help='Airport CSV for map labels (ident, latitude_deg, longitude_deg)')
     parser.add_argument("--width", type=float, default=7.2, help="Figure width in inches")
@@ -230,6 +284,7 @@ def main():
     parser.add_argument("--start", type=time.fromisoformat, help="UTC HH:MM[:SS]")
     parser.add_argument("--end", type=time.fromisoformat, help="UTC HH:MM[:SS]")
     args = parser.parse_args()
+    args.show_map = args.show_map or args.basemap
     if args.output is None:
         args.output = Path("paper/figures") / f"{args.icao.lower()}_{args.date:%Y%m%d}_{args.source}"
     if args.observations:
@@ -247,6 +302,7 @@ def main():
                      end=datetime.combine(args.date, args.end) if args.end else None,
                      title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source,
                      show_geometric=args.show_geometric, show_map=args.show_map,
+                     basemap=args.basemap, map_zoom=args.map_zoom,
                      airports=pl.read_csv(args.airports, infer_schema_length=10000)
                      if args.show_map and args.airports.is_file() else None)
     args.output.parent.mkdir(parents=True, exist_ok=True)

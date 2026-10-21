@@ -99,7 +99,18 @@ through missing coverage. The map uses a local latitude aspect correction and
 is intended for regional tracks, not polar or antimeridian-crossing routes.
 Airport stars come from the local OurAirports CSV (`--airports` can override it).
 They identify the airports referenced by the supplied flight estimates, not
-verified touchdown/liftoff positions. No online tiles or basemap are required.
+verified touchdown/liftoff positions.
+
+Use `--basemap` (implies `--show-map`) to add OpenStreetMap roads, waterways and
+place names in Web Mercator, with airport codes and locations overlaid. Green stars
+mark estimated endpoints; hollow diamonds mark other small, medium, and large
+airports in the viewport. Heliports and closed airports are omitted. Only the
+current viewport's tiles are fetched; they are cached in `data/cache/map_tiles/osm`
+and reused on subsequent renders. Network access is required on the first render.
+`--map-zoom` defaults to 11; reduce it for larger regions. This uses a raster
+basemap beneath vector observations and labels, including visible attribution
+to [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
+The basemap represents current geography, not a historical snapshot of flight day.
 
 ```sh
 .venv/bin/python src/visualization/adsb_track.py \
@@ -107,5 +118,5 @@ verified touchdown/liftoff positions. No online tiles or basemap are required.
   --observations tmp/difficult_adsbx_20260301/a5144d_observations.parquet \
   --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
   --event-source 'algorithm flight estimates' --start 21:05 --end 21:35 \
-  --show-map --output paper/figures/a5144d_20260301_adsbx_map
+  --basemap --output paper/figures/a5144d_20260301_adsbx_map
 ```
