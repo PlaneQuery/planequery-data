@@ -123,7 +123,7 @@ def test_opensky_nn_preserves_published_flights_and_infers_in_batches(
     path = flight_source.flight_path(source, DAY)
     assert path == (
         tmp_path / "data/flights/source=opensky-nn/adsb_source=opensky"
-        / "version=1/year=2026/month=03/day=01/data.parquet"
+        / "version=2/year=2026/month=03/day=01/data.parquet"
     )
     manifest = FlightManifest.read(flight_manifest_path(path))
     assert manifest == FlightManifest.from_provenance(
