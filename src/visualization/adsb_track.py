@@ -60,6 +60,7 @@ def plot_track(
     start: datetime | None = None, end: datetime | None = None,
     event_source: str = "supplied flight estimates",
     show_geometric: bool = False,
+    show_map: bool = False, airports: pl.DataFrame | None = None,
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -163,6 +164,49 @@ def plot_track(
                            transform=secondary.transAxes, ha='center', va='top',
                            fontsize=7, color='.35',
                            bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 2})
+        if show_map:
+            if not {'lat', 'lon'} <= set(d.columns):
+                raise ValueError('Map requires lat and lon observation columns')
+            # Preserve the original panel's physical width when adding the map.
+            fig.set_size_inches(width + 4, height)
+            primary.set_position([.08, .20, .45, .53 if events else .65])
+            secondary.set_position(primary.get_position())
+            fig.legends[0].set_bbox_to_anchor((.305, .015))
+            map_ax = fig.add_axes([.67, .26, .29, .53])
+            lon = d['lon'].cast(pl.Float64).to_numpy()
+            lat = d['lat'].cast(pl.Float64).to_numpy()
+            valid = np.isfinite(lon) & np.isfinite(lat)
+            if not valid.any():
+                raise ValueError('No valid positions in the plotting interval')
+            # Break on both missing coordinates and time gaps; never interpolate
+            # a route across unobserved portions of the flight.
+            map_ax.plot(np.insert(lon, breaks, np.nan), np.insert(lat, breaks, np.nan),
+                        color='.5', lw=.8, zorder=1)
+            points = map_ax.scatter(lon[valid], lat[valid], c=t[valid], cmap='viridis',
+                                    s=25, edgecolors='white', linewidths=.4, zorder=3)
+            points.set_gid('observed-map-positions')
+            if airports is not None:
+                codes = {event[2] for event in events}
+                for airport in airports.filter(pl.col('ident').is_in(codes)).to_dicts():
+                    x, y = airport['longitude_deg'], airport['latitude_deg']
+                    if x is None or y is None:
+                        continue
+                    map_ax.scatter([x], [y], marker='*', s=80, color='.2', zorder=4)
+                    map_ax.annotate(airport['ident'], (x, y), xytext=(5, -12),
+                                    textcoords='offset points', fontsize=8)
+            map_ax.set_aspect(1 / np.cos(np.deg2rad(np.nanmean(lat))), adjustable='box')
+            map_ax.margins(.18)
+            map_ax.set_xlabel('Longitude (°)')
+            map_ax.set_ylabel('Latitude (°)')
+            map_ax.set_title('Observed positions', fontsize=10)
+            map_ax.ticklabel_format(useOffset=False, style='plain')
+            map_ax.grid(color='.9', lw=.5)
+            map_ax.locator_params(axis='both', nbins=5)
+            color_ax = fig.add_axes([.70, .105, .23, .02])
+            colorbar = fig.colorbar(points, cax=color_ax, orientation='horizontal')
+            colorbar.set_ticks([t[valid].min(), t[valid].max()])
+            colorbar.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+            colorbar.set_label('Observation time (UTC)', fontsize=8)
     return fig
 
 
@@ -178,6 +222,9 @@ def main():
     parser.add_argument("--formats", nargs="+", default=["pdf", "svg", "png"], choices=["pdf", "svg", "png"])
     parser.add_argument("--gap-seconds", type=float, default=30)
     parser.add_argument('--show-geometric', action='store_true', help='Overlay geometric altitude on the altitude axis')
+    parser.add_argument('--show-map', action='store_true', help='Add a lat/lon map beside the time series (adds 4 inches to width)')
+    parser.add_argument('--airports', type=Path, default=Path('data/raw/ourairports/airports.csv'),
+                        help='Airport CSV for map labels (ident, latitude_deg, longitude_deg)')
     parser.add_argument("--width", type=float, default=7.2, help="Figure width in inches")
     parser.add_argument("--height", type=float, default=4.8)
     parser.add_argument("--start", type=time.fromisoformat, help="UTC HH:MM[:SS]")
@@ -199,7 +246,9 @@ def main():
                      start=datetime.combine(args.date, args.start) if args.start else None,
                      end=datetime.combine(args.date, args.end) if args.end else None,
                      title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source,
-                     show_geometric=args.show_geometric)
+                     show_geometric=args.show_geometric, show_map=args.show_map,
+                     airports=pl.read_csv(args.airports, infer_schema_length=10000)
+                     if args.show_map and args.airports.is_file() else None)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for fmt in args.formats:
         target = Path(f"{args.output}.{fmt}")

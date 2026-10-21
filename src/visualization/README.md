@@ -89,3 +89,23 @@ transition around 18:26.
   --event-source 'algorithm flight estimates' \
   --show-geometric --start 18:20 --end 18:38
 ```
+
+## Position map
+
+`--show-map` adds a latitude/longitude panel beside the time series and adds four
+inches to the figure width. Positions are colored by observation time. Both
+panels break their lines across `--gap-seconds`; the map does not invent a route
+through missing coverage. The map uses a local latitude aspect correction and
+is intended for regional tracks, not polar or antimeridian-crossing routes.
+Airport stars come from the local OurAirports CSV (`--airports` can override it).
+They identify the airports referenced by the supplied flight estimates, not
+verified touchdown/liftoff positions. No online tiles or basemap are required.
+
+```sh
+.venv/bin/python src/visualization/adsb_track.py \
+  --icao a5144d --date 2026-03-01 --source adsbx \
+  --observations tmp/difficult_adsbx_20260301/a5144d_observations.parquet \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
+  --event-source 'algorithm flight estimates' --start 21:05 --end 21:35 \
+  --show-map --output paper/figures/a5144d_20260301_adsbx_map
+```
