@@ -58,7 +58,7 @@ def plot_track(
     flights: pl.DataFrame | None = None, gap_seconds: float = 30,
     width: float = 7.2, height: float = 4.8, title: str | None = None,
     start: datetime | None = None, end: datetime | None = None,
-    event_source: str = "supplied flight estimates",
+    event_source: str = "flight estimates",
     show_geometric: bool = False,
     show_map: bool = False, airports: pl.DataFrame | None = None,
     basemap: bool = False, map_zoom: int = 11,
@@ -431,7 +431,7 @@ def main():
     parser.add_argument("--source", default="adsbx", choices=["adsbx", "adsblol", "opensky"])
     parser.add_argument("--observations", type=Path, help="Optional observation Parquet; otherwise read canonical provider data")
     parser.add_argument("--flights", type=Path, help="Flight Parquet with takeoff/landing_time and takeoff/landing_airport_ident")
-    parser.add_argument("--event-source", default="supplied flight estimates")
+    parser.add_argument("--event-source", default="flight estimates")
     parser.add_argument("--output", type=Path, help="Output stem; defaults to paper/figures/ICAO_DATE_SOURCE")
     parser.add_argument("--formats", nargs="+", default=["pdf", "svg", "png"], choices=["pdf", "svg", "png"])
     parser.add_argument("--gap-seconds", type=float, default=30)
