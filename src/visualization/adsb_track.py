@@ -62,6 +62,8 @@ def plot_track(
     show_geometric: bool = False,
     show_map: bool = False, airports: pl.DataFrame | None = None,
     basemap: bool = False, map_zoom: int = 11,
+    map_events_only: bool = False, nearby_airport_limit: int = 8,
+    map_below: bool = False, include_airports: tuple[str, ...] = (),
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -89,6 +91,12 @@ def plot_track(
     flags = d["on_ground"].to_list()
     state = np.array([0 if v is False else 1 if v is True else .5 for v in flags], dtype=float)
     events = flight_events(flights, icao, start, end)
+    event_labels = {}
+    if flights is not None:
+        for row in flights.filter(pl.col('icao').str.to_lowercase() == icao.lower()).to_dicts():
+            for kind in ('takeoff', 'landing'):
+                if row.get(f'{kind}_event_label'):
+                    event_labels[(row.get(f'{kind}_time'), kind)] = row[f'{kind}_event_label']
     style = {"font.family": "serif", "font.size": 9, "axes.labelsize": 9,
              "xtick.labelsize": 8, "ytick.labelsize": 8, "pdf.fonttype": 42,
              "ps.fonttype": 42, "svg.fonttype": "none", "axes.spines.top": False,
@@ -98,7 +106,7 @@ def plot_track(
         secondary = primary.twinx()
         axes = [primary, secondary]
         secondary.spines['right'].set_visible(True)
-        fig.subplots_adjust(left=.12, right=.88, bottom=.20, top=.73 if events else .85)
+        fig.subplots_adjust(left=.12, right=.88, bottom=.20, top=.73 if events and not map_events_only else .85)
         for ax, col, label, color in zip(axes[:2],
                 ["baro_altitude_ft", "ground_speed_kt"],
                 ["Barometric altitude\n(ft)", "Ground speed\n(kt)"], ["#0072B2", "#333333"]):
@@ -143,10 +151,22 @@ def plot_track(
         for i, (stamp, kind, airport) in enumerate(events):
             x = mdates.date2num(stamp)
             color = "#009E73" if kind == "takeoff" else "#CC79A7"
-            primary.axvline(x, color=color, ls=":", lw=.75, alpha=.9)
+            primary.axvline(x, color=color, ls="--" if map_events_only else ':', lw=.9, alpha=.9)
+            if map_events_only:
+                # Keep codes tied to the actual event lines without restoring
+                # verbose callouts or a separate annotation lane.
+                near_right = x > mdates.date2num(start) + .9 * (mdates.date2num(end) - mdates.date2num(start))
+                primary.annotate(airport, xy=(x, .97),
+                                 xycoords=('data', 'axes fraction'),
+                                 xytext=(-4 if near_right else 4, 0),
+                                 textcoords='offset points',
+                                 ha='right' if near_right else 'left', va='top',
+                                 fontsize=7, color=color, zorder=7)
+                continue
             # Distribute labels across a separate annotation lane to avoid close
             # turnaround labels colliding; leaders retain exact event positions.
-            axes[0].annotate(f"{kind.title()}\n{airport}\n{stamp:%H:%M:%S}",
+            label = event_labels.get((stamp, kind), kind.title())
+            axes[0].annotate(f"{label}\n{airport}\n{stamp:%H:%M:%S}",
                 xy=(x, 1), xycoords=("data", "axes fraction"),
                 xytext=((i + .5) / len(events), 1.07 + .18 * (i % 2)),
                 textcoords="axes fraction", ha="center", va="bottom", fontsize=7,
@@ -159,21 +179,48 @@ def plot_track(
         axes[-1].xaxis.set_major_locator(locator)
         axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         primary.set_xlabel(f"Time (UTC), {day.isoformat()}")
+        if map_events_only and events:
+            secondary.legend(handles=[
+                Line2D([], [], color='#009E73', ls='--', lw=.9, label='Estimated takeoff'),
+                Line2D([], [], color='#CC79A7', ls='--', lw=.9, label='Estimated landing'),
+            ], loc='upper center', ncol=2, frameon=False, fontsize=7)
         fig.suptitle(title or f"{icao.upper()} · ADS-B observations", y=.99, fontsize=11)
-        if events:
+        if events and not map_events_only:
             secondary.text(.5, .98, f"Dotted lines: {event_source}.",
                            transform=secondary.transAxes, ha='center', va='top',
                            fontsize=7, color='.35',
                            bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 2})
+        if not map_events_only and flights is not None and 'landing_assignment_method' in flights.columns:
+            reviewed = flights.filter(pl.col('icao').str.to_lowercase() == icao.lower()).sort('takeoff_time').to_dicts()
+            for i, row in enumerate(reviewed[:-1]):
+                if row.get('landing_time') is not None or row.get('landing_assignment_method') != 'matched_to_next_departure':
+                    continue
+                left, right = row['takeoff_time'], reviewed[i+1]['takeoff_time']
+                if left is None or right is None:
+                    continue
+                midpoint = left + (right-left)/2
+                if start <= midpoint <= end:
+                    secondary.text(mdates.date2num(midpoint), .65,
+                                   f"Arrival inferred: {row['landing_airport_ident']}\nTime unobserved",
+                                   transform=secondary.get_xaxis_transform(), ha='center',
+                                   fontsize=7, color='.35',
+                                   bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 2})
         if show_map:
             if not {'lat', 'lon'} <= set(d.columns):
                 raise ValueError('Map requires lat and lon observation columns')
             # Preserve the original panel's physical width when adding the map.
             fig.set_size_inches(width + 4, height)
-            primary.set_position([.08, .20, .45, .53 if events else .65])
+            primary.set_position([.08, .20, .45, .53 if events and not map_events_only else .65])
             secondary.set_position(primary.get_position())
             fig.legends[0].set_bbox_to_anchor((.305, .015))
-            map_ax = fig.add_axes([.67, .26, .29, .53])
+            map_height = .65 if map_events_only else .53
+            map_ax = fig.add_axes([.67, .20 if map_events_only else .26, .29, map_height])
+            if map_below:
+                fig.set_size_inches(width, height + 4)
+                primary.set_position([.12, .66, .76, .27])
+                secondary.set_position(primary.get_position())
+                fig.legends[0].set_bbox_to_anchor((.5, .555))
+                map_ax.set_position([.12, .14, .76, .36])
             lon = d['lon'].cast(pl.Float64).to_numpy()
             lat = d['lat'].cast(pl.Float64).to_numpy()
             valid = np.isfinite(lon) & np.isfinite(lat)
@@ -187,13 +234,25 @@ def plot_track(
                 px, py = lon, lat
             # Break on both missing coordinates and time gaps; never interpolate
             # a route across unobserved portions of the flight.
+            from matplotlib import patheffects
             map_ax.plot(np.insert(px, breaks, np.nan), np.insert(py, breaks, np.nan),
-                        color='.5', lw=.8, zorder=1)
+                        color='#273469', lw=1.7, zorder=2,
+                        path_effects=[patheffects.Stroke(linewidth=3.5, foreground='white'),
+                                      patheffects.Normal()])
             points = map_ax.scatter(px[valid], py[valid], c=t[valid], cmap='plasma' if basemap else 'viridis',
-                                    s=25, edgecolors='black' if basemap else 'white', linewidths=.5, zorder=3)
+                                    s=14 if map_events_only else 25,
+                                    edgecolors='none' if map_events_only else 'black' if basemap else 'white',
+                                    linewidths=.5, zorder=3)
             points.set_gid('observed-map-positions')
             if airports is not None:
                 codes = {event[2] for event in events}
+                if flights is not None:
+                    # Airport assessments can have no event time when touchdown
+                    # occurs in missing coverage, yet still belong on the map.
+                    for row in flights.filter(pl.col('icao').str.to_lowercase() == icao.lower()).to_dicts():
+                        for kind in ('takeoff', 'landing'):
+                            if row.get(f'{kind}_airport_ident'):
+                                codes.add(row[f'{kind}_airport_ident'])
                 for airport in airports.filter(pl.col('ident').is_in(codes)).to_dicts():
                     x, y = airport['longitude_deg'], airport['latitude_deg']
                     if x is None or y is None:
@@ -213,6 +272,19 @@ def plot_track(
                                     zorder=6)
             map_ax.set_aspect(1 if basemap else 1 / np.cos(np.deg2rad(np.nanmean(lat))), adjustable='box')
             map_ax.margins(.18)
+            if basemap:
+                # Fill the map panel even for nearly east-west or north-south
+                # tracks, expanding geographic context rather than stretching it.
+                xmin, xmax = map_ax.get_xlim()
+                ymin, ymax = map_ax.get_ylim()
+                panel = map_ax.get_position(original=True)
+                panel_ratio = (panel.width * fig.get_figwidth()) / (panel.height * fig.get_figheight())
+                span_x, span_y = xmax - xmin, ymax - ymin
+                span_x = max(span_x, span_y * panel_ratio)
+                span_y = max(span_y, span_x / panel_ratio)
+                cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+                map_ax.set_xlim(cx - span_x / 2, cx + span_x / 2)
+                map_ax.set_ylim(cy - span_y / 2, cy + span_y / 2)
             if airports is not None and 'type' in airports.columns:
                 # Add context only within the established flight viewport; nearby
                 # airports must not recursively expand the map extent.
@@ -221,6 +293,13 @@ def plot_track(
                     pl.col('type').is_in(['small_airport', 'medium_airport', 'large_airport'])
                     & ~pl.col('ident').is_in(codes)
                 )
+                nearby_positions = []
+                # Rank by the ends of observed segments, not by overflights.
+                # Use exactly the same time-gap/missing-position boundaries as
+                # the drawn track; a singleton segment is itself an endpoint.
+                connected = valid[:-1] & valid[1:]
+                connected[np.asarray(breaks, dtype=int) - 1] = False
+                endpoints = valid & (~np.r_[False, connected] | ~np.r_[connected, False])
                 for airport in nearby.to_dicts():
                     x, y = airport['longitude_deg'], airport['latitude_deg']
                     if x is None or y is None:
@@ -229,9 +308,15 @@ def plot_track(
                         x, y = project(x, y)
                     if not (xlim[0] <= x <= xlim[1] and ylim[0] <= y <= ylim[1]):
                         continue
+                    distance = np.min((px[endpoints]-x)**2 + (py[endpoints]-y)**2)
+                    nearby_positions.append((distance, airport['ident'], x, y))
+                # Explicit context requests remain visible even when small
+                # airfields near coverage gaps dominate the distance ranking.
+                ranked = sorted(nearby_positions, key=lambda p: (p[1] not in include_airports, p[0]))
+                for _, code, x, y in ranked[:nearby_airport_limit]:
                     map_ax.scatter([x], [y], marker='D', s=35, facecolors='white',
                                    edgecolors='#404040', linewidths=1, zorder=4)
-                    map_ax.annotate(airport['ident'], (x, y), xytext=(-6, -10),
+                    map_ax.annotate(code, (x, y), xytext=(-6, -10),
                                     textcoords='offset points', ha='right', va='top', fontsize=7,
                                     bbox={'facecolor': 'white', 'edgecolor': 'none', 'alpha': .9, 'pad': 1},
                                     zorder=6)
@@ -239,7 +324,7 @@ def plot_track(
                 map_ax.set_ylim(ylim)
                 map_ax.legend(handles=[
                     Line2D([], [], marker='*', color='#006633', ls='none', markersize=8,
-                           label='Estimated endpoints'),
+                           label='Flight airports' if map_events_only else 'Estimated endpoints'),
                     Line2D([], [], marker='D', markerfacecolor='white', color='#404040',
                            ls='none', markersize=4, label='Other airports'),
                 ], loc='upper left', fontsize=6, framealpha=.95, borderpad=.4)
@@ -254,11 +339,44 @@ def plot_track(
                 map_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{np.rad2deg(x / 6378137):.2f}'))
                 map_ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{np.rad2deg(np.arctan(np.sinh(y / 6378137))):.2f}'))
                 map_ax.grid(False)
-            color_ax = fig.add_axes([.70, .105, .23, .02])
+            color_ax = fig.add_axes([.70, .085 if map_events_only else .105, .23, .02])
+            if map_below:
+                color_ax.set_position([.25, .065, .5, .012])
             colorbar = fig.colorbar(points, cax=color_ax, orientation='horizontal')
             colorbar.set_ticks([t[valid].min(), t[valid].max()])
             colorbar.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
             colorbar.set_label('Observation time (UTC)', fontsize=8)
+            # Resolve airport-label collisions after the geographic limits and
+            # aspect ratio are final. Endpoint annotations retain first priority.
+            from matplotlib.text import Annotation
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            occupied = []
+            from matplotlib.transforms import Bbox
+            # Reserve the observed track corridor, not just other text boxes.
+            track_pixels = map_ax.transData.transform(np.column_stack([px[valid], py[valid]]))
+            occupied.extend(Bbox.from_bounds(x-5, y-5, 10, 10) for x, y in track_pixels)
+            if map_ax.get_legend() is not None:
+                occupied.append(map_ax.get_legend().get_window_extent(renderer))
+            for label in map_ax.texts:
+                if not isinstance(label, Annotation):
+                    occupied.append(label.get_window_extent(renderer))
+            for label in map_ax.texts:
+                if not isinstance(label, Annotation):
+                    continue
+                for dx, dy in [(7, 8), (-7, 8), (7, -8), (-7, -8),
+                               (7, 24), (-7, 24), (7, -24), (-7, -24),
+                               (7, 40), (-7, 40), (7, -40), (-7, -40)]:
+                    label.set_position((dx, dy))
+                    label.set_ha('left' if dx > 0 else 'right')
+                    label.set_va('bottom' if dy > 0 else 'top')
+                    label.update_positions(renderer)
+                    label.update_bbox_position_size(renderer)
+                    box = label.get_bbox_patch().get_window_extent(renderer).expanded(1.05, 1.15)
+                    if (map_ax.bbox.contains(box.x0, box.y0) and map_ax.bbox.contains(box.x1, box.y1)
+                            and not any(box.overlaps(other) for other in occupied)):
+                        break
+                occupied.append(box)
     return fig
 
 
@@ -275,6 +393,10 @@ def main():
     parser.add_argument("--gap-seconds", type=float, default=30)
     parser.add_argument('--show-geometric', action='store_true', help='Overlay geometric altitude on the altitude axis')
     parser.add_argument('--show-map', action='store_true', help='Add a lat/lon map beside the time series (adds 4 inches to width)')
+    parser.add_argument('--map-events-only', action='store_true', help='Label takeoff/landing airports on the map instead of the time series')
+    parser.add_argument('--nearby-airport-limit', type=int, default=8, help='Maximum other airports to label on map')
+    parser.add_argument('--map-below', action='store_true', help='Place a larger map below the time series')
+    parser.add_argument('--include-airports', nargs='+', default=[], help='Prioritize these context-airport codes within the map viewport')
     parser.add_argument('--basemap', action='store_true', help='Use an OpenStreetMap basemap (downloads and caches viewport tiles); implies --show-map')
     parser.add_argument('--map-zoom', type=int, default=11, help='Basemap tile zoom (default 11)')
     parser.add_argument('--airports', type=Path, default=Path('data/raw/ourairports/airports.csv'),
@@ -285,6 +407,7 @@ def main():
     parser.add_argument("--end", type=time.fromisoformat, help="UTC HH:MM[:SS]")
     args = parser.parse_args()
     args.show_map = args.show_map or args.basemap
+    args.show_map = args.show_map or args.map_events_only or args.map_below
     if args.output is None:
         args.output = Path("paper/figures") / f"{args.icao.lower()}_{args.date:%Y%m%d}_{args.source}"
     if args.observations:
@@ -302,6 +425,8 @@ def main():
                      end=datetime.combine(args.date, args.end) if args.end else None,
                      title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source,
                      show_geometric=args.show_geometric, show_map=args.show_map,
+                     map_events_only=args.map_events_only, nearby_airport_limit=args.nearby_airport_limit,
+                     map_below=args.map_below, include_airports=tuple(c.upper() for c in args.include_airports),
                      basemap=args.basemap, map_zoom=args.map_zoom,
                      airports=pl.read_csv(args.airports, infer_schema_length=10000)
                      if args.show_map and args.airports.is_file() else None)
