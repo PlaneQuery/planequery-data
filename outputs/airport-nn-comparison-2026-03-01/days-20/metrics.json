@@ -1,0 +1,42 @@
+{
+  "primary": {
+    "endpoints": 43960,
+    "airports": 938,
+    "aircraft": 8006,
+    "nn_accuracy": 0.9960646041856233,
+    "nearest_accuracy": 0.9615104640582347,
+    "candidate_recall": 0.9985668789808917,
+    "nn_only_correct": 1539,
+    "nearest_only_correct": 20
+  },
+  "large_airport": {
+    "endpoints": 34425,
+    "airports": 123,
+    "aircraft": 6974,
+    "nn_accuracy": 0.9982861292665214,
+    "nearest_accuracy": 0.9868119099491649,
+    "candidate_recall": 0.9987799564270152,
+    "nn_only_correct": 396,
+    "nearest_only_correct": 1
+  },
+  "medium_airport": {
+    "endpoints": 8012,
+    "airports": 468,
+    "aircraft": 3529,
+    "nn_accuracy": 0.9946330504243635,
+    "nearest_accuracy": 0.86445332001997,
+    "candidate_recall": 0.9987518721917125,
+    "nn_only_correct": 1047,
+    "nearest_only_correct": 4
+  },
+  "small_airport": {
+    "endpoints": 1523,
+    "airports": 347,
+    "aircraft": 978,
+    "nn_accuracy": 0.953381483913329,
+    "nearest_accuracy": 0.9001969796454367,
+    "candidate_recall": 0.9927774130006566,
+    "nn_only_correct": 96,
+    "nearest_only_correct": 15
+  }
+}

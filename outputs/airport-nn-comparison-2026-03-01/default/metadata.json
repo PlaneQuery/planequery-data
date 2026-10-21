@@ -1,0 +1,14 @@
+{
+  "airport_identity": "ourairports_id",
+  "truth_field": "truth_id",
+  "prediction_field": "nn_id",
+  "nearest_field": "nearest_id",
+  "candidate_field": "candidate_ids",
+  "target_definition": "index of truth_id in candidate_ids",
+  "display_only_fields": [
+    "truth_ident",
+    "nn_ident",
+    "nearest_ident",
+    "candidate_idents"
+  ]
+}
