@@ -126,6 +126,11 @@ Use `--map-below` for a full-width map on a second row. For example,
 label for KCXO, then fills the remaining slots by endpoint proximity. Requested
 airports must be inside the viewport; this does not change flight assignments.
 
+`--compress-gaps` reduces message-free intervals longer than 30 minutes to twelve
+minutes of axis width. UTC timestamps remain unchanged, and `//` marks each
+compressed interval. Shorter gaps remain at their original scale; tracks are
+never connected across missing coverage. Map colors retain actual UTC time.
+
 ```sh
 .venv/bin/python src/visualization/adsb_track.py \
   --icao a5144d --date 2026-03-01 --source adsbx \
