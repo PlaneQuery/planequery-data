@@ -110,7 +110,7 @@ def plot_track(
         fig.subplots_adjust(left=.12, right=.88, bottom=.20, top=.73 if events and not map_events_only else .85)
         for ax, col, label, color in zip(axes[:2],
                 ["baro_altitude_ft", "ground_speed_kt"],
-                ["Barometric altitude\n(ft)", "Ground speed\n(kt)"], ["#0072B2", "#333333"]):
+                ["baro_altitude_ft", "ground_speed_kt"], ["#0072B2", "#333333"]):
             y = d[col].cast(pl.Float64).to_numpy()
             ax.scatter(t, y, color=color, s=2, linewidths=0, zorder=3)
             ax.set_ylabel(label, color=color)
@@ -121,12 +121,12 @@ def plot_track(
         if show_geometric:
             y = d['geom_altitude_ft'].cast(pl.Float64).to_numpy()
             primary.scatter(t, y, color='#882255', s=2, linewidths=0, zorder=3)
-            primary.set_ylabel('Altitude (ft)', color='.2')
+            primary.set_ylabel('baro_altitude_ft / geom_altitude_ft', color='.2')
             primary.tick_params(axis='y', colors='.2')
             legend.extend([
-                Line2D([], [], color='#0072B2', marker='.', ls='none', label='Barometric altitude'),
-                Line2D([], [], color='#882255', marker='.', ls='none', label='Geometric altitude'),
-                Line2D([], [], color='#333333', marker='.', ls='none', label='Ground speed'),
+                Line2D([], [], color='#0072B2', marker='.', ls='none', label='baro_altitude_ft'),
+                Line2D([], [], color='#882255', marker='.', ls='none', label='geom_altitude_ft'),
+                Line2D([], [], color='#333333', marker='.', ls='none', label='ground_speed_kt'),
             ])
         # A rug inside the shared plotting area carries state independently of
         # either numeric scale. Never extend it through a coverage gap.
