@@ -93,7 +93,7 @@ def plot_track(
         secondary = primary.twinx()
         axes = [primary, secondary]
         secondary.spines['right'].set_visible(True)
-        fig.subplots_adjust(left=.12, right=.88, bottom=.25, top=.73 if events else .85)
+        fig.subplots_adjust(left=.12, right=.88, bottom=.20, top=.73 if events else .85)
         for ax, col, label, color in zip(axes[:2],
                 ["baro_altitude_ft", "ground_speed_kt"],
                 ["Barometric altitude\n(ft)", "Ground speed\n(kt)"], ["#0072B2", "#333333"]):
@@ -122,7 +122,7 @@ def plot_track(
                               marker=marker, s=16, linewidths=.8, zorder=6,
                               transform=secondary.get_xaxis_transform())
             legend.append(Line2D([], [], color=color, lw=4, label=label))
-        fig.legend(handles=legend, loc='lower center', bbox_to_anchor=(.5, .065),
+        fig.legend(handles=legend, loc='lower center', bbox_to_anchor=(.5, .015),
                    ncol=2, frameon=False, fontsize=7)
         for i, (stamp, kind, airport) in enumerate(events):
             x = mdates.date2num(stamp)
@@ -145,7 +145,10 @@ def plot_track(
         primary.set_xlabel(f"Time (UTC), {day.isoformat()}")
         fig.suptitle(title or f"{icao.upper()} · ADS-B observations", y=.99, fontsize=11)
         if events:
-            fig.text(.12, .015, f"Dotted lines: {event_source}.", fontsize=7, color=".35")
+            secondary.text(.5, .98, f"Dotted lines: {event_source}.",
+                           transform=secondary.transAxes, ha='center', va='top',
+                           fontsize=7, color='.35',
+                           bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 2})
     return fig
 
 
