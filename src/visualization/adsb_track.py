@@ -64,6 +64,7 @@ def plot_track(
     basemap: bool = False, map_zoom: int = 11,
     map_events_only: bool = False, nearby_airport_limit: int = 8,
     map_below: bool = False, include_airports: tuple[str, ...] = (),
+    compress_gaps: bool = False,
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -179,6 +180,51 @@ def plot_track(
         axes[-1].xaxis.set_major_locator(locator)
         axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         primary.set_xlabel(f"Time (UTC), {day.isoformat()}")
+        if compress_gaps:
+            # Compress only long message-free intervals; all artists retain
+            # original UTC coordinates, including flight event annotations.
+            long_gaps = np.flatnonzero(np.diff(t) * 86400 > 30 * 60)
+            intervals = [(t[i], t[i + 1]) for i in long_gaps]
+            retained = 12 / 1440  # Leave visible separation between flights.
+
+            def forward(values):
+                values = np.asarray(values)
+                result = values.copy()
+                for left, right in intervals:
+                    result = result - np.clip((values - left) / (right - left), 0, 1) * (right - left - retained)
+                return result
+
+            compressed = []
+            removed = 0
+            for left, right in intervals:
+                compressed.append((left - removed, right - left - retained))
+                removed += right - left - retained
+
+            def inverse(values):
+                values = np.asarray(values)
+                result = values.copy()
+                for left, reduction in compressed:
+                    result = result + np.clip((values - left) / retained, 0, 1) * reduction
+                return result
+
+            for ax in axes:
+                ax.set_xscale('function', functions=(forward, inverse))
+            # Fixed UTC ticks exclude hidden-gap interiors, avoiding a pileup
+            # of clock labels in each compressed interval.
+            from matplotlib.ticker import FixedLocator
+            tick_start = np.ceil(mdates.date2num(start) * 48) / 48
+            ticks = np.arange(tick_start, mdates.date2num(end), 1 / 48)
+            ticks = np.round(ticks * 86400) / 86400
+            ticks = [tick for tick in ticks if not any(left < tick < right for left, right in intervals)]
+            primary.xaxis.set_major_locator(FixedLocator(ticks))
+            primary.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+            for left, right in intervals:
+                primary.text((left + right) / 2, 0, '//',
+                             transform=primary.get_xaxis_transform(),
+                             ha='center', va='center', fontsize=12, zorder=10,
+                             bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 1})
+            if intervals:
+                primary.set_xlabel(f"Time (UTC), {day.isoformat()} · // long gaps compressed")
         if map_events_only and events:
             secondary.legend(handles=[
                 Line2D([], [], color='#009E73', ls='--', lw=.9, label='Estimated takeoff'),
@@ -397,6 +443,7 @@ def main():
     parser.add_argument('--map-events-only', action='store_true', help='Label takeoff/landing airports on the map instead of the time series')
     parser.add_argument('--nearby-airport-limit', type=int, default=8, help='Maximum other airports to label on map')
     parser.add_argument('--map-below', action='store_true', help='Place a larger map below the time series')
+    parser.add_argument('--compress-gaps', action='store_true', help='Compress message gaps over 30 minutes to twelve minutes of axis width, preserving UTC labels')
     parser.add_argument('--include-airports', nargs='+', default=[], help='Prioritize these context-airport codes within the map viewport')
     parser.add_argument('--basemap', action='store_true', help='Use an OpenStreetMap basemap (downloads and caches viewport tiles); implies --show-map')
     parser.add_argument('--map-zoom', type=int, default=11, help='Basemap tile zoom (default 11)')
@@ -428,6 +475,7 @@ def main():
                      show_geometric=args.show_geometric, show_map=args.show_map,
                      map_events_only=args.map_events_only, nearby_airport_limit=args.nearby_airport_limit,
                      map_below=args.map_below, include_airports=tuple(c.upper() for c in args.include_airports),
+                     compress_gaps=args.compress_gaps,
                      basemap=args.basemap, map_zoom=args.map_zoom,
                      airports=pl.read_csv(args.airports, infer_schema_length=10000)
                      if args.show_map and args.airports.is_file() else None)
