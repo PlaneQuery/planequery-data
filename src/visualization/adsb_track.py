@@ -59,6 +59,7 @@ def plot_track(
     width: float = 7.2, height: float = 4.8, title: str | None = None,
     start: datetime | None = None, end: datetime | None = None,
     event_source: str = "supplied flight estimates",
+    show_geometric: bool = False,
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -69,6 +70,8 @@ def plot_track(
     if gap_seconds <= 0:
         raise ValueError("gap_seconds must be positive")
     d = prepare_observations(observations, icao, day)
+    if show_geometric and 'geom_altitude_ft' not in d.columns:
+        raise ValueError('Geometric overlay requires geom_altitude_ft in observations')
     start = start or d["time"].min()
     end = end or d["time"].max()
     if end <= start:
@@ -105,11 +108,22 @@ def plot_track(
             ax.tick_params(axis='y', colors=color)
             ax.margins(y=.12)
         primary.grid(axis="y", color=".9", lw=.5)
+        legend = []
+        if show_geometric:
+            y = d['geom_altitude_ft'].cast(pl.Float64).to_numpy()
+            primary.plot(tx, np.insert(y, breaks, np.nan), color='#882255', lw=1, ls='-.')
+            primary.scatter(t, y, color='#882255', s=2, linewidths=0, zorder=3)
+            primary.set_ylabel('Altitude (ft)', color='.2')
+            primary.tick_params(axis='y', colors='.2')
+            legend.extend([
+                Line2D([], [], color='#0072B2', lw=1, label='Barometric altitude'),
+                Line2D([], [], color='#882255', lw=1, ls='-.', label='Geometric altitude'),
+                Line2D([], [], color='#333333', lw=1, ls='--', label='Ground speed'),
+            ])
         # A rug inside the shared plotting area carries state independently of
         # either numeric scale. Never extend it through a coverage gap.
         state_styles = [(0, '#56B4E9', '|', 'on_ground=False'),
                         (1, '#D55E00', '|', 'on_ground=True')]
-        legend = []
         for value, color, marker, label in state_styles:
             mask = state == value
             segments = [[(t[i], .025), (t[i+1], .025)]
@@ -123,7 +137,7 @@ def plot_track(
                               transform=secondary.get_xaxis_transform())
             legend.append(Line2D([], [], color=color, lw=4, label=label))
         fig.legend(handles=legend, loc='lower center', bbox_to_anchor=(.5, .015),
-                   ncol=2, frameon=False, fontsize=7)
+                   ncol=3 if show_geometric else 2, frameon=False, fontsize=7)
         for i, (stamp, kind, airport) in enumerate(events):
             x = mdates.date2num(stamp)
             color = "#009E73" if kind == "takeoff" else "#CC79A7"
@@ -163,6 +177,7 @@ def main():
     parser.add_argument("--output", type=Path, help="Output stem; defaults to paper/figures/ICAO_DATE_SOURCE")
     parser.add_argument("--formats", nargs="+", default=["pdf", "svg", "png"], choices=["pdf", "svg", "png"])
     parser.add_argument("--gap-seconds", type=float, default=30)
+    parser.add_argument('--show-geometric', action='store_true', help='Overlay geometric altitude on the altitude axis')
     parser.add_argument("--width", type=float, default=7.2, help="Figure width in inches")
     parser.add_argument("--height", type=float, default=4.8)
     parser.add_argument("--start", type=time.fromisoformat, help="UTC HH:MM[:SS]")
@@ -174,7 +189,8 @@ def main():
         observations = pl.read_parquet(args.observations)
     else:
         from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
-        observations = read_adsb(args.date, source=ADSBSource(args.source), icaos=[args.icao.lower()])
+        observations = read_adsb(args.date, source=ADSBSource(args.source), icaos=[args.icao.lower()],
+                                 additional_columns=['geom_altitude_ft'] if args.show_geometric else None)
     flights = pl.read_parquet(args.flights) if args.flights else None
     if flights is None:
         warnings.warn("No --flights supplied: plotting observed flags without inferred airport/event labels.")
@@ -182,7 +198,8 @@ def main():
                      gap_seconds=args.gap_seconds, width=args.width, height=args.height,
                      start=datetime.combine(args.date, args.start) if args.start else None,
                      end=datetime.combine(args.date, args.end) if args.end else None,
-                     title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source)
+                     title=f"{args.icao.upper()} · {args.source.upper()}", event_source=args.event_source,
+                     show_geometric=args.show_geometric)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for fmt in args.formats:
         target = Path(f"{args.output}.{fmt}")

@@ -71,3 +71,21 @@ output stem. For a two-column paper:
 
 For notebooks, import `visualization.adsb_track.plot_track`; it accepts Polars
 observation and flight frames and returns a Matplotlib figure.
+
+## Altitude anomaly example
+
+Add `--show-geometric` to compare both altitude channels on the same left axis,
+keeping ground speed on the right. Neither channel is treated as ground truth.
+The AA216C example shows the entire departure/arrival context around its anomalous
+barometric reports (18:26:08–18:29:08 UTC). Flight markers are algorithm estimates;
+in particular, its estimated 18:20 departure precedes the observed ground-to-air
+transition around 18:26.
+
+```sh
+.venv/bin/python src/visualization/adsb_track.py \
+  --icao aa216c --date 2026-03-01 --source adsbx \
+  --observations tmp/altitude_anomaly_20260301/aa216c_observations.parquet \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
+  --event-source 'algorithm flight estimates' \
+  --show-geometric --start 18:20 --end 18:38
+```
