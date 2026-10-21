@@ -11,8 +11,8 @@ import polars as pl
 
 from airports.catalog import AirportCatalogView
 
-VERSION = 3
-POINTS, CANDIDATES, INPUT_SIZE = 32, 32, 24
+VERSION = 4
+POINTS, CANDIDATES, INPUT_SIZE = 32, 32, 20
 WINDOW_MS = 600_000
 COLUMNS = [
     "icao",
@@ -26,7 +26,7 @@ COLUMNS = [
     "on_ground",
 ]
 # Feature positions used by the model and the training augmentations.
-DISTANCE, ALTITUDE, ELAPSED, GAP = 4, 5, 10, 23
+DISTANCE, ALTITUDE, ELAPSED, MISSING_ALTITUDE, GAP = 4, 5, 10, 14, 19
 
 
 @dataclass
@@ -70,15 +70,7 @@ def _candidate_airports(matcher, lat, lon):
         )
         airports = [match.airport for match in matches]
 
-    # Reserve eight slots for larger airports behind dense private strips.
-    nearby = airports[:24]
-    larger = [a for a in airports[24:] if a.type != "small_airport"][:8]
-    larger_ids = {a.id for a in larger}
-    return (
-        nearby
-        + larger
-        + [a for a in airports[24:] if a.id not in larger_ids]
-    )[:CANDIDATES]
+    return airports[:CANDIDATES]
 
 
 def trajectories(
@@ -199,11 +191,6 @@ def relative_features(points, airports, boundary, landing):
         elapsed / 600,
         p[:, 7],
         elevation / 5000,
-        *[
-            np.array([a.type == t for a in airports])[:, None]
-            for t in ("small_airport", "medium_airport", "large_airport")
-        ],
-        np.array([a.scheduled_service == "yes" for a in airports])[:, None],
         float(landing),
         missing[:, 3],
         missing[:, 4],

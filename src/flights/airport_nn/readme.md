@@ -1,8 +1,9 @@
 # Airport neural network
 
-A 38,082-parameter GRU ranks nearby airports from each end of a segmented ADS-B
-flight. Inputs are airport-relative position, altitude, motion and airport
-characteristics. Aircraft/airport identities and reference labels are not inputs.
+A 37,314-parameter GRU ranks nearby airports from each end of a segmented ADS-B
+flight. Inputs are airport-relative position, altitude, motion and endpoint state.
+Airport size/type, scheduled-service status, aircraft/airport identities, and
+reference labels are not inputs.
 Training, evaluation and inference automatically prefer CUDA, then Apple MPS,
 and fall back to the CPU.
 
@@ -34,8 +35,8 @@ python -m flights.airport_nn.train \
 
 Training starts from random weights and refuses to overwrite a model directory.
 It saves `model.pt`, input provenance, epoch history and validation predictions.
-Checkpoint selection averages daily weighted cross entropy. Large/medium/small
-airports have loss weights 1/2/4.
+Checkpoint selection averages daily cross entropy. Every eligible endpoint has equal
+loss weight, regardless of airport size.
 Early stopping follows three epochs without improvement.
 
 Preparation independently segments observations before matching references by
@@ -45,7 +46,9 @@ without requiring ground/low-altitude observations near the labeled airport.
 Conflicting airport labels are excluded. This supervision is imperfect; measured
 agreement is not accuracy on all flights.
 
-Caches contain feature arrays, endpoint labels and a source manifest. Labels,
+Caches contain 20-column feature arrays, endpoint labels and a source manifest.
+Caches produced by earlier feature versions are incompatible and must be rebuilt.
+Labels,
 candidate membership, conflicts, targets and evaluation correctness all use the
 persistent OurAirports `id`; airport identifiers are retained only for display.
 Changed preparation inputs require a new cache directory. Candidate misses remain
@@ -90,11 +93,11 @@ Inference supports `adsblol`, `adsbx`, and `opensky`. It preserves the standard 
 and all fields except the two airport references (stable IDs and identifiers).
 Missing observations produce null airport references. Daily results use the
 canonical FlightSource layout under
-`data/flights/source=algorithm-nn/adsb_source=…/version=7/`. This version and
-`opensky-nn` version 2 use the 20-day learning-curve checkpoint by default.
+`data/flights/source=algorithm-nn/adsb_source=…/version=8/`. This version and
+`opensky-nn` version 3 use the size-free checkpoint by default.
 Custom checkpoints still require regenerating the corresponding flight cache.
 The default checkpoint is
-`data/models/flights_airport_nn/learning-curve-10-20/days-20/model.pt`.
+`data/models/flights_airport_nn/no-airport-size/model.pt`.
 
 For a provider comparison with the same ADS-B observation window, use:
 
@@ -184,7 +187,7 @@ endpoint. Original OpenSky airport labels are not model inputs. Flights without
 usable endpoint observations remain in the output with null airport references.
 
 Output is cached under
-`data/flights/source=opensky-nn/adsb_source=opensky/version=1/` with OpenSky
+`data/flights/source=opensky-nn/adsb_source=opensky/version=3/` with OpenSky
 observation provenance. As with `algorithm-nn`, regenerate flight files with
 `flights.cli` when changing checkpoints, then use evaluation's `--refresh-cache`.
 `--workers` parallelizes days for this source; each day's flight batches run

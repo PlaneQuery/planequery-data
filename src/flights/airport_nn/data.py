@@ -15,7 +15,13 @@ from airports.runtime import airport_catalog_for_date, ensure_airport_history
 from data_engineering.adsb.canonical import adsb_day_dir
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.utils import OUTPUT_DIR
-from flights.airport_nn.features import COLUMNS, clean_messages, pack, trajectories
+from flights.airport_nn.features import (
+    COLUMNS,
+    VERSION,
+    clean_messages,
+    pack,
+    trajectories,
+)
 from flights.flight_source import (
     flight_path,
     get_flights_for_catalog,
@@ -27,7 +33,6 @@ from flights.segmentation.algorithm import _segment_adsb_df
 from flights.workers import default_worker_count
 
 CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
-TYPES = ("large_airport", "medium_airport", "small_airport")
 METADATA_SCHEMA = {
     "date": pl.String,
     "icao": pl.String,
@@ -37,7 +42,6 @@ METADATA_SCHEMA = {
     "landing_time": pl.Datetime("ms"),
     "truth_id": pl.Int64,
     "truth_ident": pl.String,
-    "airport_type": pl.String,
     "source": pl.String,
     "label_conflict": pl.Boolean,
     "eligible": pl.Boolean,
@@ -63,6 +67,7 @@ def fingerprint(path):
 def references(day):
     """Read canonical BTS/SFDPS labels and flag metadata conflicts."""
     airport_catalog = airport_catalog_for_date(day)
+    # This defines the label domain; airport type is not stored as a model feature.
     valid_airport_ids = {
         airport.id
         for airport in airport_catalog.airports
@@ -241,7 +246,6 @@ def prepare_part(day, refs, path, parquet_root=None):
                 "landing_time": flight["landing_time"],
                 "truth_id": truth_id,
                 "truth_ident": truth_airport.ident if truth_airport else "",
-                "airport_type": truth_airport.type if truth_airport else "",
                 "source": "+".join(sorted(set(labels["source"]))),
                 "label_conflict": conflict,
                 "eligible": bool(
@@ -323,6 +327,7 @@ def prepare(days, output=CACHE, workers=None, batch_aircraft=256, parquet_root=N
             "parts": (len(aircraft) + batch_aircraft - 1) // batch_aircraft,
             "inputs": [fingerprint(p) for p in files],
             "airport_identity": "ourairports_id",
+            "feature_version": VERSION,
             "labels": "Stable OurAirports IDs from BTS or SFDPS; conflicts excluded",
             "segmentation": "Fresh native segments from this UTC day only; no cached airport guesses",
         }

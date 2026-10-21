@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import torch
 
-from flights.airport_nn.data import CACHE, TYPES
+from flights.airport_nn.data import CACHE
 from flights.airport_nn.model import load_model
 
 
@@ -20,7 +20,11 @@ def iter_parts(files):
     def read(path):
         with np.load(path, allow_pickle=False) as z:
             arrays = tuple(z[k] for k in ("x", "mask", "target", "eligible"))
-        return path, *arrays, pl.read_parquet(path.with_suffix(".parquet"))
+        return (
+            path,
+            *arrays,
+            pl.read_parquet(path.with_suffix(".parquet")),
+        )
 
     paths = iter(files)
     first = next(paths, None)
@@ -60,7 +64,7 @@ def files_for(root, days):
 
 def score(model, files, batch_size=128):
     device = next(model.parameters()).device
-    frames, loss_sum, weight_sum = [], 0.0, 0.0
+    frames, loss_sum, sample_count = [], 0.0, 0
     model.eval()
     with torch.inference_mode():
         for _, x, mask, targets, eligible, metadata in iter_parts(files):
@@ -88,20 +92,12 @@ def score(model, files, batch_size=128):
                         device=device,
                         dtype=torch.long,
                     )
-                    types = metadata["airport_type"].slice(start, len(index)).to_list()
-                    w = torch.tensor(
-                        [dict(zip(TYPES, (1.0, 2.0, 4.0))).get(t, 1.0) for t in types],
-                        device=device,
-                    )[torch.as_tensor(keep, device=device)]
                     loss_sum += float(
-                        (
-                            torch.nn.functional.cross_entropy(
-                                logits[keep], y, reduction="none"
-                            )
-                            * w
-                        ).sum()
+                        torch.nn.functional.cross_entropy(
+                            logits[keep], y, reduction="sum"
+                        )
                     )
-                    weight_sum += float(w.sum())
+                    sample_count += int(keep.sum())
             candidate_ids = metadata["candidate_ids"].to_list()
             candidate_idents = metadata["candidate_idents"].to_list()
             nn_ids = [
@@ -130,7 +126,7 @@ def score(model, files, batch_size=128):
             )
     return pl.concat(
         frames, how="diagonal_relaxed"
-    ), loss_sum / weight_sum if weight_sum else float("inf")
+    ), loss_sum / sample_count if sample_count else float("inf")
 
 
 def metrics(data):
@@ -151,13 +147,7 @@ def metrics(data):
         }
 
     eligible = data.filter(pl.col("eligible"))
-    return {
-        "primary": rates(eligible),
-        **{
-            name: rates(eligible.filter(pl.col("airport_type") == name))
-            for name in TYPES
-        },
-    }
+    return {"primary": rates(eligible)}
 
 
 def write_report(data, output):
