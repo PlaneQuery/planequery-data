@@ -200,6 +200,10 @@ def _assert_no_null_icaos(flights: pl.DataFrame, source_role: str) -> None:
     )
 
 
+def _format_minutes(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f} min"
+
+
 def _gold_icao_cohort(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
@@ -446,6 +450,19 @@ def evaluate(
                         f"({stats.takeoff_airport_id_null_pct:.2%}), "
                         f"landing {stats.landing_airport_id_null_count} "
                         f"({stats.landing_airport_id_null_pct:.2%})"
+                    )
+                    print(
+                        "Timing against gold: "
+                        "max endpoint error "
+                        f"median {_format_minutes(stats.median_max_endpoint_time_error_minutes)}, "
+                        f"p90 {_format_minutes(stats.p90_max_endpoint_time_error_minutes)}; "
+                        "both endpoints within "
+                        f"5m {stats.both_endpoints_within_5m_recall:.2%}, "
+                        f"15m {stats.both_endpoints_within_15m_recall:.2%}, "
+                        f"30m {stats.both_endpoints_within_30m_recall:.2%}; "
+                        "bias "
+                        f"takeoff {_format_minutes(stats.takeoff_time_bias_minutes)}, "
+                        f"landing {_format_minutes(stats.landing_time_bias_minutes)}"
                     )
                     if resolved_test_source.name == "opensky":
                         print(

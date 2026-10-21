@@ -151,6 +151,13 @@ def test_evaluate_keeps_gold_only_icaos_and_excludes_test_only(
         "airport_id_match_count": 1,
         "airport_id_incorrect_match_count": 0,
         "airport_id_match_pct": 1.0,
+        "median_max_endpoint_time_error_minutes": 0.0,
+        "p90_max_endpoint_time_error_minutes": 0.0,
+        "both_endpoints_within_5m_recall": 0.5,
+        "both_endpoints_within_15m_recall": 0.5,
+        "both_endpoints_within_30m_recall": 0.5,
+        "takeoff_time_bias_minutes": 0.0,
+        "landing_time_bias_minutes": 0.0,
     }
     stats = results.entries[0].stats
     assert isinstance(stats, EvaluationStats)
@@ -198,6 +205,13 @@ def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, ca
     assert stats.landing_airport_id_non_null_count == 1
     assert stats.takeoff_airport_id_non_null_match_pct == 1.0
     assert stats.landing_airport_id_non_null_match_pct == 1.0
+    assert stats.median_max_endpoint_time_error_minutes == 0.0
+    assert stats.p90_max_endpoint_time_error_minutes == 0.0
+    assert stats.both_endpoints_within_5m_recall == pytest.approx(2 / 3)
+    assert stats.both_endpoints_within_15m_recall == pytest.approx(2 / 3)
+    assert stats.both_endpoints_within_30m_recall == pytest.approx(2 / 3)
+    assert stats.takeoff_time_bias_minutes == 0.0
+    assert stats.landing_time_bias_minutes == 0.0
     report = (
         "Null airports in opensky (3 retained test flights): "
         "takeoff 1 (33.33%), landing 2 (66.67%)"
@@ -230,6 +244,9 @@ def test_opensky_null_airports_are_reported_and_cached(monkeypatch, tmp_path, ca
         assert row[f"{endpoint}_airport_id_null_pct"] == pytest.approx(count / 3)
         assert row[f"{endpoint}_airport_id_non_null_count"] == 1
         assert row[f"{endpoint}_airport_id_non_null_match_pct"] == 1.0
+    assert row["median_max_endpoint_time_error_minutes"] == 0.0
+    assert row["p90_max_endpoint_time_error_minutes"] == 0.0
+    assert row["both_endpoints_within_15m_recall"] == pytest.approx(2 / 3)
 
 
 def test_gold_icao_coverage_uses_unique_input_aircraft_before_matching(
