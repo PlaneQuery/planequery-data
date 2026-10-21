@@ -216,11 +216,12 @@ def plot_track(
             map_height = .65 if map_events_only else .53
             map_ax = fig.add_axes([.67, .20 if map_events_only else .26, .29, map_height])
             if map_below:
-                fig.set_size_inches(width, height + 4)
-                primary.set_position([.12, .66, .76, .27])
+                callouts = bool(events) and not map_events_only
+                fig.set_size_inches(width, height + (5.2 if callouts else 4))
+                primary.set_position([.12, .61, .76, .25] if callouts else [.12, .66, .76, .27])
                 secondary.set_position(primary.get_position())
-                fig.legends[0].set_bbox_to_anchor((.5, .555))
-                map_ax.set_position([.12, .14, .76, .36])
+                fig.legends[0].set_bbox_to_anchor((.5, .52 if callouts else .555))
+                map_ax.set_position([.12, .12, .76, .35] if callouts else [.12, .14, .76, .36])
             lon = d['lon'].cast(pl.Float64).to_numpy()
             lat = d['lat'].cast(pl.Float64).to_numpy()
             valid = np.isfinite(lon) & np.isfinite(lat)
@@ -240,8 +241,8 @@ def plot_track(
                         path_effects=[patheffects.Stroke(linewidth=3.5, foreground='white'),
                                       patheffects.Normal()])
             points = map_ax.scatter(px[valid], py[valid], c=t[valid], cmap='plasma' if basemap else 'viridis',
-                                    s=14 if map_events_only else 25,
-                                    edgecolors='none' if map_events_only else 'black' if basemap else 'white',
+                                    s=14 if map_events_only or map_below else 25,
+                                    edgecolors='none' if map_events_only or map_below else 'black' if basemap else 'white',
                                     linewidths=.5, zorder=3)
             points.set_gid('observed-map-positions')
             if airports is not None:
@@ -324,7 +325,7 @@ def plot_track(
                 map_ax.set_ylim(ylim)
                 map_ax.legend(handles=[
                     Line2D([], [], marker='*', color='#006633', ls='none', markersize=8,
-                           label='Flight airports' if map_events_only else 'Estimated endpoints'),
+                           label='Flight airports' if map_events_only or map_below else 'Estimated endpoints'),
                     Line2D([], [], marker='D', markerfacecolor='white', color='#404040',
                            ls='none', markersize=4, label='Other airports'),
                 ], loc='upper left', fontsize=6, framealpha=.95, borderpad=.4)
