@@ -14,7 +14,7 @@ from flights.flight_source import ADSBFlightSource
 
 DEFAULT_MODEL_PATH = (
     OUTPUT_DIR
-    / "data/models/flights_airport_nn/learning-curve-10-20/days-20/model.pt"
+    / "data/models/flights_airport_nn/no-airport-size/model.pt"
 )
 REUSED_FLIGHT_BATCH_SIZE = 2048
 
@@ -22,7 +22,7 @@ REUSED_FLIGHT_BATCH_SIZE = 2048
 @dataclass(frozen=True)
 class AlgorithmNNFlightSource(ADSBFlightSource):
     name: str = "algorithm-nn"
-    version: int = 7
+    version: int = 8
     model_path: Path = DEFAULT_MODEL_PATH
 
     def adsb_icao_batch_size(self) -> int:
