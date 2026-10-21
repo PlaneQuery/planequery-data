@@ -19,10 +19,11 @@ def test_sparse_track_preserves_missing_values_and_breaks_gaps():
         'lon': [-84.2, -84.19, -83.9, -83.89],
     })
     fig = plot_track(d, icao='ABC123', day=date(2026, 3, 1), show_map=True)
-    altitude = fig.axes[0].lines[0].get_ydata()
-    assert np.isnan(altitude[0])  # Ground altitude must not become zero.
-    assert altitude[1] == -50
-    assert np.isnan(altitude[2])  # No gap bridge.
+    altitude = fig.axes[0].collections[0].get_offsets()
+    assert np.ma.is_masked(altitude[0, 1])  # Ground altitude must not become zero.
+    assert altitude[1, 1] == -50
+    assert len(fig.axes[0].lines) == 0  # Measurements are points only.
+    assert len(fig.axes[1].lines) == 0
     strips = {c.get_gid(): c for c in fig.axes[1].collections if c.get_gid()}
     assert len(strips['on_ground=False'].get_segments()) == 0  # Gap is not filled.
     assert 'on_ground=unknown' not in strips
