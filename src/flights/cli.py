@@ -241,7 +241,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=ADSBSource,
         choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
-        help="ADS-B provider for flight sources or EUROCONTROL callsigns (default: adsblol).",
+        help=(
+            "ADS-B provider for flight sources, verified sources, or "
+            "EUROCONTROL callsigns (default: adsblol)."
+        ),
     )
     parser.add_argument(
         "--target-day-adsb",
@@ -291,8 +294,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     source = FLIGHT_SOURCES_BY_NAME[args.source]
     if isinstance(source, EurocontrolFlightSource):
         source = replace(source, callsign_source=args.adsb_source)
-    elif isinstance(source, VerifiedFlightSource) and isinstance(source.source, EurocontrolFlightSource):
-        source = VerifiedFlightSource(replace(source.source, callsign_source=args.adsb_source))
+    elif isinstance(source, VerifiedFlightSource):
+        source = VerifiedFlightSource(
+            source.source,
+            adsb_source=args.adsb_source,
+        )
     if args.mike_input is not None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)

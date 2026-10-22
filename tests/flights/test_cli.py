@@ -63,6 +63,24 @@ def test_eurocontrol_verified_cli_selects_matching_provider(monkeypatch, provide
     assert calls[0].enrichment_adsb_source() is expected
 
 
+@pytest.mark.parametrize("source_name", ["bts-verified", "sfdps-verified"])
+@pytest.mark.parametrize("provider", [ADSBSource.ADSBLOL, ADSBSource.OPENSKY])
+def test_verified_cli_selects_adsb_provider(monkeypatch, source_name, provider):
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "write_flights_range",
+        lambda *args, **kwargs: calls.append(args[2]),
+    )
+    cli.main([
+        "2024-06-01", "2024-06-02", source_name,
+        "--adsb-source", provider.value,
+    ])
+    assert calls[0].name == source_name
+    assert calls[0].adsb_source is provider
+    assert calls[0].enrichment_adsb_source() is provider
+
+
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
 @pytest.mark.parametrize("workers", [1, 4])
 def test_range_skips_flights_requiring_bad_adsblol_day(
