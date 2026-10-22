@@ -139,7 +139,7 @@ TABLES = {
         ("gold_flight_count",),
     ),
 }
-REFERENCE_ORDER = ("bts", "bts-verified", "sfdps", "sfdps-verified", "eurocontrol", "eurocontrol-verified")
+REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")
 REFERENCE_LABELS = {
     "bts": "BTS", "bts-verified": "BTS (verified)",
     "sfdps": "SFDPS", "sfdps-verified": "SFDPS (verified)",
@@ -310,6 +310,9 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         active = tuple(key for key in keys if key in by_key)
         if active:
             label = (title, subtitle) if active == keys else (by_key[active[0]].label,)
+            if title == "Segmentation":
+                abbreviations = {"precision": "P", "recall": "R", "f1": "F1"}
+                label = (title, " / ".join(abbreviations[key] for key in active) + " (%)")
             columns.append((label, active))
     width = len(columns) + 1
     providers = {row["adsb_src"] for row in rows if row["adsb_src"]}
@@ -358,7 +361,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
     note = TABLES["reference_summary"].note
     if len(providers) == 1:
         provider = next(iter(providers))
-        note += f" ADS-B-based methods use {provider_labels.get(provider, provider)} input."
+        note += f" {provider_labels.get(provider, provider)} ADS-B."
     elif show_provider:
         note += " Method suffixes identify the ADS-B provider."
     if len(windows) == 1:

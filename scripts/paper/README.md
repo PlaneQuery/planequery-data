@@ -1,8 +1,8 @@
 # Evaluation table for the paper
 
 The script now produces **one compact summary table**, grouped by reference
-flight dataset: BTS, BTS-verified, SFDPS, SFDPS-verified, Eurocontrol, and
-Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
+flight dataset: BTS, SFDPS, and Eurocontrol first, followed by BTS-verified,
+SFDPS-verified, and Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
 Only reference datasets present in the input are included.
 The published OpenSky flights row appears directly before Nearest/OpenSky and
 NN/OpenSky within each reference dataset, keeping the OpenSky comparisons together.
