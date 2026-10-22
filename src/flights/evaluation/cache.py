@@ -22,9 +22,10 @@ from flights.evaluation.models import (
     evaluation_stats_frame,
 )
 from flights.flight_source import ADSBFlightSource, FlightSource
+from flights.verified.source import VerifiedFlightSource
 
 
-EVALUATION_CACHE_VERSION = 9
+EVALUATION_CACHE_VERSION = 10
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
@@ -192,16 +193,17 @@ class EvaluationCacheKey:
             test_date,
         )
 
+        adsb_source_types = (ADSBFlightSource, VerifiedFlightSource)
         source_uses_adsb = isinstance(
             test_source,
-            ADSBFlightSource,
-        ) or isinstance(gold_source, ADSBFlightSource)
+            adsb_source_types,
+        ) or isinstance(gold_source, adsb_source_types)
         normalized_adsb_source: str | None = None
         adsb_parquet_version: int | None = None
         if source_uses_adsb and adsb_source is not None:
             normalized_adsb_source = adsb_source.value
             uses_canonical = any(
-                isinstance(source, ADSBFlightSource)
+                isinstance(source, adsb_source_types)
                 and source.flight_manifest(
                     airport_catalog.provenance, adsb_source
                 ).adsb_parquet_version is not None

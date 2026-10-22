@@ -23,7 +23,11 @@ from flights.evaluation.cache import (
     default_evaluation_cache_dir,
 )
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import ALGORITHM_NEAREST_SOURCE, BTS_SOURCE
+from flights.sources import (
+    ALGORITHM_NEAREST_SOURCE,
+    BTS_SOURCE,
+    BTS_VERIFIED_SOURCE,
+)
 
 
 TARGET_DATE = date(2026, 3, 1)
@@ -117,6 +121,32 @@ def test_default_cache_directory_is_under_output_dir(monkeypatch, tmp_path):
     assert evaluation.default_evaluation_cache().root == (
         tmp_path / "data" / "cache" / "evaluation"
     )
+
+
+def test_verified_source_cache_key_tracks_selected_adsb_provider(tmp_path):
+    cache = EvaluationCache(tmp_path / "cache")
+    catalog = _airport_catalog()
+
+    opensky = cache.make_key(
+        TARGET_DATE,
+        BTS_SOURCE,
+        BTS_VERIFIED_SOURCE,
+        ADSBSource.OPENSKY,
+        catalog,
+    )
+    adsblol = cache.make_key(
+        TARGET_DATE,
+        BTS_SOURCE,
+        BTS_VERIFIED_SOURCE,
+        ADSBSource.ADSBLOL,
+        catalog,
+    )
+
+    assert opensky.adsb_source == "opensky"
+    assert opensky.adsb_parquet_version == 4
+    assert adsblol.adsb_source == "adsblol"
+    assert adsblol.adsb_parquet_version == 6
+    assert cache.path_for(opensky) != cache.path_for(adsblol)
 
 
 def test_airport_exposure_reuses_cached_comparison(monkeypatch, tmp_path):
