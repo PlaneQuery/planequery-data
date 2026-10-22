@@ -33,6 +33,7 @@ from flights.sources import (
     BTS_SOURCE,
     FLIGHT_SOURCES_BY_NAME,
 )
+from flights.verified.source import VerifiedFlightSource
 from planequery_data.utils import current_commit_hash
 
 
@@ -40,6 +41,10 @@ DEFAULT_TARGET_DATE = date(2026, 3, 1)
 DEFAULT_ADSB_SOURCE = ADSBSource.ADSBLOL
 
 SourceInput = FlightSource | str
+
+
+def _uses_selected_adsb_source(source: FlightSource) -> bool:
+    return isinstance(source, (ADSBFlightSource, VerifiedFlightSource))
 
 
 def default_stats_path() -> Path:
@@ -104,10 +109,18 @@ def source_flights_reader(
     adsb_source: ADSBSource | None = DEFAULT_ADSB_SOURCE,
 ) -> Callable[[date], pl.DataFrame]:
     source = resolve_source(source)
-    if isinstance(source, ADSBFlightSource):
+    if _uses_selected_adsb_source(source):
         if adsb_source is None:
             raise ValueError(f"{source.name} requires an ADS-B source")
-        source_adsb = ADSBSource(adsb_source)
+        selected_adsb_source = ADSBSource(adsb_source)
+        if isinstance(source, VerifiedFlightSource):
+            source = VerifiedFlightSource(
+                source.source,
+                adsb_source=selected_adsb_source,
+            )
+            source_adsb = None
+        else:
+            source_adsb = selected_adsb_source
     else:
         source_adsb = None
 
@@ -131,8 +144,10 @@ def adsb_sources_for_evaluation(
     adsb_sources: Sequence[ADSBSource],
 ) -> list[ADSBSource | None]:
     """Return provider variants that can affect this source pair."""
-    if isinstance(resolve_source(test_source), ADSBFlightSource) or isinstance(
-        resolve_source(gold_source), ADSBFlightSource
+    if _uses_selected_adsb_source(
+        resolve_source(test_source)
+    ) or _uses_selected_adsb_source(
+        resolve_source(gold_source)
     ):
         return list(adsb_sources)
     return [None]
@@ -347,12 +362,12 @@ def evaluate(
             for selected_adsb_source in pair_adsb_sources:
                 test_adsb_source = (
                     selected_adsb_source
-                    if isinstance(resolved_test_source, ADSBFlightSource)
+                    if _uses_selected_adsb_source(resolved_test_source)
                     else None
                 )
                 gold_adsb_source = (
                     selected_adsb_source
-                    if isinstance(resolved_gold_source, ADSBFlightSource)
+                    if _uses_selected_adsb_source(resolved_gold_source)
                     else None
                 )
                 for target_date in dates:

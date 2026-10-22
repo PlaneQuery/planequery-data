@@ -6,7 +6,18 @@ from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.evaluation import evaluation
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import ADSBX_SOURCE, BTS_SOURCE, OPENSKY_NN_SOURCE, OPENSKY_SOURCE
+from flights.sources import (
+    ADSBX_SOURCE,
+    BTS_SOURCE,
+    BTS_VERIFIED_SOURCE,
+    EUROCONTROL_SOURCE,
+    EUROCONTROL_VERIFIED_SOURCE,
+    OPENSKY_NN_SOURCE,
+    OPENSKY_SOURCE,
+    SFDPS_SOURCE,
+    SFDPS_VERIFIED_SOURCE,
+)
+from flights.verified.source import VerifiedFlightSource
 
 
 def test_algorithm_nn_source_uses_checkpoint(
@@ -83,6 +94,49 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
         BTS_SOURCE,
         [ADSBSource.ADSBLOL, ADSBSource.ADSBX],
     ) == [None]
+
+
+@pytest.mark.parametrize(
+    ("verified_source", "wrapped_source"),
+    [
+        (BTS_VERIFIED_SOURCE, BTS_SOURCE),
+        (SFDPS_VERIFIED_SOURCE, SFDPS_SOURCE),
+        (EUROCONTROL_VERIFIED_SOURCE, EUROCONTROL_SOURCE),
+    ],
+)
+def test_verified_source_uses_evaluation_adsb_source(
+    monkeypatch,
+    verified_source,
+    wrapped_source,
+):
+    day = date(2026, 3, 1)
+    calls = []
+
+    def read_flights(source, target_date, adsb_source):
+        calls.append((source, target_date, adsb_source))
+        return flights_to_flights_df([])
+
+    monkeypatch.setattr(evaluation, "get_flights", read_flights)
+
+    evaluation.source_flights_reader(
+        verified_source,
+        ADSBSource.OPENSKY,
+    )(day)
+
+    configured_source, target_date, source_adsb = calls[0]
+    assert isinstance(configured_source, VerifiedFlightSource)
+    if wrapped_source is EUROCONTROL_SOURCE:
+        assert configured_source.source.callsign_source is ADSBSource.OPENSKY
+    else:
+        assert configured_source.source is wrapped_source
+    assert configured_source.adsb_source is ADSBSource.OPENSKY
+    assert target_date == day
+    assert source_adsb is None
+    assert evaluation.adsb_sources_for_evaluation(
+        BTS_SOURCE,
+        verified_source,
+        [ADSBSource.ADSBLOL, ADSBSource.OPENSKY],
+    ) == [ADSBSource.ADSBLOL, ADSBSource.OPENSKY]
 
 
 @pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE, OPENSKY_NN_SOURCE])

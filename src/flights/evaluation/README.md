@@ -113,6 +113,11 @@ python -m flights.evaluation.evaluation \
   --airport-nn-training "$PWD/outputs/airport-nn-february-2026-10-21-days-20/training.json"
 ```
 
+For verified test or gold sources, `--adsb-source` selects the ADS-B provider
+used during verification (and during EUROCONTROL callsign enrichment), as well
+as the provider used by any ADS-B-derived comparison source. Each provider uses
+separate flight and evaluation cache entries.
+
 Use the manifest belonging to the evaluated checkpoint (selected separately
 with `--airport-nn-model` when needed). Only Parquet metadata files explicitly
 listed in `inputs["train"]` are read. A relative manifest argument resolves under
