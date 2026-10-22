@@ -2,8 +2,9 @@
 
 ## Airport NN candidate input figure
 
-`airport_nn_candidate_view.py` visualizes six landing candidates for A96262 on
-April 1, 2026, using the ADS-B Exchange extract already saved for the paper.
+`airport_nn_candidate_view.py` visualizes six takeoff candidates for A96262's
+departure from US-8169 on April 1, 2026, using the ADS-B Exchange extract
+already saved for the paper.
 It calls the production endpoint sampler and feature builder, with identical
 plot scales across airports. It reads the existing airport-history snapshot
 without refreshing it and never downloads data.
@@ -17,8 +18,10 @@ are saved to `paper/figures/a96262_airport_nn_inputs/`. The source extract omits
 heading and vertical rate, so the figure displays the available spatial inputs
 and does not compute NN scores. The figure includes KCXO and highlights US-8169
 as the correct airport, without displaying distance-rank numbers.
-US-8169 is the manually reviewed destination inferred from the next departure;
-the plotted endpoint is the last observation, not an observed touchdown.
+The six nearest candidates include US-8169 and KCXO. The figure uses the first
+ten minutes of the departure segment, sampled by the production feature builder.
+The first observation is marked with an X; color indicates elapsed time.
+Outputs use the basename `a96262_airport_nn_candidate_inputs`.
 
 ## Training versus nontraining airport accuracy
 
