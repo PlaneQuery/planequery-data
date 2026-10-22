@@ -1,7 +1,8 @@
 """Export daily evaluation CSVs as numeric CSVs and booktabs/longtable LaTeX.
 
 Run with --help; see scripts/paper/README.md for metric definitions and examples.
-Uses only the standard library. No evaluation or network requests are made.
+Reads the evaluation cache by default, or explicit CSV inputs. No evaluations
+or network requests are made. CSV mode uses only the standard library.
 """
 from __future__ import annotations
 
@@ -213,8 +214,8 @@ def number(value: Any) -> Any:
     return result
 
 
-def load_rows(paths: list[Path]) -> list[dict[str, Any]]:
-    """Discard macro-average rows; reject conflicting repeats of a daily comparison."""
+def load_rows(paths: list[Path], *, include: dict[str, set[str]] | None = None) -> list[dict[str, Any]]:
+    """Filter daily rows, then deduplicate and reject conflicting selected results."""
     unique: dict[tuple[str, ...], dict[str, Any]] = {}
     for path in paths:
         with path.open(newline="", encoding="utf-8-sig") as stream:
@@ -234,11 +235,41 @@ def load_rows(paths: list[Path]) -> list[dict[str, Any]]:
                 row["target_day_adsb"] = raw.get("target_day_adsb", "unknown").lower()
                 if row["target_day_adsb"] not in {"true", "false", "unknown"}:
                     raise ValueError(f"{path}:{line}: invalid target_day_adsb")
+                if any(row[column] not in values for column, values in (include or {}).items()):
+                    continue
                 key = row_key(row)
                 if key in unique and unique[key] != row:
                     raise ValueError(f"Conflicting daily rows for {key}; select one evaluation run.")
                 unique[key] = row
     return sorted(unique.values(), key=row_key)
+
+
+def load_cache_rows(cache: Any, include: dict[str, set[str]], policy: str = "latest") -> tuple[list[dict[str, Any]], dict]:
+    """Read typed stats through the evaluator's cache API, without evaluating flights."""
+    entries = cache.find_stats(
+        test_source=sorted(include["test_src"]) if "test_src" in include else None,
+        gold_source=sorted(include["gold_src"]) if "gold_src" in include else None,
+        test_dates=[date.fromisoformat(day) for day in sorted(include["test_date"])] if "test_date" in include else None,
+    )
+    selected = {}
+    for entry in entries:
+        row = entry.stats.to_row()
+        row["target_day_adsb"] = str(row["target_day_adsb"]).lower()
+        row["adsb_src"] = row["adsb_src"] or ""
+        if any(row[column] not in values for column, values in include.items()):
+            continue
+        key = row_key(row)
+        if key in selected:
+            previous = selected[key][1]
+            if policy == "error":
+                raise ValueError(f"Multiple cached runs for {key}: {previous.path} and {entry.path}. Use --cache-policy latest or supply an explicit evaluation CSV.")
+            if previous.created_at == entry.created_at and previous.path != entry.path:
+                raise ValueError(f"Cached runs have the same creation time for {key}; supply an explicit evaluation CSV.")
+            if previous.created_at > entry.created_at:
+                continue
+        selected[key] = (row, entry)
+    return ([selected[key][0] for key in sorted(selected)],
+            {key: selected[key][1] for key in selected})
 
 
 def csv_column(column: str) -> str:
@@ -428,31 +459,38 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "csvs", nargs="*", type=Path,
-        help="CSV filenames relative to $OUTPUT_DIR/data/experiments/comparison, or absolute paths.",
+        help="Optional CSV filenames relative to $OUTPUT_DIR/data/experiments/comparison, or absolute paths. Omit to read the evaluation cache.",
     )
+    parser.add_argument("--cache-dir", type=Path,
+                        help="Evaluation cache root (default: $OUTPUT_DIR/data/cache/evaluation). Used when no CSVs are supplied.")
+    parser.add_argument("--cache-policy", choices=("latest", "error"), default="latest",
+                        help="How to handle multiple cached runs per comparison: newest creation time (default), or fail.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
                         help="Output parent directory; all files go in its <prefix>/ subfolder. Default: paper/tables.")
     parser.add_argument("--prefix", help="Subfolder, filename, and LaTeX-label prefix; default: evaluation_<date or range>.")
-    parser.add_argument("--tables", nargs="+", choices=TABLES, default=["reference_summary"],
+    parser.add_argument("--tables", nargs="+", choices=TABLES, action="extend",
                         help="Default: one compact reference_summary table. Other topics are optional.")
     parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD",
                         help="Choose a date for a reference family, including its verified variant. Repeat as needed; default is latest shared date.")
     all_metrics = sorted({metric.key for table in TABLES.values() for metric in table.metrics})
-    parser.add_argument("--metrics", nargs="+", choices=all_metrics,
+    parser.add_argument("--metrics", nargs="+", choices=all_metrics, action="extend",
                         help="Restrict tables to these metric keys; paired percentages stay with counts.")
     parser.add_argument("--list-metrics", action="store_true")
     for flag in ("test-source", "gold-source", "adsb-source", "date"):
-        parser.add_argument("--" + flag, nargs="+", help="Keep only these values.")
+        note = " Use 'none' for published datasets without an ADS-B provider." if flag == "adsb-source" else ""
+        parser.add_argument("--" + flag, nargs="+", action="extend",
+                            help="Keep only these values; accepts multiple values or repeated options." + note)
     parser.add_argument("--target-day-adsb", choices=("true", "false", "unknown"), default="false")
     parser.add_argument("--require-complete", action="store_true", help="Fail if selected metrics are unavailable.")
     parser.add_argument("--decimals", type=int, default=2, help="LaTeX decimals (CSV retains numeric precision).")
     args = parser.parse_args(argv)
+    args.tables = args.tables or ["reference_summary"]
     if args.list_metrics:
         for name, table in TABLES.items():
             print(name + ":\n" + "\n".join(f"  {metric.key}: {' '.join(metric.label.splitlines())}" for metric in table.metrics))
         return 0
-    if not args.csvs:
-        parser.error("Supply at least one evaluation CSV.")
+    if args.csvs and args.cache_dir:
+        parser.error("Use either explicit CSV inputs or --cache-dir, not both.")
     if not 0 <= args.decimals <= 6:
         parser.error("--decimals must be between 0 and 6.")
     try:
@@ -463,14 +501,27 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("Set OUTPUT_DIR to use relative CSV filenames, or supply absolute paths.")
             comparison_dir = Path(output_root).expanduser() / "data/experiments/comparison"
             args.csvs = [path if path.is_absolute() else comparison_dir / path for path in args.csvs]
-        rows = load_rows(args.csvs)
-        for column, values in (("test_src", args.test_source), ("gold_src", args.gold_source),
-                               ("adsb_src", args.adsb_source), ("test_date", args.date),
-                               ("target_day_adsb", [args.target_day_adsb] if args.target_day_adsb else None)):
+        include = {"target_day_adsb": {args.target_day_adsb}}
+        for column, option in (("test_src", "test_source"), ("gold_src", "gold_source"),
+                               ("adsb_src", "adsb_source"), ("test_date", "date")):
+            values = getattr(args, option)
             if values:
-                rows = [row for row in rows if row[column] in values]
+                include[column] = {"" if column == "adsb_src" and value == "none" else value for value in values}
+        cache_entries = {}
+        cache_root = None
+        if args.csvs:
+            rows = load_rows(args.csvs, include=include)
+        else:
+            if not os.environ.get("OUTPUT_DIR"):
+                raise ValueError("Set OUTPUT_DIR to use the evaluation cache, as required by the evaluation setup, or supply absolute CSV paths.")
+            from flights.evaluation.cache import EvaluationCache
+            cache = EvaluationCache(args.cache_dir.expanduser() if args.cache_dir else None)
+            cache_root = str(cache.root.resolve())
+            if not cache.root.is_dir():
+                raise ValueError(f"Evaluation cache not found: {cache.root}. Supply existing evaluation CSVs instead.")
+            rows, cache_entries = load_cache_rows(cache, include, args.cache_policy)
         if not rows:
-            raise ValueError("No daily rows remain after filtering (average rows are excluded).")
+            raise ValueError("No matching daily results. Check the source/date selections or supply existing evaluation CSVs; this script does not run missing evaluations.")
         if "reference_summary" in args.tables or args.reference_date:
             rows = select_reference_dates(rows, args.reference_date)
         rows.sort(key=reference_sort_key)
@@ -488,10 +539,21 @@ def main(argv: list[str] | None = None) -> int:
         outputs = export_tables(rows, output_dir, prefix, selected, args.decimals)
         manifest = output_dir / f"{prefix}_manifest.json"
         manifest.write_text(json.dumps({
+            "input_mode": "csv" if args.csvs else "evaluation_cache",
             "inputs": [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in args.csvs],
+            "cache_root": cache_root,
+            "cache_policy": args.cache_policy if cache_root else None,
+            "cache_entries": [
+                {"path": str(entry.path.resolve()), "created_at": entry.created_at.isoformat(),
+                 "key": entry.key.to_dict(),
+                 "stats_sha256": hashlib.sha256((entry.path / "stats.parquet").read_bytes()).hexdigest()}
+                for row in rows if (entry := cache_entries.get(row_key(row))) is not None
+            ],
             "daily_rows": len(rows), "average_rows": "excluded; no cross-day aggregation",
             "csv_percent_scale": "0-100", "latex_decimals": args.decimals,
-            "filters": {key: getattr(args, key) for key in ("test_source", "gold_source", "adsb_source", "date", "target_day_adsb")},
+            "filters": {key: getattr(args, key) for key in (
+                "test_source", "gold_source", "adsb_source", "date", "target_day_adsb",
+            )},
             "reference_dates": {row["gold_src"]: row["test_date"] for row in rows} if "reference_summary" in selected or args.reference_date else None,
             "metrics": {name: [metric.key for metric in metrics] for name, metrics in selected.items()},
             "definitions": {name: TABLES[name].note for name in selected},
