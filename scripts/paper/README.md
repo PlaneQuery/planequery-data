@@ -27,7 +27,8 @@ Relative CSV filenames resolve under `$OUTPUT_DIR/data/experiments/comparison`.
 Absolute paths also work. Put filenames before options that accept multiple
 values. The script uses only the standard library and does not run evaluations.
 
-Outputs go to `paper/figures/evaluation_tables/` in the repository:
+All outputs go to `paper/tables/<prefix>/` in the repository. For the command
+above, the folder is `paper/tables/evaluation_target_day_adsb_false/`:
 
 - `<prefix>_reference_summary.latex`: the single paper table.
 - `<prefix>_reference_summary.csv`: separate numeric columns, including exact
@@ -83,9 +84,10 @@ match. Without it, missing metrics produce a warning, blank CSV cells, and
 dashes in LaTeX. A dataset's ICAO count must agree across its methods to be
 shown once in the heading.
 
-`--decimals` controls LaTeX rounding (default 2). `--prefix` names the files and
-labels; without it, the prefix contains the selected date range. `--output-dir`
-changes the destination. `--metrics` restricts displayed metrics;
+`--decimals` controls LaTeX rounding (default 2). `--prefix` names the subfolder,
+files, and labels; without it, the prefix contains the selected date range.
+`--output-dir` changes the parent directory; the `<prefix>/` subfolder is always
+created beneath it. `--metrics` restricts displayed metrics;
 `--list-metrics` lists available keys. CSV denominator counts are preserved.
 
 Optional detailed tables remain accessible with
@@ -101,10 +103,10 @@ The JOAS class already loads `booktabs`. Add to the preamble:
 \usepackage{longtable}
 ```
 
-After copying the generated summary into the paper project's `figures/tables/`:
+After copying the generated prefix folder into the paper project's `tables/`:
 
 ```latex
-\input{figures/tables/evaluation_target_day_adsb_false_reference_summary.latex}
+\input{tables/evaluation_target_day_adsb_false/evaluation_target_day_adsb_false_reference_summary.latex}
 ```
 
 Reference it with:

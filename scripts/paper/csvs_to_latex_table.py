@@ -19,7 +19,7 @@ import re
 import sys
 from typing import Any
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "paper/figures/evaluation_tables"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "paper/tables"
 METADATA = ("test_date", "gold_src", "adsb_src", "target_day_adsb", "test_src")
 
 
@@ -430,8 +430,9 @@ def main(argv: list[str] | None = None) -> int:
         "csvs", nargs="*", type=Path,
         help="CSV filenames relative to $OUTPUT_DIR/data/experiments/comparison, or absolute paths.",
     )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--prefix", help="Filename/LaTeX-label prefix; default: evaluation_<date or range>.")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
+                        help="Output parent directory; all files go in its <prefix>/ subfolder. Default: paper/tables.")
+    parser.add_argument("--prefix", help="Subfolder, filename, and LaTeX-label prefix; default: evaluation_<date or range>.")
     parser.add_argument("--tables", nargs="+", choices=TABLES, default=["reference_summary"],
                         help="Default: one compact reference_summary table. Other topics are optional.")
     parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD",
@@ -483,8 +484,9 @@ def main(argv: list[str] | None = None) -> int:
         if not selected:
             raise ValueError("No metrics selected for the requested tables.")
         warnings = prepare_rows(rows, selected, args.require_complete)
-        outputs = export_tables(rows, args.output_dir, prefix, selected, args.decimals)
-        manifest = args.output_dir / f"{prefix}_manifest.json"
+        output_dir = args.output_dir.expanduser() / prefix
+        outputs = export_tables(rows, output_dir, prefix, selected, args.decimals)
+        manifest = output_dir / f"{prefix}_manifest.json"
         manifest.write_text(json.dumps({
             "inputs": [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in args.csvs],
             "daily_rows": len(rows), "average_rows": "excluded; no cross-day aggregation",
