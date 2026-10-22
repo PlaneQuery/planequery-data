@@ -73,7 +73,6 @@ def main():
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "axes.spines.top": False, "axes.spines.right": False, "axes.edgecolor": "#aeb6bf", "axes.labelcolor": "#344054", "xtick.color": "#667085", "ytick.color": "#667085", "svg.fonttype": "none"})
     plt.rcParams["pdf.fonttype"] = 42
     fig = plt.figure(figsize=(14.5, 9.5), facecolor="white")
-    fig.text(.06, .96, "Airport NN · spatial inputs", fontsize=21, weight="bold", color="#182230")
     fig.text(.06, .925, f"A96262  ·  ADS-B Exchange  ·  {end:%Y-%m-%d}  ·  {times[-1]:%H:%M:%S}-{times[0]:%H:%M:%S} UTC", fontsize=11.5, color="#475467")
     grid = fig.add_gridspec(2, 3, left=.065, right=.97, bottom=.17, top=.855, hspace=.45, wspace=.26)
     cmap, norm = plt.get_cmap("plasma"), Normalize(-10, 0)
@@ -109,7 +108,7 @@ def main():
     cb.ax.tick_params(labelsize=9)
     fig.legend(handles=[Line2D([], [], marker="*", linestyle="", color="#087f72", markersize=13, label="Airport"), Line2D([], [], marker="X", linestyle="", color="#f3ed27", markeredgecolor="#182230", markersize=9, label="Last observation")], loc="center", bbox_to_anchor=(.745, .075), ncol=2, frameon=False, fontsize=10)
     for extension in ("png", "svg", "pdf"):
-        fig.savefig(args.output / f"airport_nn_candidate_inputs.{extension}", dpi=180, facecolor="white")
+        fig.savefig(args.output / f"a96262_airport_nn_candidate_inputs.{extension}", dpi=180, facecolor="white")
     plt.close(fig)
     manifest = dict(feature_version=VERSION, observation_path=str(args.observations.resolve()), observation_sha256=sha256(args.observations), flight_path=str(args.flights.resolve()), flight_sha256=sha256(args.flights), catalog=asdict(catalog.provenance), raw_window_observations=window.height, sampled_observations=len(times), candidates=len(candidates), selected=[endpoint.candidate_idents[i] for i in selected], missing_source_columns=absent, model_scores_computed=False, landing_label_provenance="Reviewed destination matched to next departure; touchdown unobserved", endpoint_boundary=str(end), note="Production feature builder and sampler; unavailable heading/rate inputs are not displayed or scored. Physical units decoded from normalized float32 inputs.")
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str) + "\n")
