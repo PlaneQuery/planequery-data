@@ -139,6 +139,17 @@ TABLES = {
         ("gold_flight_count",),
     ),
 }
+# These metric families depend on the flight segmentation, not on the airport
+# assignment method. Nearest and NN share them for the same ADS-B input.
+# Airport-dependent metrics (including fully-correct flight scores) stay separate.
+SHARED_FLIGHT_METRICS = {
+    column
+    for name in ("segmentation", "aircraft_coverage", "timing_accuracy")
+    for column in (
+        *TABLES[name].denominators,
+        *(column for metric in TABLES[name].metrics for column in metric.columns),
+    )
+}
 REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")
 REFERENCE_LABELS = {
     "bts": "BTS", "bts-verified": "BTS (verified)",
@@ -336,7 +347,6 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         r"\bottomrule", r"\endlastfoot",
     ]
     windows = {row["target_day_adsb"] for row in rows}
-    shared_keys = {"gold_flight_count", "test_flight_count", "precision", "recall", "f1"}
     has_shared_cells = False
     for context, group in groupby(rows, key=lambda row: (row["gold_src"], row["test_date"], row["target_day_adsb"])):
         source, day, window = context
@@ -358,7 +368,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
                 continue
             shared = {
                 column_index for column_index, (_, keys) in enumerate(columns)
-                if set(keys) <= shared_keys
+                if set(keys) <= SHARED_FLIGHT_METRICS
                 and all(nearest.get(key) is not None and nearest[key] == nn.get(key) for key in keys)
             }
             if shared:
