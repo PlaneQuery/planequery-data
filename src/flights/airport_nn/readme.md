@@ -39,6 +39,20 @@ Checkpoint selection averages daily cross entropy. Every eligible endpoint has e
 loss weight, regardless of airport size.
 Early stopping follows three epochs without improvement.
 
+To sweep **1, 2, 5, 10, 15, 20 and 24 training days**, run from the repository
+root with a fresh output directory:
+
+```bash
+python scripts/train_sweep.py --output outputs/airport-nn-sweep-24
+```
+
+The sweep uses the configured February cache (override with `--cache`). Each
+model trains on February 1 through N and validates on **February 25–27** so all
+seven sizes share the same held-out dates. This differs from the standalone
+trainer's split above; rerun smaller sizes with this split for a comparable curve.
+Each `days-NN/` directory contains `history.json`, `model.pt`, `training.json`
+and per-day validation reports in `validation/YYYY-MM-DD/metrics.json`.
+
 Preparation independently segments observations before matching references by
 aircraft and time, allowing 15 minutes at each end. Ambiguous matches, overlapping
 references and cross-UTC-day flights are excluded. BTS and SFDPS labels are accepted
