@@ -32,7 +32,7 @@ from flights.providers.sfdps import SFDPSFlightSource
 from flights.segmentation.algorithm import _segment_adsb_df
 from flights.workers import default_worker_count
 
-CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
+CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026-10-21"
 METADATA_SCHEMA = {
     "date": pl.String,
     "icao": pl.String,
