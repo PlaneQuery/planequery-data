@@ -110,7 +110,7 @@ python -m flights.evaluation.evaluation \
   --gold-source sfdps bts-verified \
   --adsb-source adsblol \
   --test-dates 2026-03-01 \
-  --airport-nn-training data/models/flights_airport_nn/no-airport-size/training.json
+  --airport-nn-training "$PWD/outputs/airport-nn-february-2026-10-21-days-20/training.json"
 ```
 
 Use the manifest belonging to the evaluated checkpoint (selected separately

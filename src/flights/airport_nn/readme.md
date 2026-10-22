@@ -93,11 +93,11 @@ Inference supports `adsblol`, `adsbx`, and `opensky`. It preserves the standard 
 and all fields except the two airport references (stable IDs and identifiers).
 Missing observations produce null airport references. Daily results use the
 canonical FlightSource layout under
-`data/flights/source=algorithm-nn/adsb_source=…/version=8/`. This version and
-`opensky-nn` version 3 use the size-free checkpoint by default.
+`data/flights/source=algorithm-nn/adsb_source=…/version=9/`. This version and
+`opensky-nn` version 4 use the February 2026 20-day checkpoint by default.
 Custom checkpoints still require regenerating the corresponding flight cache.
 The default checkpoint is
-`data/models/flights_airport_nn/no-airport-size/model.pt`.
+`outputs/airport-nn-february-2026-10-21-days-20/model.pt`.
 
 For a provider comparison with the same ADS-B observation window, use:
 
@@ -187,7 +187,7 @@ endpoint. Original OpenSky airport labels are not model inputs. Flights without
 usable endpoint observations remain in the output with null airport references.
 
 Output is cached under
-`data/flights/source=opensky-nn/adsb_source=opensky/version=3/` with OpenSky
+`data/flights/source=opensky-nn/adsb_source=opensky/version=4/` with OpenSky
 observation provenance. As with `algorithm-nn`, regenerate flight files with
 `flights.cli` when changing checkpoints, then use evaluation's `--refresh-cache`.
 `--workers` parallelizes days for this source; each day's flight batches run

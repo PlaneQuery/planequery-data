@@ -7,14 +7,12 @@ from pathlib import Path
 import polars as pl
 
 from airports.catalog import AirportCatalogView
-from data_engineering.utils import OUTPUT_DIR
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.flight_source import ADSBFlightSource
 
 
-DEFAULT_MODEL_PATH = (
-    OUTPUT_DIR
-    / "data/models/flights_airport_nn/no-airport-size/model.pt"
+DEFAULT_MODEL_PATH = Path(
+    "outputs/airport-nn-february-2026-10-21-days-20/model.pt"
 )
 REUSED_FLIGHT_BATCH_SIZE = 2048
 
@@ -22,7 +20,7 @@ REUSED_FLIGHT_BATCH_SIZE = 2048
 @dataclass(frozen=True)
 class AlgorithmNNFlightSource(ADSBFlightSource):
     name: str = "algorithm-nn"
-    version: int = 8
+    version: int = 9
     model_path: Path = DEFAULT_MODEL_PATH
 
     def adsb_icao_batch_size(self) -> int:
