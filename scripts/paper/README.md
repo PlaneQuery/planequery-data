@@ -83,9 +83,11 @@ once in its note and uses short row labels such as `OpenSky`, `Nearest`, and `NN
 When multiple providers are present, the column becomes `Method / ADS-B` and
 provider suffixes remain on the rows. CSV metadata always retains the provider.
 
-For adjacent Nearest and NN rows using the same provider, identical flight totals
-and segmentation scores share cells spanning both rows. Airport results remain
-separate. Cells merge only when the underlying selected values match exactly,
+For adjacent Nearest and NN rows using the same provider, all metrics from the
+segmentation, aircraft-coverage, and timing families can share cells spanning
+both rows. This covers counts, precision/recall/F1, zero-flight ICAOs, and timing
+errors or threshold recalls. Airport-dependent metrics stay separate, including
+any scores requiring correct airports. Cells merge only when the underlying selected values match exactly,
 not merely after rounding; missing values are not merged. CSV rows remain complete.
 
 Counts are not repeated next to every percentage. Recover matched flights as
