@@ -7,25 +7,50 @@ Only reference datasets present in the input are included.
 The published OpenSky flights row appears directly before Nearest/OpenSky and
 NN/OpenSky within each reference dataset, keeping the OpenSky comparisons together.
 
+With `OUTPUT_DIR` set as for evaluation, read the existing evaluation cache:
+
 ```bash
 .venv/bin/python scripts/paper/csvs_to_latex_table.py \
-  2026-10-22_02-01-25-644740_ae715f2f_flights_evaluation.csv \
-  2026-10-22_02-13-57-160131_ae715f2f_flights_evaluation.csv \
-  2026-10-22_02-55-08-101981_ae715f2f_flights_evaluation.csv \
-  2026-10-22_03-59-47-862124_ae715f2f_flights_evaluation.csv \
-  2026-10-22_04-29-08-704468_ae715f2f_flights_evaluation.csv \
-  2026-10-22_04-30-03-530001_ae715f2f_flights_evaluation.csv \
-  2026-10-22_04-38-11-779872_ae715f2f_flights_evaluation.csv \
+  --test-source opensky algorithm-nearest algorithm-nn \
+  --adsb-source opensky none \
+  --gold-source bts bts-verified sfdps sfdps-verified eurocontrol eurocontrol-verified \
   --reference-date bts=2026-03-01 \
   --reference-date sfdps=2026-03-01 \
   --reference-date eurocontrol=2024-06-01 \
+  --target-day-adsb false \
   --require-complete \
   --prefix evaluation_target_day_adsb_false
 ```
 
-Relative CSV filenames resolve under `$OUTPUT_DIR/data/experiments/comparison`.
-Absolute paths also work. Put filenames before options that accept multiple
-values. The script uses only the standard library and does not run evaluations.
+No CSV filenames are needed. The script calls `EvaluationCache.find_stats()`
+from the evaluation setup, using `$OUTPUT_DIR/data/cache/evaluation`. It reads
+only entries supported by the current evaluation cache version, including the
+cache reader's existing validity checks. It never runs evaluations or modifies
+cache files. Missing results cause an error if nothing matches; individual
+uncached source/date combinations are not invented or recomputed.
+
+Use `--cache-dir /path/to/evaluation` to override the cache root. Cache mode
+requires the project's Python environment and `OUTPUT_DIR`, just like the
+evaluator. Multiple cached configurations for the same date/method/reference/
+provider/input-window combination use the newest cache creation time by default.
+Use `--cache-policy error` to reject these ambiguities instead. The manifest
+records the selected cache paths, full keys (including source/config versions),
+creation times, and stats hashes so the table's inputs can be traced. Cache
+selection can include comparisons absent from earlier CSV exports.
+
+To reproduce a particular exported run, pass CSVs explicitly instead:
+
+```bash
+.venv/bin/python scripts/paper/csvs_to_latex_table.py \
+  first_flights_evaluation.csv second_flights_evaluation.csv \
+  --test-source opensky algorithm-nn \
+  --adsb-source opensky none
+```
+
+Relative filenames resolve under `$OUTPUT_DIR/data/experiments/comparison`;
+absolute paths also work without `OUTPUT_DIR`. CSV mode uses only the standard
+library. Put filenames before options accepting multiple values. CSV inputs and
+`--cache-dir` cannot be combined; input modes are not silently mixed.
 
 All outputs go to `paper/tables/<prefix>/` in the repository. For the command
 above, the folder is `paper/tables/evaluation_target_day_adsb_false/`:
@@ -33,7 +58,7 @@ above, the folder is `paper/tables/evaluation_target_day_adsb_false/`:
 - `<prefix>_reference_summary.latex`: the single paper table.
 - `<prefix>_reference_summary.csv`: separate numeric columns, including exact
   denominator counts; percentage columns contain values from 0 to 100.
-- `<prefix>_manifest.json`: input hashes, selected dates, filters and definitions.
+- `<prefix>_manifest.json`: CSV hashes or cache provenance, selected dates, filters and definitions.
 
 Rerunning replaces the same named outputs. Previously generated detailed tables
 are left in place; use the new `_reference_summary.latex` file in the paper.
@@ -73,11 +98,32 @@ averages different dates. The chosen dates are printed and recorded in the
 manifest. To reproduce the paper selection, retain the three date options in
 the example above.
 
-`target_day_adsb=false` is the default. Other filters remain available:
-`--test-source`, `--gold-source`, `--adsb-source`, `--date`, and
-`--target-day-adsb true|false|unknown`.
+`target_day_adsb=false` is the default. Arguments are inclusion-based: list what
+you want. Multiple values and repeated options add to the same selection.
+Values within one option are alternatives; different filters apply together.
+Omitting a source/provider/date filter keeps all available values for that
+field. Filtering happens before duplicate checks and automatic date selection.
 
-Exact duplicate rows are deduplicated; conflicting daily results are rejected.
+| Argument | Example |
+| --- | --- |
+| `--test-source` | `--test-source algorithm-nn opensky` |
+| `--gold-source` | `--gold-source bts bts-verified sfdps sfdps-verified` |
+| `--adsb-source` | `--adsb-source opensky none` |
+| `--date` | `--date 2024-06-01 2026-03-01` |
+| `--target-day-adsb` | `--target-day-adsb false` (also accepts `true` or `unknown`) |
+
+For example, `--test-source opensky --test-source algorithm-nn` includes both
+methods. `--tables` and `--metrics` also accumulate repeated values.
+
+Use `--adsb-source opensky none` to include OpenSky-message methods and published
+datasets with no provider. Published OpenSky flights have no ADS-B provider
+value, so `--adsb-source opensky` alone does not select them. Pair this with
+`--test-source` to choose which published datasets and methods you want.
+Gold-source filters use exact names; `--reference-date` applies to the whole
+family including its verified variant.
+
+In CSV mode, exact duplicate rows are deduplicated and conflicting daily results
+are rejected. Cache mode follows the explicit cache-selection policy above.
 Existing `average` rows are excluded. `--require-complete` fails before writing
 when selected metrics are missing, except undefined timing when no flights
 match. Without it, missing metrics produce a warning, blank CSV cells, and
