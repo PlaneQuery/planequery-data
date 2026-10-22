@@ -7,7 +7,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 
-paper/
+/paper/
 # C extensions
 *.so
 
