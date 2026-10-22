@@ -1,5 +1,84 @@
 # Evaluation table for the paper
 
+## Training versus nontraining airport accuracy
+
+`training_vs_non_training_table.py` produces a companion table for Nearest and
+NN. It reuses the existing airport-exposure evaluator and the summary script's
+cache selection, reference dates, ordering, and LaTeX escaping. No new evaluation
+metrics are introduced.
+
+From the repository root, using the same `OUTPUT_DIR` as evaluation:
+
+```bash
+.venv/bin/python scripts/paper/training_vs_non_training_table.py \
+  --adsb-source opensky \
+  --gold-source bts sfdps eurocontrol bts-verified sfdps-verified eurocontrol-verified \
+  --reference-date bts=2026-03-01 \
+  --reference-date sfdps=2026-03-01 \
+  --reference-date eurocontrol=2024-06-01 \
+  --require-complete \
+  --prefix table_1
+```
+
+By default, it reads current-version cached comparisons and uses `training.json`
+beside the current `DEFAULT_MODEL_PATH`. It does not regenerate flights, run
+inference, or compute missing comparisons. It can create the breakdown even if
+evaluation was originally run without `--airport-nn-training`. For a custom
+model, supply its matching `--airport-nn-training /absolute/path/training.json`
+and select the corresponding evaluation cache. The script does not infer or
+validate checkpoint ownership from a training manifest. Relative manifest paths
+resolve under `OUTPUT_DIR`, as in evaluation.
+
+Alternatively, supply evaluator-generated `*_airport_exposure.csv` files before
+the options. Relative filenames resolve under
+`$OUTPUT_DIR/data/experiments/comparison`; absolute paths work without
+`OUTPUT_DIR`. CSV mode uses the training membership already recorded in those
+files, requires one shared manifest hash, and rejects conflicting duplicate rows.
+It does not combine CSV inputs with cache or training-manifest options.
+
+The default methods are `algorithm-nearest` and `algorithm-nn`. Inclusion filters
+`--test-source`, `--gold-source`, `--adsb-source`, and `--date` accept multiple
+values or repeated options. `--reference-date` chooses one date per reference
+family including its verified variant. `--target-day-adsb` defaults to `false`.
+`--cache-dir`, `--cache-policy latest|error`, `--decimals`, and `--output-dir`
+follow the summary script's conventions. `--require-complete` checks that all
+explicitly selected reference sources and all selected methods/endpoints/groups
+are present within the available reference/date/provider contexts. A group
+with zero matched endpoints is valid and displays a dash, rather than 0%.
+
+Each reference dataset has Nearest and NN rows, with training and nontraining
+matched counts and accuracy percentages, each shown as takeoff / landing.
+The final **Drop (pp)** column gives training minus nontraining accuracy for
+each method, separately for takeoff and landing. Positive means lower accuracy
+on nontraining airports; negative means higher accuracy. Differences use the
+unrounded rates and are undefined if either group has no matched endpoints.
+The CSV includes `accuracy_drop_pp` on both group rows for each method/endpoint;
+it is the same paired difference, not a value to sum across groups.
+Accuracy is the existing `airport_accuracy`: correct airport IDs divided by
+matched endpoints with known gold IDs, with null predictions counted incorrect.
+Membership is based on eligible positive NN training labels, combining takeoff
+and landing labels; validation labels and unknown gold IDs are excluded.
+The same training-airport set is applied to both methods. One ADS-B provider is
+named once in the note; multiple providers are named beside each method.
+
+Outputs are under `paper/tables/<prefix>/`:
+
+- `<prefix>_training_vs_non_training.latex`: compact paper table.
+- `<prefix>_training_vs_non_training.csv`: one row per method/reference/group/
+  endpoint, preserving exact counts and provenance. All rate columns are renamed
+  with `_percent` and scaled to 0–100. This is a table export, not an evaluator
+  input CSV.
+- `<prefix>_training_vs_non_training_manifest.json`: input/cache provenance,
+  training manifest hash, filters, dates, and metric definitions.
+
+Include with `\usepackage{booktabs,longtable}` and
+`\input{tables/table_1/table_1_training_vs_non_training.latex}` after copying the
+folder into the paper project. Use a single-column/full-width area, without a
+surrounding `table` float. Reference with
+`Table~\ref{tab:table-1-training-vs-non-training}`.
+
+## Overall evaluation table
+
 The script now produces **one compact summary table**, grouped by reference
 flight dataset: BTS, SFDPS, and Eurocontrol first, followed by BTS-verified,
 SFDPS-verified, and Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
