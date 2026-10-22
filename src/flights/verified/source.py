@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import polars as pl
@@ -17,8 +17,13 @@ from flights.verified.verification import verify_flights
 @dataclass(frozen=True, init=False)
 class VerifiedFlightSource(NonADSBFlightSource):
     source: NonADSBFlightSource
+    adsb_source: ADSBSource
 
-    def __init__(self, source: NonADSBFlightSource):
+    def __init__(
+        self,
+        source: NonADSBFlightSource,
+        adsb_source: ADSBSource | None = None,
+    ):
         if isinstance(source, SFDPSFlightSource):
             version = 8
         elif isinstance(source, BTSFlightSource):
@@ -29,12 +34,23 @@ class VerifiedFlightSource(NonADSBFlightSource):
             raise ValueError(
                 "VerifiedFlightSource only supports BTS, SFDPS, and Eurocontrol sources"
             )
+        resolved_adsb_source = (
+            adsb_source
+            or source.enrichment_adsb_source()
+            or ADSBSource.ADSBLOL
+        )
+        if (
+            isinstance(source, EurocontrolFlightSource)
+            and source.callsign_source is not resolved_adsb_source
+        ):
+            source = replace(source, callsign_source=resolved_adsb_source)
         object.__setattr__(self, "name", f"{source.name}-verified")
         object.__setattr__(self, "version", version)
         object.__setattr__(self, "source", source)
+        object.__setattr__(self, "adsb_source", resolved_adsb_source)
 
-    def enrichment_adsb_source(self) -> ADSBSource | None:
-        return self.source.enrichment_adsb_source()
+    def enrichment_adsb_source(self) -> ADSBSource:
+        return self.adsb_source
 
     def create_flights_for_day(self, dt, airport_catalog: AirportCatalogView) -> pl.DataFrame:
         df_flights = get_flights_for_catalog(self.source, dt, airport_catalog).sort(
@@ -65,7 +81,7 @@ class VerifiedFlightSource(NonADSBFlightSource):
             return verify_flights(
                 airport_catalog, df_flights, df_adsb, require_us_faa_airspace=False
             )
-        df_adsb = read_adsb(dt).sort("icao", "time")
+        df_adsb = read_adsb(dt, source=self.adsb_source).sort("icao", "time")
         return verify_flights(airport_catalog, df_flights, df_adsb)
 
 if __name__ == "__main__":

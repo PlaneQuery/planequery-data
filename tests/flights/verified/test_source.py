@@ -150,12 +150,32 @@ def test_empty_eurocontrol_verified_does_not_read_adsb(monkeypatch):
 
 
 @pytest.mark.parametrize("base_source", [BTSFlightSource(), SFDPSFlightSource()])
-def test_existing_verified_sources_keep_us_faa_filter(monkeypatch, base_source):
-    base = european_flights().with_columns(pl.Series("callsign", ["BAW1", "BAW2", "BAW3", "BAW4"]))
+@pytest.mark.parametrize("provider", [ADSBSource.ADSBLOL, ADSBSource.OPENSKY])
+def test_existing_verified_sources_use_selected_adsb_and_keep_us_faa_filter(
+    monkeypatch, base_source, provider
+):
+    base = european_flights().with_columns(
+        pl.Series("callsign", ["BAW1", "BAW2", "BAW3", "BAW4"])
+    )
     calls = []
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: base)
-    monkeypatch.setattr(verified_source, "read_adsb", lambda day: observed_callsigns())
-    monkeypatch.setattr(verification, "_check_flights_in_us_faa_airspace", lambda *args: calls.append(True) or [])
-    result = verified_source.VerifiedFlightSource(base_source).create_flights_for_day(DAY, Catalog())
+    def read(day, *, source):
+        assert day == DAY
+        assert source is provider
+        return observed_callsigns()
+
+    monkeypatch.setattr(verified_source, "read_adsb", read)
+    monkeypatch.setattr(
+        verification,
+        "_check_flights_in_us_faa_airspace",
+        lambda *args: calls.append(True) or [],
+    )
+    source = verified_source.VerifiedFlightSource(base_source, adsb_source=provider)
+    assert source.enrichment_adsb_source() is provider
+    assert f"adsb_source={provider.value}" in flight_source.flight_path(
+        source, DAY
+    ).parts
+    assert source.flight_manifest(Catalog.provenance, None).adsb_source == provider.value
+    result = source.create_flights_for_day(DAY, Catalog())
     assert calls == [True]
     assert result.is_empty()
