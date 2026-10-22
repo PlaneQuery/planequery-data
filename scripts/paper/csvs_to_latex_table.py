@@ -53,6 +53,7 @@ TABLES = {
             Metric("gold_icao_count", "Gold ICAOs"),
             Metric("precision", "Precision (%)", "percent"),
             Metric("recall", "Recall (%)", "percent"),
+            Metric("f1", "F1 (%)", "percent"),
             Metric("gold_icao_missing_from_test_pct", "Zero flights (%)", "percent"),
             Metric("takeoff_airport_id_match_pct", "Takeoff accuracy (%)", "percent"),
             Metric("landing_airport_id_match_pct", "Landing accuracy (%)", "percent"),
@@ -61,7 +62,8 @@ TABLES = {
             Metric("takeoff_time_bias_minutes", "Takeoff bias (min)", "minutes"),
             Metric("landing_time_bias_minutes", "Landing bias (min)", "minutes"),
         ),
-        "G/T = retained gold/test flights; P/R = segmentation precision/recall; "
+        "G/T = retained gold/test flights; P/R/F1 = segmentation precision/recall/F1; "
+        "F1 is the harmonic mean of precision and recall. "
         "TO/LD = takeoff/landing. All rates are percentages. Zero flights is the "
         "percentage of gold ICAOs with no test flights. Airport accuracy divides "
         "by matched flights; null airports divide by T. Matched flights = G times "
@@ -69,8 +71,8 @@ TABLES = {
         "matched. Other counts follow from their percentages and denominators "
         "(approximately, due to rounding). G varies by method because of boundary "
         "filtering. Bias is mean signed test-minus-gold time among matched flights; "
-        "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn; "
-        "the suffix identifies the ADS-B provider. OpenSky alone is the published "
+        "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn. "
+        "OpenSky denotes the published "
         "flight dataset. Exact denominators are included in the CSV.",
         ("gold_icao_count", "gold_flight_count", "test_flight_count", "true_positive"),
     ),
@@ -145,7 +147,7 @@ REFERENCE_LABELS = {
 }
 SUMMARY_COLUMNS = (
     ("Flights", "G / T", ("gold_flight_count", "test_flight_count")),
-    ("Segmentation", "P / R (%)", ("precision", "recall")),
+    ("Segmentation", "P / R / F1 (%)", ("precision", "recall", "f1")),
     ("Zero flights", "ICAOs (%)", ("gold_icao_missing_from_test_pct",)),
     ("Airport acc.", "TO / LD (%)", ("takeoff_airport_id_match_pct", "landing_airport_id_match_pct")),
     ("Null airports", "TO / LD (%)", ("takeoff_airport_id_null_pct", "landing_airport_id_null_pct")),
@@ -310,7 +312,10 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
             label = (title, subtitle) if active == keys else (by_key[active[0]].label,)
             columns.append((label, active))
     width = len(columns) + 1
-    headers = ["Method / ADS-B"] + [
+    providers = {row["adsb_src"] for row in rows if row["adsb_src"]}
+    show_provider = len(providers) > 1
+    provider_labels = {"adsblol": "ADSB.lol", "opensky": "OpenSky", "adsbx": "ADSBX"}
+    headers = ["Method / ADS-B" if show_provider else "Method"] + [
         r"\shortstack{" + r"\\".join(latex_escape(line) for line in label) + "}"
         for label, _ in columns
     ]
@@ -342,8 +347,8 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
         for row in group_rows:
             method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN", "opensky": "OpenSky"}.get(row["test_src"], row["test_src"])
-            if row["adsb_src"]:
-                provider = {"adsblol": "ADSB.lol", "opensky": "OpenSky", "adsbx": "ADSBX"}.get(row["adsb_src"], row["adsb_src"])
+            if show_provider and row["adsb_src"]:
+                provider = provider_labels.get(row["adsb_src"], row["adsb_src"])
                 method += " / " + provider
             cells = [latex_escape(method)] + [
                 " / ".join(format_metric(row, by_key[key], decimals) for key in keys)
@@ -351,6 +356,11 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
             ]
             lines.append(" & ".join(cells) + r" \\")
     note = TABLES["reference_summary"].note
+    if len(providers) == 1:
+        provider = next(iter(providers))
+        note += f" ADS-B-based methods use {provider_labels.get(provider, provider)} input."
+    elif show_provider:
+        note += " Method suffixes identify the ADS-B provider."
     if len(windows) == 1:
         note += f" Target-day-only ADS-B input: {next(iter(windows))}."
     lines.extend([r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +

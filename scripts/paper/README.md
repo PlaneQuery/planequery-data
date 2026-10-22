@@ -70,13 +70,18 @@ Columns are:
 
 | Column | Meaning |
 | --- | --- |
-| Method / ADS-B | Evaluated method and provider; OpenSky alone is its published flight dataset |
+| Method | Evaluated method; OpenSky denotes its published flight dataset |
 | Flights G / T | Retained gold and test flight totals |
-| Segmentation P / R (%) | Precision and recall |
+| Segmentation P / R / F1 (%) | Precision, recall, and their harmonic mean (F1) |
 | Zero flights ICAOs (%) | Gold ICAOs with no test flights / all gold ICAOs |
 | Airport acc. TO / LD (%) | Correct takeoff and landing airports / matched flights |
 | Null airports TO / LD (%) | Null takeoff and landing outputs / retained test flights |
 | Time bias TO / LD (min) | Existing mean signed takeoff and landing errors; negative means early |
+
+When all ADS-B-based methods use one provider, the table identifies that provider
+once in its note and uses short row labels such as `OpenSky`, `Nearest`, and `NN`.
+When multiple providers are present, the column becomes `Method / ADS-B` and
+provider suffixes remain on the rows. CSV metadata always retains the provider.
 
 Counts are not repeated next to every percentage. Recover matched flights as
 `G * recall / 100`; false negatives as `G - matched`, and false positives as
