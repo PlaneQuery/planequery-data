@@ -324,7 +324,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
     ]
     heading = " & ".join(headers) + r" \\"
     lines = [
-        "% Requires \\usepackage{booktabs,longtable}.",
+        "% Requires \\usepackage{booktabs,longtable,multirow}.",
         r"\begingroup", r"\footnotesize", r"\setlength{\tabcolsep}{2.5pt}",
         r"\begin{longtable}{@{}l" + "r" * len(columns) + "@{}}",
         r"\caption{Flight evaluation by reference dataset}",
@@ -336,6 +336,8 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         r"\bottomrule", r"\endlastfoot",
     ]
     windows = {row["target_day_adsb"] for row in rows}
+    shared_keys = {"gold_flight_count", "test_flight_count", "precision", "recall", "f1"}
+    has_shared_cells = False
     for context, group in groupby(rows, key=lambda row: (row["gold_src"], row["test_date"], row["target_day_adsb"])):
         source, day, window = context
         group_rows = list(group)
@@ -348,17 +350,39 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         if len(windows) > 1:
             title += f" | Target-day ADS-B: {window}"
         lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
-        for row in group_rows:
+        shared_starts: dict[int, set[int]] = {}
+        shared_ends: dict[int, set[int]] = {}
+        for index, (nearest, nn) in enumerate(zip(group_rows, group_rows[1:])):
+            if (nearest["test_src"] != "algorithm-nearest" or nn["test_src"] != "algorithm-nn"
+                    or nearest["adsb_src"] != nn["adsb_src"]):
+                continue
+            shared = {
+                column_index for column_index, (_, keys) in enumerate(columns)
+                if set(keys) <= shared_keys
+                and all(nearest.get(key) is not None and nearest[key] == nn.get(key) for key in keys)
+            }
+            if shared:
+                shared_starts[index] = shared
+                shared_ends[index + 1] = shared
+                has_shared_cells = True
+        for index, row in enumerate(group_rows):
             method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN", "opensky": "OpenSky"}.get(row["test_src"], row["test_src"])
             if show_provider and row["adsb_src"]:
                 provider = provider_labels.get(row["adsb_src"], row["adsb_src"])
                 method += " / " + provider
-            cells = [latex_escape(method)] + [
-                " / ".join(format_metric(row, by_key[key], decimals) for key in keys)
-                for _, keys in columns
-            ]
-            lines.append(" & ".join(cells) + r" \\")
+            cells = [latex_escape(method)]
+            for column_index, (_, keys) in enumerate(columns):
+                cell = " / ".join(format_metric(row, by_key[key], decimals) for key in keys)
+                if column_index in shared_starts.get(index, set()):
+                    cell = r"\multirow{2}{*}{" + cell + "}"
+                elif column_index in shared_ends.get(index, set()):
+                    cell = ""
+                cells.append(cell)
+            # Keep the two methods on the same page when they share cells.
+            lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
     note = TABLES["reference_summary"].note
+    if has_shared_cells:
+        note += " Cells spanning Nearest and NN report values shared by both methods."
     if len(providers) == 1:
         provider = next(iter(providers))
         note += f" {provider_labels.get(provider, provider)} ADS-B."
