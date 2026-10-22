@@ -1,0 +1,512 @@
+"""Export daily evaluation CSVs as numeric CSVs and booktabs/longtable LaTeX.
+
+Run with --help; see scripts/paper/README.md for metric definitions and examples.
+Uses only the standard library. No evaluation or network requests are made.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+from dataclasses import dataclass
+from datetime import date
+import hashlib
+from itertools import groupby
+import json
+import math
+import os
+from pathlib import Path
+import re
+import sys
+from typing import Any
+
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "paper/figures/evaluation_tables"
+METADATA = ("test_date", "gold_src", "adsb_src", "target_day_adsb", "test_src")
+
+
+@dataclass(frozen=True)
+class Metric:
+    key: str
+    label: str
+    kind: str = "count"
+    rate: str | None = None
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        return (self.key, self.rate) if self.rate else (self.key,)
+
+
+@dataclass(frozen=True)
+class Table:
+    title: str
+    metrics: tuple[Metric, ...]
+    note: str
+    denominators: tuple[str, ...] = ()
+
+
+TABLES = {
+    "reference_summary": Table(
+        "Flight evaluation by reference dataset",
+        (
+            Metric("gold_flight_count", "Gold flights"),
+            Metric("test_flight_count", "Test flights"),
+            Metric("gold_icao_count", "Gold ICAOs"),
+            Metric("precision", "Precision (%)", "percent"),
+            Metric("recall", "Recall (%)", "percent"),
+            Metric("gold_icao_missing_from_test_pct", "Zero flights (%)", "percent"),
+            Metric("takeoff_airport_id_match_pct", "Takeoff accuracy (%)", "percent"),
+            Metric("landing_airport_id_match_pct", "Landing accuracy (%)", "percent"),
+            Metric("takeoff_airport_id_null_pct", "Takeoff null (%)", "percent"),
+            Metric("landing_airport_id_null_pct", "Landing null (%)", "percent"),
+            Metric("takeoff_time_bias_minutes", "Takeoff bias (min)", "minutes"),
+            Metric("landing_time_bias_minutes", "Landing bias (min)", "minutes"),
+        ),
+        "G/T = retained gold/test flights; P/R = segmentation precision/recall; "
+        "TO/LD = takeoff/landing. All rates are percentages. Zero flights is the "
+        "percentage of gold ICAOs with no test flights. Airport accuracy divides "
+        "by matched flights; null airports divide by T. Matched flights = G times "
+        "R/100, false negatives = G minus matched, and false positives = T minus "
+        "matched. Other counts follow from their percentages and denominators "
+        "(approximately, due to rounding). G varies by method because of boundary "
+        "filtering. Bias is mean signed test-minus-gold time among matched flights; "
+        "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn; "
+        "the suffix identifies the ADS-B provider. OpenSky alone is the published "
+        "flight dataset. Exact denominators are included in the CSV.",
+        ("gold_icao_count", "gold_flight_count", "test_flight_count", "true_positive"),
+    ),
+    "segmentation": Table(
+        "Flight segmentation",
+        (
+            Metric("true_positive", "TP"),
+            Metric("false_positive", "FP"),
+            Metric("false_negative", "FN"),
+            Metric("precision", "Precision (%)", "percent"),
+            Metric("recall", "Recall (%)", "percent"),
+            Metric("f1", "F1 (%)", "percent"),
+        ),
+        "TP = matched flights; FP = unmatched test flights; FN = unmatched gold flights. "
+        "Precision = TP/(TP+FP); recall = TP/(TP+FN); F1 is their harmonic mean. "
+        "Counts use the retained gold-aircraft cohort after boundary filtering.",
+        ("test_flight_count", "gold_flight_count"),
+    ),
+    "aircraft_coverage": Table(
+        "Gold-aircraft coverage",
+        (
+            Metric("gold_icao_count", "Gold ICAOs"),
+            Metric("gold_icao_missing_from_test_count", "Zero test flights\nn (%)",
+                   rate="gold_icao_missing_from_test_pct"),
+        ),
+        "Distinct daily gold ICAOs with zero test flights, as a count and percentage "
+        "of all gold ICAOs. Coverage is measured before flight matching/boundary filtering.",
+    ),
+    "airport_accuracy": Table(
+        "Airport identification accuracy and missing outputs",
+        (
+            Metric("takeoff_airport_id_match_count", "Takeoff correct\nn (%)",
+                   rate="takeoff_airport_id_match_pct"),
+            Metric("landing_airport_id_match_count", "Landing correct\nn (%)",
+                   rate="landing_airport_id_match_pct"),
+            Metric("airport_id_match_count", "Both correct\nn (%)", rate="airport_id_match_pct"),
+            Metric("takeoff_airport_id_null_count", "Takeoff null\nn (%)",
+                   rate="takeoff_airport_id_null_pct"),
+            Metric("landing_airport_id_null_count", "Landing null\nn (%)",
+                   rate="landing_airport_id_null_pct"),
+        ),
+        "Correct-airport percentages divide by matched flights (TP); null IDs are incorrect. "
+        "Both correct requires both airport IDs to match. Null-output percentages divide "
+        "by all retained test flights (TP+FP), including unmatched test flights.",
+        ("true_positive", "test_flight_count"),
+    ),
+    "timing_accuracy": Table(
+        "Takeoff and landing timing accuracy",
+        (
+            Metric("true_positive", "Matched\nn"),
+            Metric("takeoff_time_bias_minutes", "Takeoff bias\n(min)", "minutes"),
+            Metric("landing_time_bias_minutes", "Landing bias\n(min)", "minutes"),
+            Metric("median_max_endpoint_time_error_minutes", "Max error\nmedian (min)", "minutes"),
+            Metric("p90_max_endpoint_time_error_minutes", "Max error\nP90 (min)", "minutes"),
+            Metric("both_endpoints_within_5m_recall", "Within 5 min\nrecall (%)", "percent"),
+            Metric("both_endpoints_within_15m_recall", "Within 15 min\nrecall (%)", "percent"),
+        ),
+        "Bias = mean signed test-minus-gold time difference among matched flights; "
+        "negative is early, positive is late. Bias is not mean absolute error. "
+        "Max error is the larger absolute takeoff/landing error for each matched flight. "
+        "Threshold recall requires both endpoints within the threshold and divides by "
+        "all retained gold flights (TP+FN). Matching itself limits each endpoint error "
+        "to one hour. A dash denotes an unavailable or undefined value.",
+        ("gold_flight_count",),
+    ),
+}
+REFERENCE_ORDER = ("bts", "bts-verified", "sfdps", "sfdps-verified", "eurocontrol", "eurocontrol-verified")
+REFERENCE_LABELS = {
+    "bts": "BTS", "bts-verified": "BTS (verified)",
+    "sfdps": "SFDPS", "sfdps-verified": "SFDPS (verified)",
+    "eurocontrol": "Eurocontrol", "eurocontrol-verified": "Eurocontrol (verified)",
+}
+SUMMARY_COLUMNS = (
+    ("Flights", "G / T", ("gold_flight_count", "test_flight_count")),
+    ("Segmentation", "P / R (%)", ("precision", "recall")),
+    ("Zero flights", "ICAOs (%)", ("gold_icao_missing_from_test_pct",)),
+    ("Airport acc.", "TO / LD (%)", ("takeoff_airport_id_match_pct", "landing_airport_id_match_pct")),
+    ("Null airports", "TO / LD (%)", ("takeoff_airport_id_null_pct", "landing_airport_id_null_pct")),
+    ("Time bias", "TO / LD (min)", ("takeoff_time_bias_minutes", "landing_time_bias_minutes")),
+)
+RATE_COLUMNS = {
+    column for table in TABLES.values() for metric in table.metrics
+    for column in ((metric.key,) if metric.kind == "percent" else (metric.rate,))
+    if column is not None
+}
+
+
+def row_key(row: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(str(row.get(column, "")) for column in METADATA)
+
+
+def select_reference_dates(rows: list[dict[str, Any]], overrides: list[str]) -> list[dict[str, Any]]:
+    """Choose one shared date per reference family, without pooling daily metrics."""
+    requested = {}
+    for item in overrides:
+        source, separator, day = item.partition("=")
+        if not separator or not source:
+            raise ValueError("--reference-date expects SOURCE=YYYY-MM-DD")
+        date.fromisoformat(day)
+        family = source.removesuffix("-verified")
+        if family in requested and requested[family] != day:
+            raise ValueError(f"Conflicting dates for reference family {family}")
+        requested[family] = day
+    families: dict[str, dict[str, set[str]]] = {}
+    for row in rows:
+        source = row["gold_src"]
+        families.setdefault(source.removesuffix("-verified"), {}).setdefault(source, set()).add(row["test_date"])
+    unknown = requested.keys() - families.keys()
+    if unknown:
+        raise ValueError(f"No rows for requested reference families: {sorted(unknown)}")
+    chosen = {}
+    for family, sources in families.items():
+        common = set.intersection(*sources.values())
+        if not common:
+            raise ValueError(f"No shared date for {family} and its verified variant.")
+        chosen[family] = requested.get(family, max(common))
+        if chosen[family] not in common:
+            raise ValueError(f"Date {chosen[family]} unavailable for every {family} variant; available: {sorted(common)}")
+    return [row for row in rows if row["test_date"] == chosen[row["gold_src"].removesuffix("-verified")]]
+
+
+def reference_sort_key(row: dict[str, Any]) -> tuple:
+    source = row["gold_src"]
+    rank = REFERENCE_ORDER.index(source) if source in REFERENCE_ORDER else len(REFERENCE_ORDER)
+    # The published OpenSky dataset has no ADS-B provider metadata, but belongs
+    # beside the methods evaluated on OpenSky messages in the paper table.
+    provider = row["adsb_src"] or ("opensky" if row["test_src"] == "opensky" else "")
+    method_rank = {"opensky": 0, "algorithm-nearest": 1, "algorithm-nn": 2}.get(row["test_src"], 3)
+    return (rank, source, row["test_date"], row["target_day_adsb"], provider, method_rank, row["test_src"])
+
+
+def number(value: Any) -> Any:
+    if value is None or value == "":
+        return None
+    try:
+        result = float(value)
+    except (ValueError, TypeError):
+        return value
+    if not math.isfinite(result):
+        raise ValueError(f"Non-finite metric: {value}")
+    return result
+
+
+def load_rows(paths: list[Path]) -> list[dict[str, Any]]:
+    """Discard macro-average rows; reject conflicting repeats of a daily comparison."""
+    unique: dict[tuple[str, ...], dict[str, Any]] = {}
+    for path in paths:
+        with path.open(newline="", encoding="utf-8-sig") as stream:
+            reader = csv.DictReader(stream)
+            required = set(METADATA) - {"target_day_adsb"}
+            if not required.issubset(reader.fieldnames or []):
+                raise ValueError(f"{path}: missing metadata columns {sorted(required - set(reader.fieldnames or []))}")
+            for line, raw in enumerate(reader, 2):
+                if raw["test_date"] == "average":
+                    continue
+                if None in raw:
+                    raise ValueError(f"{path}:{line}: malformed CSV row")
+                date.fromisoformat(raw["test_date"])
+                if not raw["test_src"] or not raw["gold_src"]:
+                    raise ValueError(f"{path}:{line}: empty source name")
+                row = {key: (value or "" if key in METADATA else number(value)) for key, value in raw.items()}
+                row["target_day_adsb"] = raw.get("target_day_adsb", "unknown").lower()
+                if row["target_day_adsb"] not in {"true", "false", "unknown"}:
+                    raise ValueError(f"{path}:{line}: invalid target_day_adsb")
+                key = row_key(row)
+                if key in unique and unique[key] != row:
+                    raise ValueError(f"Conflicting daily rows for {key}; select one evaluation run.")
+                unique[key] = row
+    return sorted(unique.values(), key=row_key)
+
+
+def csv_column(column: str) -> str:
+    if column in RATE_COLUMNS:
+        return column.removesuffix("_pct") + "_percent"
+    return column
+
+
+def latex_escape(value: Any) -> str:
+    replacements = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
+                    "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
+                    "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
+    return "".join(replacements.get(char, char) for char in str(value))
+
+
+def format_metric(row: dict[str, Any], metric: Metric, decimals: int) -> str:
+    value = row.get(metric.key)
+    if value is None:
+        return "---"
+    if metric.kind == "count":
+        formatted = f"{int(value):,}"
+    else:
+        formatted = f"{value * (100 if metric.kind == 'percent' else 1):.{decimals}f}"
+    if metric.rate:
+        rate = row.get(metric.rate)
+        formatted += " (---)" if rate is None else f" ({100 * rate:.{decimals}f}\\%)"
+    return formatted
+
+
+def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
+                  prefix: str, decimals: int) -> str:
+    """One compact table: reference datasets as groups, methods/providers as rows."""
+    by_key = {metric.key: metric for metric in metrics}
+    columns = []
+    for title, subtitle, keys in SUMMARY_COLUMNS:
+        active = tuple(key for key in keys if key in by_key)
+        if active:
+            label = (title, subtitle) if active == keys else (by_key[active[0]].label,)
+            columns.append((label, active))
+    width = len(columns) + 1
+    headers = ["Method / ADS-B"] + [
+        r"\shortstack{" + r"\\".join(latex_escape(line) for line in label) + "}"
+        for label, _ in columns
+    ]
+    heading = " & ".join(headers) + r" \\"
+    lines = [
+        "% Requires \\usepackage{booktabs,longtable}.",
+        r"\begingroup", r"\footnotesize", r"\setlength{\tabcolsep}{2.5pt}",
+        r"\begin{longtable}{@{}l" + "r" * len(columns) + "@{}}",
+        r"\caption{Flight evaluation by reference dataset}",
+        r"\label{tab:" + prefix.replace("_", "-") + r"-reference-summary}\\",
+        r"\toprule", heading, r"\midrule", r"\endfirsthead",
+        r"\multicolumn{" + str(width) + r"}{l}{Flight evaluation by reference dataset (continued)}\\",
+        r"\toprule", heading, r"\midrule", r"\endhead",
+        r"\midrule", r"\multicolumn{" + str(width) + r"}{r}{Continued on next page}\\", r"\endfoot",
+        r"\bottomrule", r"\endlastfoot",
+    ]
+    windows = {row["target_day_adsb"] for row in rows}
+    for context, group in groupby(rows, key=lambda row: (row["gold_src"], row["test_date"], row["target_day_adsb"])):
+        source, day, window = context
+        group_rows = list(group)
+        icao_counts = {row.get("gold_icao_count") for row in group_rows}
+        if len(icao_counts) != 1:
+            raise ValueError(f"Gold ICAO totals differ within {source} on {day}; use a consistent cohort.")
+        total = next(iter(icao_counts))
+        total_text = "unavailable" if total is None else f"{int(total):,}"
+        title = f"{REFERENCE_LABELS.get(source, source)} | {day} | Gold ICAOs: {total_text}"
+        if len(windows) > 1:
+            title += f" | Target-day ADS-B: {window}"
+        lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
+        for row in group_rows:
+            method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN", "opensky": "OpenSky"}.get(row["test_src"], row["test_src"])
+            if row["adsb_src"]:
+                provider = {"adsblol": "ADSB.lol", "opensky": "OpenSky", "adsbx": "ADSBX"}.get(row["adsb_src"], row["adsb_src"])
+                method += " / " + provider
+            cells = [latex_escape(method)] + [
+                " / ".join(format_metric(row, by_key[key], decimals) for key in keys)
+                for _, keys in columns
+            ]
+            lines.append(" & ".join(cells) + r" \\")
+    note = TABLES["reference_summary"].note
+    if len(windows) == 1:
+        note += f" Target-day-only ADS-B input: {next(iter(windows))}."
+    lines.extend([r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+                  latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""])
+    return "\n".join(lines)
+
+
+def latex_table(rows: list[dict[str, Any]], name: str, table: Table,
+                metrics: tuple[Metric, ...], prefix: str, decimals: int) -> str:
+    count = 1 + len(metrics)
+    headers = ["Method"] + [
+        r"\shortstack{" + r"\\".join(latex_escape(line) for line in metric.label.splitlines()) + "}"
+        for metric in metrics
+    ]
+    heading = " & ".join(headers) + r" \\"
+    lines = [
+        "% Requires \\usepackage{booktabs,longtable}. Use in a single-column/full-width area.",
+        r"\begingroup", r"\small", r"\setlength{\tabcolsep}{3pt}",
+        r"\begin{longtable}{@{}l" + "r" * len(metrics) + "@{}}",
+        r"\caption{" + latex_escape(table.title) + "}",
+        r"\label{tab:" + prefix.replace("_", "-") + "-" + name.replace("_", "-") + r"}\\",
+        r"\toprule", heading, r"\midrule", r"\endfirsthead",
+        r"\multicolumn{" + str(count) + r"}{l}{\small " + latex_escape(table.title) + r" (continued)}\\",
+        r"\toprule", heading, r"\midrule", r"\endhead",
+        r"\midrule", r"\multicolumn{" + str(count) + r"}{r}{Continued on next page}\\", r"\endfoot",
+        r"\bottomrule", r"\endlastfoot",
+    ]
+    for context, group in groupby(rows, key=lambda row: row_key(row)[:-1]):
+        day, gold, adsb, window = context
+        title = f"{REFERENCE_LABELS.get(gold, gold)} | {day} | ADS-B: {adsb or 'N/A'} | Target-day ADS-B: {window}"
+        lines.extend([r"\addlinespace[3pt]", r"\multicolumn{" + str(count) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*",
+                      r"\nopagebreak"])
+        for row in group:
+            lines.append(" & ".join([latex_escape(row["test_src"])] + [
+                format_metric(row, metric, decimals) for metric in metrics
+            ]) + r" \\")
+    lines.extend([r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+                  latex_escape(table.note) + r"\end{minipage}\par", r"\endgroup", ""])
+    return "\n".join(lines)
+
+
+def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, ...]],
+                 require_complete: bool) -> list[str]:
+    missing = set()
+    for row in rows:
+        for name, other in (("test_flight_count", "false_positive"), ("gold_flight_count", "false_negative")):
+            row[name] = (row["true_positive"] + row[other]
+                         if row.get("true_positive") is not None and row.get(other) is not None else None)
+        for metrics in selected.values():
+            for metric in metrics:
+                for column in metric.columns:
+                    value = row.get(column)
+                    if value is None:
+                        # Matched-only timing statistics are undefined when TP is zero.
+                        if not (metric.kind == "minutes" and row.get("true_positive") == 0):
+                            missing.add(column)
+                        continue
+                    if not isinstance(value, (int, float)) or not math.isfinite(value):
+                        raise ValueError(f"Invalid numeric metric {column}: {value!r}")
+                    if column in RATE_COLUMNS and not 0 <= value <= 1:
+                        raise ValueError(f"Expected a fraction in [0, 1] for {column}: {value}")
+                    if metric.kind == "count" and column == metric.key and (value < 0 or not float(value).is_integer()):
+                        raise ValueError(f"Invalid daily count {column}: {value}")
+                    if metric.kind == "minutes" and "bias" not in column and value < 0:
+                        raise ValueError(f"Negative absolute time error {column}: {value}")
+    warnings = []
+    if missing:
+        message = "Unavailable metrics (blank CSV / dash in LaTeX): " + ", ".join(sorted(missing))
+        if require_complete:
+            raise ValueError(message + ". Supply full evaluation CSVs.")
+        warnings.append(message)
+    return warnings
+
+
+def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
+                  selected: dict[str, tuple[Metric, ...]], decimals: int) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    outputs = []
+    for name, metrics in selected.items():
+        table = TABLES[name]
+        columns = list(dict.fromkeys([*METADATA, *table.denominators,
+                                     *(column for metric in metrics for column in metric.columns)]))
+        csv_path = output_dir / f"{prefix}_{name}.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=[csv_column(column) for column in columns])
+            writer.writeheader()
+            for row in rows:
+                values = {}
+                for column in columns:
+                    value = row.get(column)
+                    if value is not None and column not in METADATA:
+                        value = value * 100 if column in RATE_COLUMNS else value
+                        if column not in RATE_COLUMNS and (column.endswith("_count") or column in {"true_positive", "false_positive", "false_negative"}):
+                            value = int(value)
+                    values[csv_column(column)] = value
+                writer.writerow(values)
+        latex_path = csv_path.with_suffix(".latex")
+        latex = (summary_latex(rows, metrics, prefix, decimals) if name == "reference_summary"
+                 else latex_table(rows, name, table, metrics, prefix, decimals))
+        latex_path.write_text(latex, encoding="utf-8")
+        outputs.extend([csv_path, latex_path])
+    return outputs
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "csvs", nargs="*", type=Path,
+        help="CSV filenames relative to $OUTPUT_DIR/data/experiments/comparison, or absolute paths.",
+    )
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--prefix", help="Filename/LaTeX-label prefix; default: evaluation_<date or range>.")
+    parser.add_argument("--tables", nargs="+", choices=TABLES, default=["reference_summary"],
+                        help="Default: one compact reference_summary table. Other topics are optional.")
+    parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD",
+                        help="Choose a date for a reference family, including its verified variant. Repeat as needed; default is latest shared date.")
+    all_metrics = sorted({metric.key for table in TABLES.values() for metric in table.metrics})
+    parser.add_argument("--metrics", nargs="+", choices=all_metrics,
+                        help="Restrict tables to these metric keys; paired percentages stay with counts.")
+    parser.add_argument("--list-metrics", action="store_true")
+    for flag in ("test-source", "gold-source", "adsb-source", "date"):
+        parser.add_argument("--" + flag, nargs="+", help="Keep only these values.")
+    parser.add_argument("--target-day-adsb", choices=("true", "false", "unknown"), default="false")
+    parser.add_argument("--require-complete", action="store_true", help="Fail if selected metrics are unavailable.")
+    parser.add_argument("--decimals", type=int, default=2, help="LaTeX decimals (CSV retains numeric precision).")
+    args = parser.parse_args(argv)
+    if args.list_metrics:
+        for name, table in TABLES.items():
+            print(name + ":\n" + "\n".join(f"  {metric.key}: {' '.join(metric.label.splitlines())}" for metric in table.metrics))
+        return 0
+    if not args.csvs:
+        parser.error("Supply at least one evaluation CSV.")
+    if not 0 <= args.decimals <= 6:
+        parser.error("--decimals must be between 0 and 6.")
+    try:
+        args.csvs = [path.expanduser() for path in args.csvs]
+        if any(not path.is_absolute() for path in args.csvs):
+            output_root = os.environ.get("OUTPUT_DIR")
+            if not output_root:
+                raise ValueError("Set OUTPUT_DIR to use relative CSV filenames, or supply absolute paths.")
+            comparison_dir = Path(output_root).expanduser() / "data/experiments/comparison"
+            args.csvs = [path if path.is_absolute() else comparison_dir / path for path in args.csvs]
+        rows = load_rows(args.csvs)
+        for column, values in (("test_src", args.test_source), ("gold_src", args.gold_source),
+                               ("adsb_src", args.adsb_source), ("test_date", args.date),
+                               ("target_day_adsb", [args.target_day_adsb] if args.target_day_adsb else None)):
+            if values:
+                rows = [row for row in rows if row[column] in values]
+        if not rows:
+            raise ValueError("No daily rows remain after filtering (average rows are excluded).")
+        if "reference_summary" in args.tables or args.reference_date:
+            rows = select_reference_dates(rows, args.reference_date)
+        rows.sort(key=reference_sort_key)
+        dates = sorted({row["test_date"] for row in rows})
+        prefix = args.prefix or "evaluation_" + (dates[0] if len(dates) == 1 else dates[0] + "_to_" + dates[-1])
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", prefix):
+            raise ValueError("--prefix must contain only letters, numbers, underscores, and hyphens.")
+        selected = {name: tuple(metric for metric in TABLES[name].metrics if not args.metrics or metric.key in args.metrics)
+                    for name in args.tables}
+        selected = {name: metrics for name, metrics in selected.items() if metrics}
+        if not selected:
+            raise ValueError("No metrics selected for the requested tables.")
+        warnings = prepare_rows(rows, selected, args.require_complete)
+        outputs = export_tables(rows, args.output_dir, prefix, selected, args.decimals)
+        manifest = args.output_dir / f"{prefix}_manifest.json"
+        manifest.write_text(json.dumps({
+            "inputs": [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in args.csvs],
+            "daily_rows": len(rows), "average_rows": "excluded; no cross-day aggregation",
+            "csv_percent_scale": "0-100", "latex_decimals": args.decimals,
+            "filters": {key: getattr(args, key) for key in ("test_source", "gold_source", "adsb_source", "date", "target_day_adsb")},
+            "reference_dates": {row["gold_src"]: row["test_date"] for row in rows} if "reference_summary" in selected or args.reference_date else None,
+            "metrics": {name: [metric.key for metric in metrics] for name, metrics in selected.items()},
+            "definitions": {name: TABLES[name].note for name in selected},
+            "warnings": warnings,
+            "outputs": [str(path.resolve()) for path in outputs],
+        }, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    for warning in warnings:
+        print("Warning: " + warning, file=sys.stderr)
+    print(f"Exported {len(rows)} daily comparisons to {len(selected)} CSV/LaTeX table pairs:")
+    for source in dict.fromkeys(row["gold_src"] for row in rows):
+        print(f"  {source}: {', '.join(sorted({row['test_date'] for row in rows if row['gold_src'] == source}))}")
+    for path in [*outputs, manifest]:
+        print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
