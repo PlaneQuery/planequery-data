@@ -83,6 +83,11 @@ once in its note and uses short row labels such as `OpenSky`, `Nearest`, and `NN
 When multiple providers are present, the column becomes `Method / ADS-B` and
 provider suffixes remain on the rows. CSV metadata always retains the provider.
 
+For adjacent Nearest and NN rows using the same provider, identical flight totals
+and segmentation scores share cells spanning both rows. Airport results remain
+separate. Cells merge only when the underlying selected values match exactly,
+not merely after rounding; missing values are not merged. CSV rows remain complete.
+
 Counts are not repeated next to every percentage. Recover matched flights as
 `G * recall / 100`; false negatives as `G - matched`, and false positives as
 `T - matched`. Airport-correct counts use matched flights as denominator;
@@ -151,7 +156,7 @@ default is `--tables reference_summary`.
 The JOAS class already loads `booktabs`. Add to the preamble:
 
 ```latex
-\usepackage{longtable}
+\usepackage{longtable,multirow}
 ```
 
 After copying the generated prefix folder into the paper project's `tables/`:
