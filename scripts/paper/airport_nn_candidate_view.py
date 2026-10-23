@@ -109,9 +109,9 @@ def main():
         profile.set(xlim=(-3, max_distance), ylim=(-350, 3000), xlabel="Distance to airport (km)", ylabel="Baro height (ft)", yticks=[0, 1000, 2000, 3000])
     cax = fig.add_axes([.065, .075, .43, .013])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation="horizontal", ticks=[0, 2, 4, 6, 8, 10])
-    cb.set_label("Minutes from first observation", fontsize=10)
+    cb.set_label("Minutes from first message", fontsize=10)
     cb.ax.tick_params(labelsize=9)
-    fig.legend(handles=[Line2D([], [], marker="*", linestyle="", color="#087f72", markersize=13, label="Airport"), Line2D([], [], marker="X", linestyle="", color=colors[0], markeredgecolor="#182230", markersize=9, label="First observation")], loc="center", bbox_to_anchor=(.745, .075), ncol=2, frameon=False, fontsize=10)
+    fig.legend(handles=[Line2D([], [], marker="*", linestyle="", color="#087f72", markersize=13, label="Airport"), Line2D([], [], marker="X", linestyle="", color=colors[0], markeredgecolor="#182230", markersize=9, label="First Message")], loc="center", bbox_to_anchor=(.745, .075), ncol=2, frameon=False, fontsize=10)
     for extension in ("png", "svg", "pdf"):
         fig.savefig(args.output / f"a96262_airport_nn_candidate_inputs.{extension}", dpi=180, facecolor="white")
     plt.close(fig)
