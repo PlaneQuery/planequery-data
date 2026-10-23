@@ -312,7 +312,11 @@ def process_day(
     if not day_dir.exists():
         download_swim_logs("sfdps", d, d+timedelta(days=1))
 
-    gz_files = sorted(p for p in day_dir.iterdir() if p.is_file() and p.suffix in (".gz", ".gzip"))
+    # AppleDouble metadata files retain the log suffix but contain no gzip data.
+    gz_files = sorted(
+        p for p in day_dir.iterdir()
+        if p.is_file() and not p.name.startswith("._") and p.suffix in (".gz", ".gzip")
+    )
     if not gz_files:
         raise Exception(f"[{d}] No .gz files found in {day_dir}, skipping.")
 
