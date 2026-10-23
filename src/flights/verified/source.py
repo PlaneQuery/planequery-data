@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 import polars as pl
@@ -18,11 +18,14 @@ from flights.verified.verification import verify_flights
 class VerifiedFlightSource(NonADSBFlightSource):
     source: NonADSBFlightSource
     adsb_source: ADSBSource
+    target_day_adsb: bool = field(default=False, kw_only=True)
 
     def __init__(
         self,
         source: NonADSBFlightSource,
         adsb_source: ADSBSource | None = None,
+        *,
+        target_day_adsb: bool = False,
     ):
         if isinstance(source, SFDPSFlightSource):
             version = 8
@@ -48,6 +51,7 @@ class VerifiedFlightSource(NonADSBFlightSource):
         object.__setattr__(self, "version", version)
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "adsb_source", resolved_adsb_source)
+        object.__setattr__(self, "target_day_adsb", target_day_adsb)
 
     def enrichment_adsb_source(self) -> ADSBSource:
         return self.adsb_source
@@ -60,11 +64,14 @@ class VerifiedFlightSource(NonADSBFlightSource):
             return df_flights
         if isinstance(self.source, EurocontrolFlightSource):
             day_end = datetime.combine(dt + timedelta(days=1), datetime.min.time())
-            # Keep the full departure day for sequence checks, extending each
-            # aircraft only as far as its overnight arrival.
+            # Keep the full departure day for sequence checks. Only extend
+            # through overnight arrivals when target-day-only is disabled.
             aircraft_ends = df_flights.group_by("icao").agg(
-                pl.max_horizontal(pl.col("landing_time").max(), pl.lit(day_end))
-                .alias("_verification_end")
+                (
+                    pl.lit(day_end)
+                    if self.target_day_adsb
+                    else pl.max_horizontal(pl.col("landing_time").max(), pl.lit(day_end))
+                ).alias("_verification_end")
             )
             df_adsb = read_adsb(
                 dt,
