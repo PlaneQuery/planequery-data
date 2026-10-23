@@ -194,8 +194,10 @@ def test_existing_verified_sources_use_selected_adsb_and_keep_us_faa_filter(
     )
     calls = []
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: base)
-    def read(day, *, source):
+    def read(day, *, columns, icaos, source):
         assert day == DAY
+        assert columns == ["icao", "time", "callsign"]
+        assert icaos == ["abc123"]
         assert source is provider
         return observed_callsigns()
 

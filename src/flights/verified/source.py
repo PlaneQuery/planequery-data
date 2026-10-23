@@ -88,7 +88,12 @@ class VerifiedFlightSource(NonADSBFlightSource):
             return verify_flights(
                 airport_catalog, df_flights, df_adsb, require_us_faa_airspace=False
             )
-        df_adsb = read_adsb(dt, source=self.adsb_source).sort("icao", "time")
+        df_adsb = read_adsb(
+            dt,
+            columns=["icao", "time", "callsign"],
+            icaos=df_flights["icao"].unique().to_list(),
+            source=self.adsb_source,
+        ).sort("icao", "time")
         return verify_flights(airport_catalog, df_flights, df_adsb)
 
 if __name__ == "__main__":
