@@ -118,6 +118,13 @@ used during verification (and during EUROCONTROL callsign enrichment), as well
 as the provider used by any ADS-B-derived comparison source. Each provider uses
 separate flight and evaluation cache entries.
 
+`--target-day-adsb` also limits EUROCONTROL verification to the target UTC day
+([00:00, next 00:00)), with separate flight and evaluation caches. Without the
+flag, verification extends through each aircraft's overnight arrivals. With
+the flag, overnight flights must have sufficient callsign observations before
+midnight to pass verification. BTS and SFDPS verification already read only
+the target day.
+
 Use the manifest belonging to the evaluated checkpoint (selected separately
 with `--airport-nn-model` when needed). Only Parquet metadata files explicitly
 listed in `inputs["train"]` are read. A relative manifest argument resolves under

@@ -7,6 +7,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import polars as pl
 
@@ -30,6 +31,7 @@ from planequery_data.utils import date_range
 class FlightSource(ABC):
     name: str
     version: int = 1
+    target_day_adsb: ClassVar[bool] = False
     # TODO: Can have missing days range
 
     def enrichment_adsb_source(self) -> ADSBSource | None:
@@ -41,25 +43,18 @@ class FlightSource(ABC):
         provenance: AirportCatalogProvenance,
         adsb_src: ADSBSource | None,
     ) -> FlightManifest:
-        return FlightManifest.from_provenance(
-            provenance,
-            adsb_source=adsb_src or self.enrichment_adsb_source(),
+        return replace(
+            FlightManifest.from_provenance(
+                provenance,
+                adsb_source=adsb_src or self.enrichment_adsb_source(),
+            ),
+            target_day_adsb=self.target_day_adsb,
         )
 
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
     target_day_adsb: bool = field(default=False, kw_only=True)
-
-    def flight_manifest(
-        self,
-        provenance: AirportCatalogProvenance,
-        adsb_src: ADSBSource | None,
-    ) -> FlightManifest:
-        return replace(
-            super().flight_manifest(provenance, adsb_src),
-            target_day_adsb=self.target_day_adsb,
-        )
 
     def read_adsb(
         self,
@@ -301,7 +296,7 @@ def flight_path(
     if adsb_src is not None:
         path /= f"adsb_source={adsb_src.value}"
 
-    if isinstance(source, ADSBFlightSource) and source.target_day_adsb:
+    if source.target_day_adsb:
         path /= "target_day_adsb=true"
 
     return (

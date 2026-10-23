@@ -124,11 +124,44 @@ def test_overnight_window_does_not_include_other_aircraft_next_day_flights(monke
     assert result["icao"].n_unique() == 2
 
 
-def test_eurocontrol_verified_registry_and_cache_provenance(monkeypatch, tmp_path):
+@pytest.mark.parametrize("target_day_adsb", [False, True])
+@pytest.mark.parametrize("observed_before_midnight", [False, True])
+def test_eurocontrol_verification_target_day_window(
+    monkeypatch, target_day_adsb, observed_before_midnight,
+):
+    base = european_flights()
+    observations = observed_callsigns()
+    if observed_before_midnight:
+        observations = observations.with_columns(
+            pl.when(pl.col("callsign") == "BAW4")
+            .then(pl.col("time") - pl.duration(hours=1))
+            .otherwise(pl.col("time")).alias("time")
+        )
+
+    def read(day, *, end, source, **kwargs):
+        assert day == DAY
+        assert source is ADSBSource.ADSBX
+        assert end == datetime(2024, 6, 2, 0 if target_day_adsb else 1)
+        return observations.filter(pl.col("time") < end)
+
+    monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: base)
+    monkeypatch.setattr(verified_source, "read_adsb", read)
+    source = verified_source.VerifiedFlightSource(
+        sources.EUROCONTROL_SOURCE, adsb_source=ADSBSource.ADSBX,
+        target_day_adsb=target_day_adsb,
+    )
+    result = source.create_flights_for_day(DAY, Catalog())
+    assert result.height == (4 if observed_before_midnight or not target_day_adsb else 0)
+
+
+@pytest.mark.parametrize("target_day_adsb", [False, True])
+def test_eurocontrol_verified_registry_and_cache_provenance(monkeypatch, tmp_path, target_day_adsb):
     source = sources.FLIGHT_SOURCES_BY_NAME["eurocontrol-verified"]
     assert source is sources.EUROCONTROL_VERIFIED_SOURCE
     assert source.source is sources.EUROCONTROL_SOURCE
     assert source.enrichment_adsb_source() is ADSBSource.ADSBLOL
+    if target_day_adsb:
+        source = verified_source.VerifiedFlightSource(source.source, target_day_adsb=True)
     monkeypatch.setattr(flight_source, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: european_flights())
     monkeypatch.setattr(verified_source, "read_adsb", lambda *args, **kwargs: observed_callsigns())
@@ -136,10 +169,12 @@ def test_eurocontrol_verified_registry_and_cache_provenance(monkeypatch, tmp_pat
     result = flight_source.write_flights_for_catalog(source, DAY, Catalog())
 
     path = flight_source.flight_path(source, DAY)
-    assert path == tmp_path / "data/flights/source=eurocontrol-verified/adsb_source=adsblol/version=1/year=2024/month=06/day=01/data.parquet"
+    partition = "target_day_adsb=true/" if target_day_adsb else ""
+    assert path == tmp_path / f"data/flights/source=eurocontrol-verified/adsb_source=adsblol/{partition}version=1/year=2024/month=06/day=01/data.parquet"
     assert pl.read_parquet(path).equals(result)
     assert FlightManifest.read(flight_manifest_path(path)).adsb_source == "adsblol"
-    assert result.height == 4
+    assert FlightManifest.read(flight_manifest_path(path)).target_day_adsb is target_day_adsb
+    assert result.height == (0 if target_day_adsb else 4)
 
 
 def test_empty_eurocontrol_verified_does_not_read_adsb(monkeypatch):

@@ -104,10 +104,12 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
         (EUROCONTROL_VERIFIED_SOURCE, EUROCONTROL_SOURCE),
     ],
 )
+@pytest.mark.parametrize("target_day_adsb", [False, True])
 def test_verified_source_uses_evaluation_adsb_source(
     monkeypatch,
     verified_source,
     wrapped_source,
+    target_day_adsb,
 ):
     day = date(2026, 3, 1)
     calls = []
@@ -119,7 +121,7 @@ def test_verified_source_uses_evaluation_adsb_source(
     monkeypatch.setattr(evaluation, "get_flights", read_flights)
 
     evaluation.source_flights_reader(
-        verified_source,
+        evaluation._with_target_day_adsb([verified_source], target_day_adsb)[0],
         ADSBSource.OPENSKY,
     )(day)
 
@@ -130,6 +132,7 @@ def test_verified_source_uses_evaluation_adsb_source(
     else:
         assert configured_source.source is wrapped_source
     assert configured_source.adsb_source is ADSBSource.OPENSKY
+    assert configured_source.target_day_adsb is target_day_adsb
     assert target_date == day
     assert source_adsb is None
     assert evaluation.adsb_sources_for_evaluation(

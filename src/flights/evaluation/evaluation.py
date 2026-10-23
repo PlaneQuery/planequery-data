@@ -117,6 +117,7 @@ def source_flights_reader(
             source = VerifiedFlightSource(
                 source.source,
                 adsb_source=selected_adsb_source,
+                target_day_adsb=source.target_day_adsb,
             )
             source_adsb = None
         else:
@@ -194,7 +195,11 @@ def _with_target_day_adsb(
     if not enabled:
         return list(sources)
     return [
-        replace(source, target_day_adsb=True)
+        VerifiedFlightSource(
+            source.source, adsb_source=source.adsb_source, target_day_adsb=True
+        )
+        if isinstance(source, VerifiedFlightSource)
+        else replace(source, target_day_adsb=True)
         if isinstance(source, ADSBFlightSource)
         else source
         for source in sources
@@ -346,7 +351,7 @@ def evaluate(
             input_settings = {
                 source.target_day_adsb
                 for source in (resolved_test_source, resolved_gold_source)
-                if isinstance(source, ADSBFlightSource)
+                if isinstance(source, (ADSBFlightSource, VerifiedFlightSource))
             }
             if len(input_settings) > 1:
                 raise ValueError(

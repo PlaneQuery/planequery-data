@@ -27,6 +27,7 @@ from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
     BTS_SOURCE,
     BTS_VERIFIED_SOURCE,
+    EUROCONTROL_VERIFIED_SOURCE,
 )
 
 
@@ -197,10 +198,11 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     assert first_results.stats[0].precision == 1.0
 
 
+@pytest.mark.parametrize("verified", [False, True])
 def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, verified,
 ):
-    source = _algorithm_nn_source(tmp_path)
+    source = EUROCONTROL_VERIFIED_SOURCE if verified else _algorithm_nn_source(tmp_path)
     cache = EvaluationCache(tmp_path / "cache")
     frame = flights_to_flights_df([_flight()])
     configured_sources = []
@@ -212,12 +214,13 @@ def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
     reads = _patch_inputs(monkeypatch, source, frame_for_source)
     ordinary = _evaluate(source, cache)
     single_day = _evaluate(source, cache, target_day_adsb=True)
-    repeated = _evaluate(replace(source, target_day_adsb=True), cache)
+    repeated = _evaluate(evaluation._with_target_day_adsb([source], True)[0], cache)
 
     assert len(reads) == 4
     assert configured_sources[0].target_day_adsb is False
     assert configured_sources[2].target_day_adsb is True
-    assert configured_sources[2].model_path == source.model_path
+    if not verified:
+        assert configured_sources[2].model_path == source.model_path
     assert ordinary.stats[0].target_day_adsb is False
     assert single_day.stats[0].target_day_adsb is True
     assert repeated.stats == single_day.stats
@@ -229,14 +232,15 @@ def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
     assert listed["target_day_adsb"].to_list() == [True]
 
 
-def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path):
+@pytest.mark.parametrize("gold_source", [ALGORITHM_NEAREST_SOURCE, EUROCONTROL_VERIFIED_SOURCE])
+def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path, gold_source):
     source = _algorithm_nn_source(tmp_path)
     cache = EvaluationCache(tmp_path / "cache")
     frame = flights_to_flights_df([_flight()])
     sources = []
     _patch_inputs(monkeypatch, source, lambda resolved: sources.append(resolved) or frame)
     results = evaluation.evaluate(
-        test_source=source, gold_source=ALGORITHM_NEAREST_SOURCE,
+        test_source=source, gold_source=gold_source,
         test_dates=TARGET_DATE, adsb_source=list(ADSBSource),
         target_day_adsb=True, evaluation_cache=cache,
     )
