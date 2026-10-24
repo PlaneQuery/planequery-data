@@ -52,8 +52,9 @@ Set `OUTPUT_DIR` to the evaluation data root (for example,
 - BTS, SFDPS, BTS-verified, and SFDPS-verified on **2026-03-01**.
 - Eurocontrol and Eurocontrol-verified on **2024-06-01**.
 - ADSB.lol, OpenSky messages, and ADSBX, all with **target-day-only ADS-B**.
-- Nearest and NN, showing segmentation **P / R / F1 (%)** and airport accuracy
-  **takeoff / landing (%)**. Shared segmentation cells span the two methods.
+- Nearest and NN, showing **Flights G / T** (retained gold/test counts),
+  segmentation **P / R / F1 (%)**, and airport accuracy **takeoff / landing (%)**.
+  Shared flight counts and segmentation cells span the two methods.
 
 Use `--test-source algorithm-nn` for NN only. The preset requires all 36
 comparisons (18 for NN only) and their selected metrics and denominator counts
