@@ -28,10 +28,12 @@ REFERENCE_DATES = {
     "sfdps-verified": "2026-03-01", "eurocontrol-verified": "2024-06-01",
 }
 METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
-                if metric.key in {"precision", "recall", "f1",
+                if metric.key in {"gold_flight_count", "test_flight_count",
+                                  "precision", "recall", "f1",
                                   "takeoff_airport_id_match_pct",
                                   "landing_airport_id_match_pct"})
 NOTE = (
+    "G/T = retained gold/test flights. "
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
     "TO/LD = takeoff/landing airport accuracy among matched flights; null airport "
     "IDs are incorrect. All rates are percentages. Nearest/NN denote "
@@ -102,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         rows.sort(key=reference_sort_key)
         validate_comparisons(rows, args.test_source)
         prepare_rows(rows, {"adsb_sources": METRICS}, require_complete=True)
-        # Counts are required even though only rates appear in the paper table.
+        # Preserve all exact denominators in the CSV, including matched flights.
         denominators = TABLES["reference_summary"].denominators
         if any(row.get(key) is None for row in rows for key in denominators):
             raise ValueError("Missing denominator counts; supply full evaluation CSVs.")

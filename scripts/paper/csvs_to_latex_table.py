@@ -212,8 +212,9 @@ def reference_sort_key(row: dict[str, Any]) -> tuple:
     # The published OpenSky dataset has no ADS-B provider metadata, but belongs
     # beside the methods evaluated on OpenSky messages in the paper table.
     provider = row["adsb_src"] or ("opensky" if row["test_src"] == "opensky" else "")
+    provider_rank = {"adsblol": 0, "opensky": 1, "adsbx": 2}.get(provider, 3)
     method_rank = {"opensky": 0, "algorithm-nearest": 1, "algorithm-nn": 2}.get(row["test_src"], 3)
-    return (rank, source, row["test_date"], row["target_day_adsb"], provider, method_rank, row["test_src"])
+    return (rank, source, row["test_date"], row["target_day_adsb"], provider_rank, provider, method_rank, row["test_src"])
 
 
 def number(value: Any) -> Any:
