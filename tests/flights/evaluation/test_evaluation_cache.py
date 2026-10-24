@@ -28,6 +28,7 @@ from flights.sources import (
     BTS_SOURCE,
     BTS_VERIFIED_SOURCE,
     EUROCONTROL_VERIFIED_SOURCE,
+    SFDPS_VERIFIED_SOURCE,
 )
 
 
@@ -124,30 +125,32 @@ def test_default_cache_directory_is_under_output_dir(monkeypatch, tmp_path):
     )
 
 
-def test_verified_source_cache_key_tracks_selected_adsb_provider(tmp_path):
+@pytest.mark.parametrize("verified_source", [
+    BTS_VERIFIED_SOURCE, SFDPS_VERIFIED_SOURCE, EUROCONTROL_VERIFIED_SOURCE,
+])
+def test_verified_source_cache_key_is_independent_of_selected_adsb_provider(tmp_path, verified_source):
     cache = EvaluationCache(tmp_path / "cache")
     catalog = _airport_catalog()
 
     opensky = cache.make_key(
         TARGET_DATE,
         BTS_SOURCE,
-        BTS_VERIFIED_SOURCE,
+        verified_source,
         ADSBSource.OPENSKY,
         catalog,
     )
     adsblol = cache.make_key(
         TARGET_DATE,
         BTS_SOURCE,
-        BTS_VERIFIED_SOURCE,
+        verified_source,
         ADSBSource.ADSBLOL,
         catalog,
     )
 
-    assert opensky.adsb_source == "opensky"
-    assert opensky.adsb_parquet_version == 4
-    assert adsblol.adsb_source == "adsblol"
-    assert adsblol.adsb_parquet_version == 6
-    assert cache.path_for(opensky) != cache.path_for(adsblol)
+    assert opensky.adsb_source is None
+    assert opensky.adsb_parquet_version is None
+    assert opensky == adsblol
+    assert cache.path_for(opensky) == cache.path_for(adsblol)
 
 
 def test_airport_exposure_reuses_cached_comparison(monkeypatch, tmp_path):
@@ -232,7 +235,10 @@ def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
     assert listed["target_day_adsb"].to_list() == [True]
 
 
-@pytest.mark.parametrize("gold_source", [ALGORITHM_NEAREST_SOURCE, EUROCONTROL_VERIFIED_SOURCE])
+@pytest.mark.parametrize("gold_source", [
+    ALGORITHM_NEAREST_SOURCE, EUROCONTROL_VERIFIED_SOURCE,
+    BTS_VERIFIED_SOURCE, SFDPS_VERIFIED_SOURCE,
+])
 def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path, gold_source):
     source = _algorithm_nn_source(tmp_path)
     cache = EvaluationCache(tmp_path / "cache")
@@ -244,7 +250,14 @@ def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path, gold
         test_dates=TARGET_DATE, adsb_source=list(ADSBSource),
         target_day_adsb=True, evaluation_cache=cache,
     )
-    assert len(sources) == 6
+    if gold_source is ALGORITHM_NEAREST_SOURCE:
+        assert len(sources) == 6
+    else:
+        # Read the fixed verified cohort once, alongside three test providers.
+        assert len(sources) == 4
+        gold_reads = [resolved for resolved in sources if resolved.name == gold_source.name]
+        assert len(gold_reads) == 1
+        assert gold_reads[0].adsb_source is ADSBSource.ADSBLOL
     assert all(resolved.target_day_adsb for resolved in sources)
     assert {stats.adsb_source for stats in results.stats} == set(ADSBSource)
     assert all(stats.target_day_adsb for stats in results.stats)

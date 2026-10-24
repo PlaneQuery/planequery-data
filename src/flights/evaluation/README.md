@@ -113,10 +113,12 @@ python -m flights.evaluation.evaluation \
   --airport-nn-training "$PWD/outputs/airport-nn-february-2026-10-21-days-20/training.json"
 ```
 
-For verified test or gold sources, `--adsb-source` selects the ADS-B provider
-used during verification (and during EUROCONTROL callsign enrichment), as well
-as the provider used by any ADS-B-derived comparison source. Each provider uses
-separate flight and evaluation cache entries.
+Verified test and gold sources (`eurocontrol-verified`, `sfdps-verified`, and
+`bts-verified`) always use ADSB.lol for verification, including EUROCONTROL
+callsign enrichment. `--adsb-source` selects the provider for ADS-B-derived
+comparison sources only, so provider comparisons share the same verified
+reference cohort. Verified flight caches use the `adsb_source=adsblol` partition;
+evaluation caches remain separate when the comparison source varies by provider.
 
 `--target-day-adsb` also limits EUROCONTROL verification to the target UTC day
 ([00:00, next 00:00)), with separate flight and evaluation caches. Without the

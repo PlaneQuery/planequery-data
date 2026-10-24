@@ -50,7 +50,7 @@ def observed_callsigns():
     })
 
 
-@pytest.mark.parametrize("provider", [ADSBSource.ADSBLOL, ADSBSource.OPENSKY])
+@pytest.mark.parametrize("provider", list(ADSBSource))
 @pytest.mark.parametrize("scenario", ["valid", "broken_airports", "unknown_airports", "too_few_flights", "extra_callsign"])
 def test_eurocontrol_verified_checks_global_flight_sequences(monkeypatch, provider, scenario):
     base = european_flights()
@@ -73,7 +73,7 @@ def test_eurocontrol_verified_checks_global_flight_sequences(monkeypatch, provid
     source = verified_source.VerifiedFlightSource(wrapped)
 
     def get_base(source_arg, day_arg, catalog_arg):
-        assert source_arg is wrapped
+        assert source_arg == EurocontrolFlightSource(callsign_source=ADSBSource.ADSBLOL)
         assert day_arg == DAY
         assert catalog_arg is catalog
         return base.reverse()
@@ -84,7 +84,7 @@ def test_eurocontrol_verified_checks_global_flight_sequences(monkeypatch, provid
         assert end == expected_end
         assert columns == ["icao", "time", "callsign"]
         assert icaos == ["abc123"]
-        assert source is provider
+        assert source is ADSBSource.ADSBLOL
         return observations.filter(pl.col("time") < end).reverse()
 
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", get_base)
@@ -140,14 +140,14 @@ def test_eurocontrol_verification_target_day_window(
 
     def read(day, *, end, source, **kwargs):
         assert day == DAY
-        assert source is ADSBSource.ADSBX
+        assert source is ADSBSource.ADSBLOL
         assert end == datetime(2024, 6, 2, 0 if target_day_adsb else 1)
         return observations.filter(pl.col("time") < end)
 
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: base)
     monkeypatch.setattr(verified_source, "read_adsb", read)
     source = verified_source.VerifiedFlightSource(
-        sources.EUROCONTROL_SOURCE, adsb_source=ADSBSource.ADSBX,
+        sources.EUROCONTROL_SOURCE,
         target_day_adsb=target_day_adsb,
     )
     result = source.create_flights_for_day(DAY, Catalog())
@@ -185,9 +185,8 @@ def test_empty_eurocontrol_verified_does_not_read_adsb(monkeypatch):
 
 
 @pytest.mark.parametrize("base_source", [BTSFlightSource(), SFDPSFlightSource()])
-@pytest.mark.parametrize("provider", [ADSBSource.ADSBLOL, ADSBSource.OPENSKY])
-def test_existing_verified_sources_use_selected_adsb_and_keep_us_faa_filter(
-    monkeypatch, base_source, provider
+def test_existing_verified_sources_use_adsblol_and_keep_us_faa_filter(
+    monkeypatch, base_source
 ):
     base = european_flights().with_columns(
         pl.Series("callsign", ["BAW1", "BAW2", "BAW3", "BAW4"])
@@ -198,7 +197,7 @@ def test_existing_verified_sources_use_selected_adsb_and_keep_us_faa_filter(
         assert day == DAY
         assert columns == ["icao", "time", "callsign"]
         assert icaos == ["abc123"]
-        assert source is provider
+        assert source is ADSBSource.ADSBLOL
         return observed_callsigns()
 
     monkeypatch.setattr(verified_source, "read_adsb", read)
@@ -207,12 +206,12 @@ def test_existing_verified_sources_use_selected_adsb_and_keep_us_faa_filter(
         "_check_flights_in_us_faa_airspace",
         lambda *args: calls.append(True) or [],
     )
-    source = verified_source.VerifiedFlightSource(base_source, adsb_source=provider)
-    assert source.enrichment_adsb_source() is provider
-    assert f"adsb_source={provider.value}" in flight_source.flight_path(
+    source = verified_source.VerifiedFlightSource(base_source)
+    assert source.enrichment_adsb_source() is ADSBSource.ADSBLOL
+    assert "adsb_source=adsblol" in flight_source.flight_path(
         source, DAY
     ).parts
-    assert source.flight_manifest(Catalog.provenance, None).adsb_source == provider.value
+    assert source.flight_manifest(Catalog.provenance, None).adsb_source == "adsblol"
     result = source.create_flights_for_day(DAY, Catalog())
     assert calls == [True]
     assert result.is_empty()

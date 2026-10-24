@@ -105,11 +105,13 @@ def test_canonical_name_resolves_to_flight_source(monkeypatch):
     ],
 )
 @pytest.mark.parametrize("target_day_adsb", [False, True])
-def test_verified_source_uses_evaluation_adsb_source(
+@pytest.mark.parametrize("provider", [None, *ADSBSource])
+def test_verified_source_always_uses_adsblol(
     monkeypatch,
     verified_source,
     wrapped_source,
     target_day_adsb,
+    provider,
 ):
     day = date(2026, 3, 1)
     calls = []
@@ -122,16 +124,16 @@ def test_verified_source_uses_evaluation_adsb_source(
 
     evaluation.source_flights_reader(
         evaluation._with_target_day_adsb([verified_source], target_day_adsb)[0],
-        ADSBSource.OPENSKY,
+        provider,
     )(day)
 
     configured_source, target_date, source_adsb = calls[0]
     assert isinstance(configured_source, VerifiedFlightSource)
     if wrapped_source is EUROCONTROL_SOURCE:
-        assert configured_source.source.callsign_source is ADSBSource.OPENSKY
+        assert configured_source.source.callsign_source is ADSBSource.ADSBLOL
     else:
         assert configured_source.source is wrapped_source
-    assert configured_source.adsb_source is ADSBSource.OPENSKY
+    assert configured_source.adsb_source is ADSBSource.ADSBLOL
     assert configured_source.target_day_adsb is target_day_adsb
     assert target_date == day
     assert source_adsb is None
@@ -139,7 +141,7 @@ def test_verified_source_uses_evaluation_adsb_source(
         BTS_SOURCE,
         verified_source,
         [ADSBSource.ADSBLOL, ADSBSource.OPENSKY],
-    ) == [ADSBSource.ADSBLOL, ADSBSource.OPENSKY]
+    ) == [None]
 
 
 @pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE, OPENSKY_NN_SOURCE])
