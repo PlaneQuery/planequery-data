@@ -16,6 +16,7 @@ def evaluation_rows():
                  gold_src=source, adsb_src=provider, target_day_adsb="True", test_src=method,
                  true_positive=8, false_positive=2, false_negative=2, gold_icao_count=5,
                  precision=.8, recall=.8, f1=.8,
+                 gold_icao_missing_from_test_pct=.2,
                  takeoff_airport_id_match_pct=.75 if method == "algorithm-nn" else .5,
                  landing_airport_id_match_pct=.625)
             for source in ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")

@@ -30,11 +30,14 @@ REFERENCE_DATES = {
 METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
                 if metric.key in {"gold_flight_count", "test_flight_count",
                                   "precision", "recall", "f1",
+                                  "gold_icao_missing_from_test_pct",
                                   "takeoff_airport_id_match_pct",
                                   "landing_airport_id_match_pct"})
 NOTE = (
     "G/T = retained gold/test flights. "
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
+    "Zero flights is the percentage of gold ICAOs with no test flights, measured "
+    "before matching and boundary filtering. "
     "TO/LD = takeoff/landing airport accuracy among matched flights; null airport "
     "IDs are incorrect. All rates are percentages. Nearest/NN denote "
     "algorithm-nearest/algorithm-nn. OpenSky denotes the ADS-B message provider. "
