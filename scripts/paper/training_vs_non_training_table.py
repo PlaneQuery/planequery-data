@@ -181,7 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--cache-policy", choices=("latest", "error"), default="latest")
     parser.add_argument("--airport-nn-training", type=Path, help="Cache mode: training.json (relative to OUTPUT_DIR). Default: beside the current default NN model.")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
+                        help="Output parent directory (default: $OUTPUT_DIR/paper/tables).")
     parser.add_argument("--prefix", help="Output subfolder/filename prefix; default includes the date range.")
     parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD")
     parser.add_argument("--test-source", nargs="+", action="extend", choices=METHODS)
@@ -201,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         if values:
             include[column] = set(values)
     try:
+        if args.output_dir is None:
+            raise ValueError("Set OUTPUT_DIR or supply --output-dir for generated tables.")
         provenance: dict[str, Any] = {"input_mode": "csv" if args.csvs else "evaluation_cache"}
         if args.csvs:
             paths = [path.expanduser() for path in args.csvs]

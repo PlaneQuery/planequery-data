@@ -23,6 +23,7 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from airports.history import AirportHistory
 from airports.history.schema import HistoryPaths
+from data_engineering.utils import OUTPUT_DIR
 from flights.airport_nn.features import VERSION, clean_messages, trajectories
 
 
@@ -34,7 +35,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--observations", type=Path, default=Path("tmp/adsbx_a96262_20260401/observations.parquet"))
     parser.add_argument("--flights", type=Path, default=Path("tmp/adsbx_a96262_20260401/figure_flights.parquet"))
-    parser.add_argument("--output", type=Path, default=Path("paper/figures/a96262_airport_nn_inputs"))
+    parser.add_argument("--output", type=Path,
+                        default=OUTPUT_DIR.expanduser() / "paper/figures/a96262_airport_nn_inputs",
+                        help="Output directory (default: $OUTPUT_DIR/paper/figures/a96262_airport_nn_inputs).")
     parser.add_argument("--endpoint", choices=("both", "takeoff", "landing"), default="both")
     args = parser.parse_args()
     all_flights = pl.read_parquet(args.flights).sort("takeoff_time")

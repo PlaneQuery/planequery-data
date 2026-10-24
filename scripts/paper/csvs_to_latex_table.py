@@ -20,7 +20,8 @@ import re
 import sys
 from typing import Any
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "paper/tables"
+DEFAULT_OUTPUT_DIR = (Path(os.environ["OUTPUT_DIR"]).expanduser() / "paper/tables"
+                      if os.environ.get("OUTPUT_DIR") else None)
 METADATA = ("test_date", "gold_src", "adsb_src", "target_day_adsb", "test_src")
 
 
@@ -313,7 +314,10 @@ def format_metric(row: dict[str, Any], metric: Metric, decimals: int) -> str:
 
 
 def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
-                  prefix: str, decimals: int) -> str:
+                  prefix: str, decimals: int, *,
+                  caption: str = "Flight evaluation by reference dataset",
+                  note: str | None = None,
+                  label_suffix: str = "-reference-summary") -> str:
     """One compact table: reference datasets as groups, methods/providers as rows."""
     by_key = {metric.key: metric for metric in metrics}
     columns = []
@@ -338,10 +342,10 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         "% Requires \\usepackage{booktabs,longtable,multirow}.",
         r"\begingroup", r"\footnotesize", r"\setlength{\tabcolsep}{2.5pt}",
         r"\begin{longtable}{@{}l" + "r" * len(columns) + "@{}}",
-        r"\caption{Flight evaluation by reference dataset}",
-        r"\label{tab:" + prefix.replace("_", "-") + r"-reference-summary}\\",
+        r"\caption{" + latex_escape(caption) + "}",
+        r"\label{tab:" + prefix.replace("_", "-") + label_suffix + r"}\\",
         r"\toprule", heading, r"\midrule", r"\endfirsthead",
-        r"\multicolumn{" + str(width) + r"}{l}{Flight evaluation by reference dataset (continued)}\\",
+        r"\multicolumn{" + str(width) + r"}{l}{" + latex_escape(caption) + r" (continued)}\\",
         r"\toprule", heading, r"\midrule", r"\endhead",
         r"\midrule", r"\multicolumn{" + str(width) + r"}{r}{Continued on next page}\\", r"\endfoot",
         r"\bottomrule", r"\endlastfoot",
@@ -390,7 +394,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
                 cells.append(cell)
             # Keep the two methods on the same page when they share cells.
             lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
-    note = TABLES["reference_summary"].note
+    note = TABLES["reference_summary"].note if note is None else note
     if has_shared_cells:
         note += " Cells spanning Nearest and NN report values shared by both methods."
     if len(providers) == 1:
@@ -513,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-policy", choices=("latest", "error"), default="latest",
                         help="How to handle multiple cached runs per comparison: newest creation time (default), or fail.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
-                        help="Output parent directory; all files go in its <prefix>/ subfolder. Default: paper/tables.")
+                        help="Output parent directory; all files go in its <prefix>/ subfolder. Default: $OUTPUT_DIR/paper/tables.")
     parser.add_argument("--prefix", help="Subfolder, filename, and LaTeX-label prefix; default: evaluation_<date or range>.")
     parser.add_argument("--tables", nargs="+", choices=TABLES, action="extend",
                         help="Default: one compact reference_summary table. Other topics are optional.")
@@ -541,6 +545,8 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.decimals <= 6:
         parser.error("--decimals must be between 0 and 6.")
     try:
+        if args.output_dir is None:
+            raise ValueError("Set OUTPUT_DIR or supply --output-dir for generated tables.")
         args.csvs = [path.expanduser() for path in args.csvs]
         if any(not path.is_absolute() for path in args.csvs):
             output_root = os.environ.get("OUTPUT_DIR")

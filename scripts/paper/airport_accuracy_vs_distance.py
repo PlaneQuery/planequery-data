@@ -15,9 +15,9 @@ import matplotlib.pyplot as plt
 import polars as pl
 
 from flights.evaluation.cache import EvaluationCache
+from data_engineering.utils import OUTPUT_DIR
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 STEM = "airport_accuracy_vs_distance_opensky"
 MODELS = ("algorithm-nearest", "algorithm-nn")
 BREAKS = [1, 2, 5, 10, 20, 50, 100]
@@ -33,7 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", type=Path, help="Override the evaluation cache root.")
     parser.add_argument(
         "--output-dir", type=Path,
-        default=REPO_ROOT / "paper" / "figures" / STEM,
+        default=OUTPUT_DIR.expanduser() / "paper" / "figures" / STEM,
+        help="Output directory (default: $OUTPUT_DIR/paper/figures/" + STEM + ").",
     )
     parser.add_argument("--us-date", type=date.fromisoformat, default=date(2026, 3, 1))
     parser.add_argument("--eurocontrol-date", type=date.fromisoformat, default=date(2024, 6, 1))
