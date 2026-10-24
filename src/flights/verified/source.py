@@ -16,14 +16,15 @@ from flights.verified.verification import verify_flights
 
 @dataclass(frozen=True, init=False)
 class VerifiedFlightSource(NonADSBFlightSource):
+    """Verify reference flights against a fixed ADSB.lol observation source."""
+
     source: NonADSBFlightSource
-    adsb_source: ADSBSource
+    adsb_source: ADSBSource = field(default=ADSBSource.ADSBLOL, init=False)
     target_day_adsb: bool = field(default=False, kw_only=True)
 
     def __init__(
         self,
         source: NonADSBFlightSource,
-        adsb_source: ADSBSource | None = None,
         *,
         target_day_adsb: bool = False,
     ):
@@ -37,11 +38,7 @@ class VerifiedFlightSource(NonADSBFlightSource):
             raise ValueError(
                 "VerifiedFlightSource only supports BTS, SFDPS, and Eurocontrol sources"
             )
-        resolved_adsb_source = (
-            adsb_source
-            or source.enrichment_adsb_source()
-            or ADSBSource.ADSBLOL
-        )
+        resolved_adsb_source = ADSBSource.ADSBLOL
         if (
             isinstance(source, EurocontrolFlightSource)
             and source.callsign_source is not resolved_adsb_source

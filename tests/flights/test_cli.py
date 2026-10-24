@@ -50,22 +50,21 @@ def test_eurocontrol_callsign_flag_is_removed():
         cli.parse_args(["2024-06-01", "2024-06-02", "eurocontrol", "--eurocontrol-callsigns"])
 
 
-@pytest.mark.parametrize("provider_args, expected", [
-    ([], ADSBSource.ADSBLOL),
-    (["--adsb-source", "opensky"], ADSBSource.OPENSKY),
+@pytest.mark.parametrize("provider_args", [
+    [], ["--adsb-source", "opensky"], ["--adsb-source", "adsbx"],
 ])
-def test_eurocontrol_verified_cli_selects_matching_provider(monkeypatch, provider_args, expected):
+def test_eurocontrol_verified_cli_always_uses_adsblol(monkeypatch, provider_args):
     calls = []
     monkeypatch.setattr(cli, "write_flights_range", lambda *args, **kwargs: calls.append(args[2]))
     cli.main(["2024-06-01", "2024-06-02", "eurocontrol-verified", *provider_args])
     assert calls[0].name == "eurocontrol-verified"
-    assert calls[0].source.callsign_source is expected
-    assert calls[0].enrichment_adsb_source() is expected
+    assert calls[0].source.callsign_source is ADSBSource.ADSBLOL
+    assert calls[0].enrichment_adsb_source() is ADSBSource.ADSBLOL
 
 
 @pytest.mark.parametrize("source_name", ["bts-verified", "sfdps-verified"])
-@pytest.mark.parametrize("provider", [ADSBSource.ADSBLOL, ADSBSource.OPENSKY])
-def test_verified_cli_selects_adsb_provider(monkeypatch, source_name, provider):
+@pytest.mark.parametrize("provider", list(ADSBSource))
+def test_verified_cli_always_uses_adsblol(monkeypatch, source_name, provider):
     calls = []
     monkeypatch.setattr(
         cli,
@@ -77,8 +76,8 @@ def test_verified_cli_selects_adsb_provider(monkeypatch, source_name, provider):
         "--adsb-source", provider.value,
     ])
     assert calls[0].name == source_name
-    assert calls[0].adsb_source is provider
-    assert calls[0].enrichment_adsb_source() is provider
+    assert calls[0].adsb_source is ADSBSource.ADSBLOL
+    assert calls[0].enrichment_adsb_source() is ADSBSource.ADSBLOL
 
 
 @pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])

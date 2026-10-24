@@ -137,9 +137,9 @@ It requires known, consecutive airports and at least four flights per aircraft,
 with the flight callsign sequence matching the ADS-B callsign history exactly.
 Unlike `bts-verified` and `sfdps-verified`, it accepts airports outside US FAA
 airspace. It sorts flights and observations and includes overnight arrivals.
-The selected `--adsb-source` provider is used by `bts-verified` and
-`sfdps-verified` for verification. For `eurocontrol-verified`, the same provider
-is used for both callsign enrichment and verification;
+`bts-verified`, `sfdps-verified`, and `eurocontrol-verified` always use ADSB.lol
+for verification, regardless of `--adsb-source`. For `eurocontrol-verified`,
+ADSB.lol is also used for callsign enrichment;
 verification reads ADS-B through the standard reader, which can fetch missing
 partitions. Callsigns are refreshed from those observations before checking the
 sequence, so this is a consistency check, not independent callsign ground truth.

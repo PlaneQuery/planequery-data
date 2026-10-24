@@ -20,7 +20,6 @@ from flights.flight_source import (
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
-from flights.verified.source import VerifiedFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
     FLIGHT_SOURCES,
@@ -294,11 +293,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     source = FLIGHT_SOURCES_BY_NAME[args.source]
     if isinstance(source, EurocontrolFlightSource):
         source = replace(source, callsign_source=args.adsb_source)
-    elif isinstance(source, VerifiedFlightSource):
-        source = VerifiedFlightSource(
-            source.source,
-            adsb_source=args.adsb_source,
-        )
     if args.mike_input is not None:
         assert isinstance(source, MikeFlightSource)
         source = replace(source, input_csv=args.mike_input)

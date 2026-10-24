@@ -44,7 +44,7 @@ SourceInput = FlightSource | str
 
 
 def _uses_selected_adsb_source(source: FlightSource) -> bool:
-    return isinstance(source, (ADSBFlightSource, VerifiedFlightSource))
+    return isinstance(source, ADSBFlightSource)
 
 
 def default_stats_path() -> Path:
@@ -112,16 +112,7 @@ def source_flights_reader(
     if _uses_selected_adsb_source(source):
         if adsb_source is None:
             raise ValueError(f"{source.name} requires an ADS-B source")
-        selected_adsb_source = ADSBSource(adsb_source)
-        if isinstance(source, VerifiedFlightSource):
-            source = VerifiedFlightSource(
-                source.source,
-                adsb_source=selected_adsb_source,
-                target_day_adsb=source.target_day_adsb,
-            )
-            source_adsb = None
-        else:
-            source_adsb = selected_adsb_source
+        source_adsb = ADSBSource(adsb_source)
     else:
         source_adsb = None
 
@@ -196,7 +187,7 @@ def _with_target_day_adsb(
         return list(sources)
     return [
         VerifiedFlightSource(
-            source.source, adsb_source=source.adsb_source, target_day_adsb=True
+            source.source, target_day_adsb=True
         )
         if isinstance(source, VerifiedFlightSource)
         else replace(source, target_day_adsb=True)

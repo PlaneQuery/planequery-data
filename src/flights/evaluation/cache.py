@@ -22,10 +22,9 @@ from flights.evaluation.models import (
     evaluation_stats_frame,
 )
 from flights.flight_source import ADSBFlightSource, FlightSource
-from flights.verified.source import VerifiedFlightSource
 
 
-EVALUATION_CACHE_VERSION = 10
+EVALUATION_CACHE_VERSION = 11
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
@@ -193,7 +192,7 @@ class EvaluationCacheKey:
             test_date,
         )
 
-        adsb_source_types = (ADSBFlightSource, VerifiedFlightSource)
+        adsb_source_types = (ADSBFlightSource,)
         source_uses_adsb = isinstance(
             test_source,
             adsb_source_types,
