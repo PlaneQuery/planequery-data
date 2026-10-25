@@ -182,8 +182,7 @@ Set `OUTPUT_DIR` to the evaluation data root (for example,
 Use `--test-source algorithm-nn` for NN only. The preset requires all 36
 comparisons (18 for NN only) and their selected metrics and denominator counts
 before writing anything. The generic exporter can display these same metrics
-with `--metrics`, but its `--require-complete` checks metric availability rather
-than the full reference/provider/method grid.
+with `--metrics` and also requires its selected reference/provider/method grid.
 
 By default it reads only the current supported evaluation cache version; it
 does not run missing evaluations or substitute old cache versions. Explicit
@@ -311,7 +310,7 @@ surrounding `table` float. Reference with
 The script now produces **one compact summary table**, grouped by reference
 flight dataset: BTS, SFDPS, and Eurocontrol first, followed by BTS-verified,
 SFDPS-verified, and Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
-Only reference datasets present in the input are included.
+Explicitly requested methods and reference datasets must all be present.
 The published OpenSky flights and OpenSky-NN rows appear directly before
 Nearest/OpenSky and NN/OpenSky within each reference dataset. OpenSky-NN keeps
 OpenSky's flight boundaries and replaces the airport predictions with the NN.
@@ -335,28 +334,35 @@ No CSV filenames are needed. The script calls `EvaluationCache.find_stats()`
 from the evaluation setup, using `$OUTPUT_DIR/data/cache/evaluation`. It reads
 only entries supported by the current evaluation cache version, including the
 cache reader's existing validity checks. It never runs evaluations or modifies
-cache files. Missing results cause an error if nothing matches; individual
-uncached source/date combinations are not invented or recomputed.
+cache files. Missing requested method/reference/provider comparisons cause an
+error before any output is written. Missing selected metrics also fail by default.
+Current means the current evaluation cache version; no extra source/model
+fingerprint freshness policy is applied by the exporter.
 
-If OpenSky-NN results are missing, evaluate the published and NN-enriched
-OpenSky sources with the current evaluator before exporting (this can run NN
-inference and requires the downloaded flights and OpenSky observations):
+`src/flights/cli.py ... opensky-nn` generates flight files, not evaluation
+results. To evaluate already-generated OpenSky-NN flights, run these two date
+groups in the same environment and checkout used to generate the flights.
+Valid flight caches are reused; missing or stale flight caches may trigger
+regeneration. These commands create the six missing reference comparisons:
 
 ```bash
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
-  --test-source opensky opensky-nn \
+  --test-source opensky-nn \
   --gold-source bts sfdps bts-verified sfdps-verified \
   --test-dates 2026-03-01
 
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
-  --test-source opensky opensky-nn \
+  --test-source opensky-nn \
   --gold-source eurocontrol eurocontrol-verified \
   --test-dates 2024-06-01
 ```
 
 Use the same `OUTPUT_DIR` as the table export. Omit `--target-day-adsb` for these
-sources. `--require-complete` checks metrics in available rows, so explicitly
-requesting `opensky-nn` does not fail if that method has no cached rows.
+sources. Then rerun the table command above (use `--prefix table_0` for Table 0).
+An explicitly requested `opensky-nn` now fails if any selected comparison is
+missing. Published OpenSky and OpenSky-NN use the provider-independent evaluation
+metadata value `none`, so keep `--adsb-source opensky none` when exporting them
+alongside Nearest/NN. The model still uses OpenSky observations internally.
 
 Use `--cache-dir /path/to/evaluation` to override the cache root. Cache mode
 requires the project's Python environment and `OUTPUT_DIR`, just like the
@@ -466,11 +472,15 @@ family including its verified variant.
 
 In CSV mode, exact duplicate rows are deduplicated and conflicting daily results
 are rejected. Cache mode follows the explicit cache-selection policy above.
-Existing `average` rows are excluded. `--require-complete` fails before writing
-when selected metrics are missing, except undefined timing when no flights
-match. Without it, missing metrics produce a warning, blank CSV cells, and
-dashes in LaTeX. A dataset's ICAO count must agree across its methods to be
-shown once in the heading.
+Existing `average` rows are excluded. The generic exporter always fails before
+writing if a requested comparison or selected metric is missing, except undefined
+timing when no flights match. `--require-complete` remains accepted for compatibility;
+it is now the default and cannot be disabled. Explicit methods/references/providers
+define the required grid; omitted filters use the values present in the selected
+input. Summary tables still select one date per reference family; detailed exports
+require every explicitly selected date. Each dataset's ICAO count must agree across
+its methods to be shown once in the heading. Standalone CSV inputs do not carry
+cache-version provenance; the current-version check applies to cache input mode.
 
 `--decimals` controls LaTeX rounding (default 2). `--prefix` names the subfolder,
 files, and labels; without it, the prefix contains the selected date range.

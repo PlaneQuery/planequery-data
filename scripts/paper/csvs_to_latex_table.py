@@ -154,6 +154,9 @@ SHARED_FLIGHT_METRICS = {
     )
 }
 REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")
+# These sources have no selectable ADS-B provider in evaluation metadata.
+# Keep the CSV exporter usable with only the standard library.
+PROVIDER_INDEPENDENT_SOURCES = {*REFERENCE_ORDER, "opensky", "opensky-nn", "adsbx", "mike"}
 REFERENCE_LABELS = {
     "bts": "BTS", "bts-verified": "BTS (verified)",
     "sfdps": "SFDPS", "sfdps-verified": "SFDPS (verified)",
@@ -217,6 +220,39 @@ def reference_sort_key(row: dict[str, Any]) -> tuple:
     provider_rank = {"adsblol": 0, "opensky": 1, "adsbx": 2}.get(provider, 3)
     method_rank = {"opensky": 0, "opensky-nn": 1, "algorithm-nearest": 2, "algorithm-nn": 3}.get(row["test_src"], 4)
     return (rank, source, row["test_date"], row["target_day_adsb"], provider_rank, provider, method_rank, row["test_src"])
+
+
+def validate_completeness(rows: list[dict[str, Any]], include: dict[str, set[str]]) -> None:
+    """Require the selected method/reference/provider grid for every selected day."""
+    methods = include.get("test_src", {row["test_src"] for row in rows})
+    references = include.get("gold_src", {row["gold_src"] for row in rows})
+    absent_references = references - {row["gold_src"] for row in rows}
+    if absent_references:
+        raise ValueError("Missing evaluations for requested reference sources: " +
+                         ", ".join(sorted(absent_references)) + ". Run those evaluations first.")
+    providers = include.get("adsb_src", {row["adsb_src"] for row in rows}) - {""}
+    present = {row_key(row) for row in rows}
+    missing = []
+    for reference in sorted(references):
+        contexts = {(row["test_date"], row["target_day_adsb"]) for row in rows
+                    if row["gold_src"] == reference}
+        if "test_date" in include:
+            windows = include.get("target_day_adsb", {window for _, window in contexts})
+            contexts = {(day, window) for day in include["test_date"] for window in windows}
+        for day, window in sorted(contexts):
+            for method in sorted(methods):
+                pair_providers = ({""} if method in PROVIDER_INDEPENDENT_SOURCES
+                                  and reference in PROVIDER_INDEPENDENT_SOURCES
+                                  else providers or {"<ADS-B provider required>"})
+                for provider in sorted(pair_providers):
+                    key = (day, reference, provider, window, method)
+                    if key not in present:
+                        missing.append(" | ".join((day, reference, provider or "none", window, method)))
+    if missing:
+        raise ValueError(f"Missing {len(missing)} requested evaluations "
+                         "(date | reference | ADS-B | target-day | method):\n  " +
+                         "\n  ".join(missing) + "\nRun the missing evaluations first. "
+                         "Cache mode accepts only the current evaluation cache version.")
 
 
 def number(value: Any) -> Any:
@@ -461,6 +497,13 @@ def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, .
         for name, other in (("test_flight_count", "false_positive"), ("gold_flight_count", "false_negative")):
             row[name] = (row["true_positive"] + row[other]
                          if row.get("true_positive") is not None and row.get(other) is not None else None)
+        for name in selected:
+            for column in TABLES[name].denominators if name in TABLES else ():
+                value = row.get(column)
+                if value is None:
+                    missing.add(column)
+                elif not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0 or not float(value).is_integer():
+                    raise ValueError(f"Invalid denominator count {column}: {value!r}")
         for metrics in selected.values():
             for metric in metrics:
                 for column in metric.columns:
@@ -543,7 +586,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--" + flag, nargs="+", action="extend",
                             help="Keep only these values; accepts multiple values or repeated options." + note)
     parser.add_argument("--target-day-adsb", choices=("true", "false", "unknown"), default="false")
-    parser.add_argument("--require-complete", action="store_true", help="Fail if selected metrics are unavailable.")
+    parser.add_argument("--require-complete", action="store_true", default=True,
+                        help="Require all requested comparisons and selected metrics (now always enabled; retained for compatibility).")
     parser.add_argument("--decimals", type=int, default=2, help="LaTeX decimals (CSV retains numeric precision).")
     args = parser.parse_args(argv)
     args.tables = args.tables or ["reference_summary"]
@@ -586,8 +630,12 @@ def main(argv: list[str] | None = None) -> int:
             rows, cache_entries = load_cache_rows(cache, include, args.cache_policy)
         if not rows:
             raise ValueError("No matching daily results. Check the source/date selections or supply existing evaluation CSVs; this script does not run missing evaluations.")
+        completeness_filters = dict(include)
         if "reference_summary" in args.tables or args.reference_date:
             rows = select_reference_dates(rows, args.reference_date)
+            # Summary date selection intentionally chooses one day per family.
+            completeness_filters.pop("test_date", None)
+        validate_completeness(rows, completeness_filters)
         rows.sort(key=reference_sort_key)
         dates = sorted({row["test_date"] for row in rows})
         prefix = args.prefix or "evaluation_" + (dates[0] if len(dates) == 1 else dates[0] + "_to_" + dates[-1])
