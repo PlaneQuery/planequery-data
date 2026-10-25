@@ -8,7 +8,9 @@ import polars as pl
 from airports.catalog import AirportCatalogView
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.flight_source import ADSBFlightSource
-from flights.segmentation import algorithm, junzis
+from flights.segmentation import algorithm
+
+from . import segmentation
 
 
 @dataclass(frozen=True)
@@ -20,7 +22,7 @@ class JunzisFlightSource(ADSBFlightSource):
         return 500
 
     def adsb_columns(self) -> tuple[str, ...]:
-        return junzis.ADSB_COLUMNS
+        return segmentation.ADSB_COLUMNS
 
     def adsb_read_interval(self, dt: date) -> tuple[datetime, datetime]:
         return algorithm._adsb_read_bounds(dt)
@@ -36,4 +38,4 @@ class JunzisFlightSource(ADSBFlightSource):
         df_adsb: pl.DataFrame,
         airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
-        return junzis.create_flights_from_adsb(df_adsb, dt, airport_catalog)
+        return segmentation.create_flights_from_adsb(df_adsb, dt, airport_catalog)
