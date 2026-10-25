@@ -6,6 +6,46 @@ used for evaluation. Explicit `--output-dir` overrides still work; the candidate
 input figure uses `--output`. For standalone table generation from absolute CSV
 paths without `OUTPUT_DIR`, supply `--output-dir` explicitly.
 
+## Airport-NN training curve
+
+`airport_nn_training_curve.py` plots neural-network validation accuracy versus
+the number of distinct training days, with a nearest-airport baseline. Each
+point is a separate model from the saved training-size sweep:
+
+```bash
+.venv/bin/python scripts/paper/airport_nn_training_curve.py
+```
+
+Outputs are a vector PDF with embedded fonts, PNG, editable SVG, plotted values
+as CSV, and a LaTeX figure snippet. Without overrides,
+the `--sweep-dir` defaults to
+`$OUTPUT_DIR/data/experiments/flights_airport_nn/airport-nn-sweep-59`
+and the output directory to `$OUTPUT_DIR/paper/figures/airport_nn_training_curve`
+(set `OUTPUT_DIR`, or supply both paths explicitly).
+The figure is 142 mm wide by 65 mm tall, matching the JOAS template's text width,
+with 8--9 pt labels, thin lines, and distinct solid/dashed styles for grayscale
+printing. It uses the template's Linux Libertine font when available through
+`kpsewhich`, with DejaVu Serif as a fallback. Training details appear in the
+LaTeX caption rather than an in-plot title. Copy the output folder into the
+paper's `figures/` directory, then insert:
+
+```latex
+\input{figures/airport_nn_training_curve/airport_nn_training_curve.tex}
+```
+
+The sweep uses 1, 2, 5, 10, 15, 20, 30, 40, 50, and 59 training dates, taking
+chronological prefixes starting February 1, 2026. For each model, the script
+selects the epoch with minimum mean daily validation cross-entropy and verifies
+that its history metrics match the saved validation reports. Accuracy pools
+the saved primary endpoint metrics with equal weight per endpoint, matching
+the sweep's `summary.csv`. All models validate on the same 207,714 endpoints
+from June 1–5, 2026, against BTS and FAA SFDPS reference airport labels using
+ADSB.lol observations. The script checks that validation dates, label sources,
+network, daily endpoint counts, and nearest-airport baselines agree across models.
+The CSV records each model's actual training-day count, selected epoch, accuracy,
+and source directory. The caption identifies the validation sources and
+checkpoint-selection rule.
+
 ## Reference-flight aircraft categories and airport characteristics
 
 `reference_flight_breakdown_table.py` exports two matching `booktabs`/`longtable`
