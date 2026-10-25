@@ -44,6 +44,113 @@ def _airport_catalog(target_date: date):
     )
 
 
+@pytest.mark.parametrize(
+    ("gold_minutes", "test_minutes"), [(50, 70), (23 * 60 + 10, 22 * 60 + 50)]
+)
+def test_evaluate_matches_boundary_gold_before_filtering(
+    monkeypatch, tmp_path, gold_minutes, test_minutes,
+):
+    target_date = date(2026, 3, 1)
+    midnight = datetime(2026, 3, 1)
+    noon = midnight + timedelta(hours=12)
+    frames = {
+        BTS_SOURCE.name: flights_to_flights_df([
+            _flight("shared", midnight + timedelta(minutes=test_minutes)),
+            _flight("shared", noon),
+        ]),
+        SFDPS_SOURCE.name: flights_to_flights_df([
+            _flight("shared", midnight + timedelta(minutes=gold_minutes)),
+            _flight("shared", noon),
+        ]),
+    }
+    monkeypatch.setattr(
+        evaluation, "source_flights_reader",
+        lambda source, adsb_source=None: lambda _: frames[source.name].clone(),
+    )
+    monkeypatch.setattr(evaluation, "airport_catalog_for_date", _airport_catalog)
+    cache = EvaluationCache(tmp_path / "cache")
+
+    results = evaluation.evaluate(
+        BTS_SOURCE, SFDPS_SOURCE, target_date, evaluation_cache=cache,
+    )
+
+    assert results.comparisons[0]["takeoff_time"].to_list() == [noon]
+    assert results.stats[0].true_positive == 1
+    assert results.stats[0].false_positive == 0
+    assert results.stats[0].false_negative == 0
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Cached evaluation should not read source flights")
+
+    monkeypatch.setattr(evaluation, "source_flights_reader", unexpected_read)
+    cached = evaluation.evaluate(
+        BTS_SOURCE, SFDPS_SOURCE, target_date, evaluation_cache=cache,
+    )
+    assert cached.comparisons[0].equals(results.comparisons[0])
+    assert cached.stats == results.stats
+
+
+@pytest.mark.parametrize(
+    ("gold_minutes", "test_minutes"), [(60, 40), (23 * 60, 23 * 60 + 20)]
+)
+def test_compare_day_keeps_matches_at_inclusive_gold_window_edges(
+    gold_minutes, test_minutes,
+):
+    target_date = date(2026, 3, 1)
+    midnight = datetime(2026, 3, 1)
+    test_time = midnight + timedelta(minutes=test_minutes)
+    gold_time = midnight + timedelta(minutes=gold_minutes)
+    start, end = evaluation.get_start_dt_end_dt_for_gold(target_date)
+
+    comparison = evaluation._compare_day(
+        flights_to_flights_df([_flight("shared", test_time)]),
+        flights_to_flights_df([_flight("shared", gold_time)]),
+        start, end, _airport_catalog(target_date),
+    )
+
+    assert comparison["match_status"].to_list() == ["both"]
+    assert comparison["takeoff_time"].to_list() == [test_time]
+    assert comparison["takeoff_time_df1"].to_list() == [gold_time]
+
+
+@pytest.mark.parametrize("match_gold", [False, True])
+def test_compare_day_scored_gold_set_is_independent_of_test_matches(match_gold):
+    target_date = date(2026, 3, 1)
+    midnight = datetime(2026, 3, 1)
+    noon = midnight + timedelta(hours=12)
+    start, end = evaluation.get_start_dt_end_dt_for_gold(target_date)
+    gold = [
+        _flight("early-context", midnight + timedelta(minutes=50)),
+        _flight("early", start),
+        _flight("shared", noon),
+        _flight("late", end),
+        _flight("late-context", end + timedelta(minutes=10)),
+    ]
+    test = [
+        _flight("shared", noon),
+        _flight("shared", midnight + timedelta(hours=5)),
+        _flight("shared", midnight + timedelta(minutes=10)),
+        _flight("shared", end + timedelta(minutes=50)),
+    ]
+    if match_gold:
+        test.extend([_flight("early", start), _flight("late", end)])
+
+    comparison = evaluation._compare_day(
+        flights_to_flights_df(test), flights_to_flights_df(gold),
+        start, end, _airport_catalog(target_date),
+    )
+
+    assert comparison["takeoff_time_df1"].drop_nulls().sort().to_list() == [
+        start, noon, end,
+    ]
+    assert comparison.filter(pl.col("match_status") == "df0_only")[
+        "takeoff_time"
+    ].to_list() == [midnight + timedelta(hours=5)]
+    assert comparison.filter(pl.col("match_status") == "df1_only").height == (
+        0 if match_gold else 2
+    )
+
+
 def test_compare_day_filters_flights_to_target_date(monkeypatch):
     target_date = date(2026, 3, 1)
     start = datetime(2026, 3, 1)
