@@ -22,6 +22,10 @@ from csvs_to_latex_table import DEFAULT_OUTPUT_DIR, latex_escape
 
 REFERENCE_DATES = {"bts": "2026-03-01", "sfdps": "2026-03-01", "eurocontrol": "2024-06-01"}
 LABELS = {"bts": "BTS", "sfdps": "SFDPS", "eurocontrol": "Eurocontrol"}
+BASE_SOURCES = tuple(REFERENCE_DATES)
+VERIFIED_SOURCES = tuple(f"{source}-verified" for source in BASE_SOURCES)
+REFERENCE_DATES.update({f"{source}-verified": REFERENCE_DATES[source] for source in BASE_SOURCES})
+LABELS.update({f"{source}-verified": f"{LABELS[source]}-verified" for source in BASE_SOURCES})
 GROUPED_CATEGORIES = frozenset(
     [f"{letter}{number}" for letter in "BC" for number in range(8)]
     + [f"D{number}" for number in range(3)]
@@ -61,6 +65,8 @@ SOURCES = {
 POPULATION_NOTE = (
     "All cached reference flights on the indicated UTC takeoff day, before evaluation "
     "matching or boundary filtering; provider preprocessing still applies. "
+    "Verified datasets use the existing ADSB.lol callsign and airport-continuity "
+    "verification, with target-day-only input disabled. Percentages use each dataset's own n. "
     "Percentages include missing values in the denominator. CSV counts are exact; "
     "rounding may prevent displayed percentages summing to 100."
 )
@@ -143,18 +149,24 @@ def render_latex(rows: list[dict], prefix: str, kind: str, decimals: int,
              "Airport characteristics of reference flights")
     totals = {r["source"]: r["denominator"] for r in rows}
     lookup = {(r["source"], r["dimension"], r["endpoint"], r["category"]): r["percent"] for r in rows}
-    header = ["Category / description" if aircraft else "Airport characteristic"]
-    for source, day in REFERENCE_DATES.items():
-        header.append(r"\shortstack{" + LABELS[source] + r"\\" + day + r"\\$n=" +
-                      f"{totals[source]:,}" + r"$\\" + (r"(\%)" if aircraft else r"TO / LD (\%)") + "}")
-    heading = " & ".join(header) + r" \\"
+    first_column = "Category / description" if aircraft else "Airport characteristic"
+
+    def heading(sources):
+        header = [first_column]
+        for source in sources:
+            header.append(r"\shortstack{" + LABELS[source] + r"\\" + REFERENCE_DATES[source] +
+                          r"\\$n=" + f"{totals[source]:,}" + r"$\\" +
+                          (r"(\%)" if aircraft else r"TO / LD (\%)") + "}")
+        return " & ".join(header) + r" \\*"
+
+    continuation_heading = " & ".join([first_column, *(LABELS[s] for s in BASE_SOURCES)]) + r" \\"
     lines = [r"% Requires \usepackage{booktabs,longtable,array}.",
              "% Definitions: " + SOURCES["categories" if aircraft else "airports"],
              r"\begingroup", r"\footnotesize", r"\setlength{\tabcolsep}{3pt}",
              r"\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.43\linewidth}rrr@{}}",
              r"\caption{" + title + "}", r"\label{tab:" + prefix.replace("_", "-") + "-" + kind + r"}\\",
-             r"\toprule", heading, r"\midrule", r"\endfirsthead",
-             r"\toprule", heading, r"\midrule", r"\endhead",
+             r"\toprule", r"\endfirsthead",
+             r"\toprule", continuation_heading, r"\midrule", r"\endhead",
              r"\midrule\multicolumn{4}{r}{Continued on next page}\\", r"\endfoot",
              r"\bottomrule", r"\endlastfoot"]
     if aircraft:
@@ -171,20 +183,23 @@ def render_latex(rows: list[dict], prefix: str, kind: str, decimals: int,
     else:
         sections = [("airport_size", "Airport size / type",
                      ["small_airport", "medium_airport", "large_airport", "unknown"], SIZE_LABELS),
-                    ("airport_codes", "Airport code availability", ["neither"],
+                    ("airport_codes", "", ["neither"],
                      {"neither": "No IATA or ICAO"})]
-    for dimension, section, keys, labels in sections:
-        if section:
-            lines += [r"\addlinespace[4pt]", r"\multicolumn{4}{@{}l}{\textbf{" + section + r"}}\\*"]
-        for key in keys:
-            label = labels.get(key, "Unrecognized reported code" if aircraft else key)
-            if aircraft and key != "missing":
-                label = f"{key}: {label}"
-            cells = [latex_escape(label)]
-            for source in REFERENCE_DATES:
-                endpoints = ("flight",) if aircraft else ("takeoff", "landing")
-                cells.append(" / ".join(f"{lookup.get((source, dimension, ep, key), 0):.{decimals}f}" for ep in endpoints))
-            lines.append(" & ".join(cells) + r" \\")
+    for panel, sources in (("Reference flights", BASE_SOURCES), ("Verified reference flights", VERIFIED_SOURCES)):
+        lines += [r"\addlinespace[5pt]", r"\multicolumn{4}{@{}l}{\textbf{" + panel + r"}}\\*",
+                  heading(sources), r"\midrule"]
+        for dimension, section, keys, labels in sections:
+            if section:
+                lines += [r"\addlinespace[4pt]", r"\multicolumn{4}{@{}l}{\textbf{" + section + r"}}\\*"]
+            for key in keys:
+                label = labels.get(key, "Unrecognized reported code" if aircraft else key)
+                if aircraft and key != "missing":
+                    label = f"{key}: {label}"
+                cells = [latex_escape(label)]
+                for source in sources:
+                    endpoints = ("flight",) if aircraft else ("takeoff", "landing")
+                    cells.append(" / ".join(f"{lookup.get((source, dimension, ep, key), 0):.{decimals}f}" for ep in endpoints))
+                lines.append(" & ".join(cells) + r" \\")
     note = AIRCRAFT_NOTE if aircraft else (
         f"Code availability for all datasets uses the {airport_code_date} OurAirports snapshot, "
         "because the 2024 schema lacked an explicit ICAO-code field; these code shares "
@@ -210,6 +225,7 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
     from flights.providers.bts import BTSFlightSource
     from flights.providers.eurocontrol import EurocontrolFlightSource
     from flights.providers.sfdps import SFDPSFlightSource
+    from flights.verified.source import VerifiedFlightSource
 
     history = AirportHistory(HistoryPaths.defaults())  # open() may refresh/download.
     code_date = code_date or history.latest_available_date
@@ -220,14 +236,17 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
         raise ValueError("Selected airport snapshot predates explicit ICAO-code metadata; choose a newer --airport-code-date.")
     code_airports = {row["id"]: SimpleNamespace(iata_code=row["iata_code"], icao_code=row["icao_code"])
                      for row in code_frame.select("id", "iata_code", "icao_code").iter_rows(named=True)}
-    rows, inputs = [], []
-    for source in (BTSFlightSource(), SFDPSFlightSource(), EurocontrolFlightSource()):
+    rows, inputs, catalogs = [], [], {}
+    base_sources = (BTSFlightSource(), SFDPSFlightSource(), EurocontrolFlightSource())
+    for source in (*base_sources, *(VerifiedFlightSource(base) for base in base_sources)):
         day = date.fromisoformat(REFERENCE_DATES[source.name])
         path = flight_path(source, day)
         manifest_path = flight_manifest_path(path)
         if not path.is_file() or not manifest_path.is_file():
             raise ValueError(f"Missing current-version reference cache: {path}; generate flights first.")
-        catalog = AirportCatalogView.from_history(history, day, history.latest_available_date)
+        if day not in catalogs:
+            catalogs[day] = AirportCatalogView.from_history(history, day, history.latest_available_date)
+        catalog = catalogs[day]
         manifest = FlightManifest.read(manifest_path)
         if manifest.flight_cache_key != source.flight_manifest(catalog.provenance, None).flight_cache_key:
             raise ValueError(f"Stale flight cache/catalog: {path}; regenerate flights first.")
