@@ -12,7 +12,7 @@ from flights.flight_source import ADSBFlightSource
 
 
 DEFAULT_MODEL_PATH = Path(
-    "outputs/airport-nn-february-2026-10-21-days-20/model.pt"
+    "models/flights_airport_nn/feb-mar-june-2026/model.pt"
 )
 REUSED_FLIGHT_BATCH_SIZE = 2048
 
