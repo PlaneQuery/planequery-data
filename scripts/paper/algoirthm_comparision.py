@@ -1,4 +1,4 @@
-"""Compare five flight algorithms using existing OpenSky evaluation results.
+"""Compare three flight algorithms using existing OpenSky evaluation results.
 
 Reuse the paper's grouped booktabs/longtable layout; never run evaluations.
 """
@@ -18,11 +18,9 @@ from csvs_to_latex_table import (
 )
 
 METHOD_LABELS = {
-    "opensky": "OpenSky",
-    "algorithm-nearest": "Nearest",
     "junzis": "Sun",
     "plane-notify": "plane-notify",
-    "openap": "OpenAP/traffic",
+    "openap": "OpenAP/Traffic",
 }
 REFERENCE_DATES = {source: "2024-06-01" if source.startswith("eurocontrol")
                    else "2026-03-01" for source in REFERENCE_ORDER}
@@ -34,9 +32,8 @@ NOTE = (
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
     "TO/LD = takeoff/landing airport match percentages among matched flights; "
     "null airport IDs are incorrect. All rates are percentages. "
-    "OpenSky denotes the published flight dataset; the other methods use OpenSky "
-    "ADS-B messages. Nearest = algorithm-nearest; Sun = junzis; "
-    "OpenAP/traffic = openap. Retained flight counts can differ by method because "
+    "All three methods use OpenSky ADS-B messages. Sun = junzis; "
+    "OpenAP/Traffic = openap. Retained flight counts can differ by method because "
     "of boundary filtering. Exact denominators are included in the CSV."
 )
 
@@ -47,8 +44,7 @@ def select_comparisons(rows: list[dict], references: list[str]) -> list[dict]:
                 if row["gold_src"] in references
                 and row["test_date"] == REFERENCE_DATES[row["gold_src"]]
                 and row["test_src"] in METHOD_LABELS
-                and (row["adsb_src"] == "opensky"
-                     or (row["test_src"] == "opensky" and row["adsb_src"] == ""))]
+                and row["adsb_src"] == "opensky"]
     present = set()
     for row in selected:
         key = (row["gold_src"], row["test_src"])
@@ -87,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", args.prefix):
         parser.error("--prefix must contain only letters, numbers, underscores, and hyphens.")
     include = {"test_src": set(METHOD_LABELS), "gold_src": set(args.gold_source),
-               "adsb_src": {"", "opensky"}, "target_day_adsb": {args.target_day_adsb},
+               "adsb_src": {"opensky"}, "target_day_adsb": {args.target_day_adsb},
                "test_date": {REFERENCE_DATES[source] for source in args.gold_source}}
     try:
         if args.output_dir is None:

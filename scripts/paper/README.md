@@ -119,12 +119,11 @@ use `--endpoint takeoff` or `--endpoint landing` to generate only one.
 
 ## Algorithm comparison on OpenSky
 
-`algoirthm_comparision.py` compares **OpenSky, Nearest, Sun, plane-notify,
-and OpenAP/traffic** in the same grouped layout as the other paper tables.
+`algoirthm_comparision.py` compares **Sun, plane-notify, and OpenAP/Traffic**
+in the same grouped layout as the other paper tables.
 It shows segmentation **P / R / F1 (%)** and airport matches **TO / LD (%)**.
-Sun uses source `junzis`, and OpenAP/traffic uses source `openap`.
-The four reconstructed methods use OpenSky ADS-B messages; the OpenSky row
-uses its published flight dataset (stored with no ADS-B provider tag).
+Sun uses source `junzis`, and OpenAP/Traffic uses source `openap`.
+All three methods use OpenSky ADS-B messages.
 
 ```bash
 OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/paper/algoirthm_comparision.py
@@ -132,8 +131,8 @@ OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/pa
 
 The default references are BTS, SFDPS, and their verified variants on
 **2026-03-01**, and Eurocontrol and its verified variant on **2024-06-01**.
-All 30 comparisons must be present before files are written. Use `--gold-source`
-to select fewer reference datasets; all five methods are still required for each.
+All 18 comparisons must be present before files are written. Use `--gold-source`
+to select fewer reference datasets; all three methods are still required for each.
 The default input-window setting is `--target-day-adsb false`, matching the
 overall evaluation table. Pass `--target-day-adsb true` only when those results
 have been evaluated. The generator reads existing current-version caches or
