@@ -119,10 +119,10 @@ use `--endpoint takeoff` or `--endpoint landing` to generate only one.
 
 ## Algorithm comparison on OpenSky
 
-`algoirthm_comparision.py` compares **Sun, plane-notify, and OpenAP/Traffic**
+`algoirthm_comparision.py` compares **Sun, plane-notify, and OpenAP**
 in the same grouped layout as the other paper tables.
 It shows segmentation **P / R / F1 (%)** and airport matches **TO / LD (%)**.
-Sun uses source `junzis`, and OpenAP/Traffic uses source `openap`.
+Sun uses source `junzis`, and OpenAP uses source `openap`.
 All three methods use OpenSky ADS-B messages.
 
 ```bash

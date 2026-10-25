@@ -20,7 +20,7 @@ from csvs_to_latex_table import (
 METHOD_LABELS = {
     "junzis": "Sun",
     "plane-notify": "plane-notify",
-    "openap": "OpenAP/Traffic",
+    "openap": "OpenAP",
 }
 REFERENCE_DATES = {source: "2024-06-01" if source.startswith("eurocontrol")
                    else "2026-03-01" for source in REFERENCE_ORDER}
@@ -33,7 +33,7 @@ NOTE = (
     "TO/LD = takeoff/landing airport match percentages among matched flights; "
     "null airport IDs are incorrect. All rates are percentages. "
     "All three methods use OpenSky ADS-B messages. Sun = junzis; "
-    "OpenAP/Traffic = openap. Retained flight counts can differ by method because "
+    "OpenAP = openap. Retained flight counts can differ by method because "
     "of boundary filtering. Exact denominators are included in the CSV."
 )
 
