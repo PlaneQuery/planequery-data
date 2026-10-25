@@ -9,7 +9,8 @@ paths without `OUTPUT_DIR`, supply `--output-dir` explicitly.
 ## Reference-flight aircraft categories and airport characteristics
 
 `reference_flight_breakdown_table.py` exports two matching `booktabs`/`longtable`
-tables for **BTS and SFDPS on 2026-03-01** and **Eurocontrol on 2024-06-01**:
+tables for **BTS, SFDPS, BTS-verified, and SFDPS-verified on 2026-03-01** and
+**Eurocontrol and Eurocontrol-verified on 2024-06-01**:
 
 ```bash
 OUTPUT_DIR=/Volumes/T2-SSD/planequery .venv/bin/python scripts/paper/reference_flight_breakdown_table.py
@@ -24,6 +25,10 @@ by the reference providers: OpenAirframes for BTS/Eurocontrol and ADS-B
 observations for SFDPS. These are not independently verified classifications.
 The LaTeX table combines B0 through D2 into one "Other reported categories" row,
 calculated from their summed counts before rounding. The CSV retains each code.
+Each table has separate reference and verified blocks with three dataset columns.
+Verified percentages use their own flight counts, shown in their column headings.
+The verified caches use the existing ADSB.lol callsign and airport-continuity
+verification with `target_day_adsb=false`, matching the default verified sources.
 
 The airport table shows **takeoff / landing percentages** for small, medium,
 large, and unknown airports. Heliport through Closed rows are omitted.
@@ -35,7 +40,7 @@ as evidence of an ICAO code. The CSV retains all airport types and code groups;
 all displayed percentages still use the full flight count as denominator.
 
 Airport sizes use the flight-date catalog. Code availability uses **one shared
-dated snapshot for all three datasets** (the latest in local history by default).
+dated snapshot for all six datasets** (the latest in local history by default).
 The 2024 OurAirports schema lacked an explicit `icao_code` field, so treating its
 nulls as missing codes would falsely classify major airports as IATA only.
 The table records the selected snapshot date and states that code availability
