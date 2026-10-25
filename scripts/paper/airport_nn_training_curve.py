@@ -127,7 +127,7 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(142 / 25.4, 65 / 25.4), layout="constrained")
     training_days = [row["training_days"] for row in rows]
     ax.plot(training_days, [row["nn_accuracy_pct"] for row in rows],
-            color="#0072B2", marker="o", markersize=3.5, linewidth=1.2,
+            color="#0072B2", linestyle="--", marker="o", markersize=4, linewidth=1.2,
             label="Neural network")
     ax.plot(training_days, [row["nearest_accuracy_pct"] for row in rows],
             color="0.4", linestyle="--", linewidth=1.1, label="Nearest airport")
@@ -172,7 +172,8 @@ def main() -> None:
         f"Accuracy is pooled over {rows[0]['validation_endpoints']:,} endpoints "
         f"across the same {len(dates)} validation dates ({dates[0]} to {dates[-1]}), "
         "with equal weight per endpoint. "
-        "The dashed line shows the nearest-airport baseline.}\n"
+        "Circular markers show measured model results; connecting dashed lines "
+        "are a visual guide. The gray line shows the nearest-airport baseline.}\n"
         "  \\label{fig:airport-nn-training-curve}\n"
         "\\end{figure}\n"
     )
