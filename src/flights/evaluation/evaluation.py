@@ -268,7 +268,6 @@ def _compare_day(
         start,
         end,
         airport_catalog,
-        compare_airports=False,
     )
 
 

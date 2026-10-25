@@ -57,21 +57,12 @@ MAX_TIME_DIFF = timedelta(hours=1)
 def compare_flight(
     f0: Flight,
     f1: Flight,
-    compare_airports: bool = True,
 ) -> bool:
     if (
         abs(f0.takeoff_time - f1.takeoff_time) > MAX_TIME_DIFF
         or abs(f0.landing_time - f1.landing_time) > MAX_TIME_DIFF
     ):
         return False
-    if compare_airports:
-        if (
-            f0.takeoff_airport_id is None
-            or f0.landing_airport_id is None
-            or f0.takeoff_airport_id != f1.takeoff_airport_id
-            or f0.landing_airport_id != f1.landing_airport_id
-        ):
-            return False
     return True
 
 
@@ -81,7 +72,6 @@ def flights_comparison(
     start_dt,
     end_dt,
     grace_period=timedelta(minutes=30),
-    compare_airports=True,
 ):
     """Compare flight lists assigned to the same UTC takeoff day."""
     f0_series: list[int | str | None] = [None] * len(flights_0)
@@ -94,7 +84,7 @@ def flights_comparison(
             if f1_series[j] is not None:
                 continue
 
-            if compare_flight(f0, flights_1[j], compare_airports):
+            if compare_flight(f0, flights_1[j]):
                 f0_series[i0] = j
                 f1_series[j] = i0
                 i1_start = j + 1
@@ -138,7 +128,6 @@ def df_flights_comparison(
     end_dt,
     airport_catalog: AirportCatalogView,
     grace_period=timedelta(minutes=30),
-    compare_airports=True,
 ):
     df_0 = _with_comparison_endpoint_columns(df_0)
     df_1 = add_lat_lon_to_airport_columns(
@@ -170,7 +159,6 @@ def df_flights_comparison(
             start_dt,
             end_dt,
             grace_period,
-            compare_airports,
         )
         discard_0 = [x == "DISCARD" for x in match_0]
 
