@@ -10,7 +10,7 @@ from flights.flight_source import ADSBFlightSource, NonADSBFlightSource
 
 
 BATCHED_ALGORITHM_SOURCES = (
-    "algorithm-nearest", "algorithm-nn", "junzis", "openap", "plane-notify",
+    "algorithm-nearest", "algorithm-nn", "sun", "openap", "plane-notify",
 )
 
 

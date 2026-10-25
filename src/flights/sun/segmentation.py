@@ -1,4 +1,4 @@
-"""Per-ICAO time-only DBSCAN extraction from junzis/flight-data-processor.
+"""Per-ICAO time-only DBSCAN extraction from Sun et al. (2017).
 
 Reference: https://github.com/junzis/flight-data-processor/blob/12ed7b73d202b1d3c836323026725120501a40e5/flightextract.py
 Sun, Ellerbroek and Hoekstra (2017), doi:10.2514/1.I010520.

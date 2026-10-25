@@ -1,4 +1,4 @@
-"""Junzi Sun's ADS-B flight extraction with endpoint-nearest airports."""
+"""Sun et al.'s ADS-B flight extraction with endpoint-nearest airports."""
 
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -14,8 +14,8 @@ from . import segmentation
 
 
 @dataclass(frozen=True)
-class JunzisFlightSource(ADSBFlightSource):
-    name: str = "junzis"
+class SunFlightSource(ADSBFlightSource):
+    name: str = "sun"
     version: int = 2
 
     def adsb_icao_batch_size(self) -> int:

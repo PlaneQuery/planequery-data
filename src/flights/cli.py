@@ -17,7 +17,7 @@ from flights.flight_source import (
     flight_path,
     write_flights,
 )
-from flights.junzis import JunzisFlightSource
+from flights.sun import SunFlightSource
 from flights.openap import OpenAPFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.plane_notify import PlaneNotifyFlightSource
@@ -35,7 +35,7 @@ from planequery_data.utils import date_range
 PARALLEL_ALGORITHM_SOURCES = (
     AlgorithmNearestFlightSource,
     AlgorithmNNFlightSource,
-    JunzisFlightSource,
+    SunFlightSource,
     OpenAPFlightSource,
     OpenSkyReverseEngFlightSource,
     PlaneNotifyFlightSource,
