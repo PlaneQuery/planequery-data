@@ -23,8 +23,10 @@ the `--sweep-dir` defaults to
 and the output directory to `$OUTPUT_DIR/paper/figures/airport_nn_training_curve`
 (set `OUTPUT_DIR`, or supply both paths explicitly).
 The figure is 142 mm wide by 65 mm tall, matching the JOAS template's text width,
-with 8--9 pt labels, thin lines, and distinct solid/dashed styles for grayscale
-printing. It uses the template's Linux Libertine font when available through
+with 8--9 pt labels and a dashed model curve with visible circular markers.
+The gray baseline has no markers, keeping it distinct in grayscale printing.
+Connecting lines are a visual guide between measured model results.
+It uses the template's Linux Libertine font when available through
 `kpsewhich`, with DejaVu Serif as a fallback. Training details appear in the
 LaTeX caption rather than an in-plot title. Copy the output folder into the
 paper's `figures/` directory, then insert:
