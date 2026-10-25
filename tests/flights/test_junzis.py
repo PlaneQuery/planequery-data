@@ -1,3 +1,4 @@
+import pickle
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -208,6 +209,15 @@ def test_aircraft_results_are_independent_of_other_aircraft_and_batches(catalog)
             DAY, pl.concat(frames), catalog,
         ).sort("icao", "takeoff_time")
         assert actual.equals(expected)
+
+
+def test_source_public_import_and_worker_serialization():
+    # Keep the public type identity stable when moving the implementation:
+    # evaluation fingerprints and multiprocessing workers both depend on it.
+    assert JunzisFlightSource.__module__ == "flights.junzis"
+    restored = pickle.loads(pickle.dumps(JUNZIS_SOURCE))
+    assert type(restored) is JunzisFlightSource
+    assert restored == JUNZIS_SOURCE
 
 
 def test_source_registration_and_evaluation_dispatch(monkeypatch):

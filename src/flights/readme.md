@@ -37,6 +37,10 @@ ADS-B provider.
 
 ## Junzis flight extraction
 
+The implementation lives in `junzis/`: `__init__.py` exposes
+`JunzisFlightSource`, and `segmentation.py` contains the extractor. The public
+import remains `from flights.junzis import JunzisFlightSource`.
+
 `junzis` implements the extraction method in
 [junzis/flight-data-processor](https://github.com/junzis/flight-data-processor)
 at revision `12ed7b73d202b1d3c836323026725120501a40e5`,
