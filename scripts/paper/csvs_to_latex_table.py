@@ -74,7 +74,8 @@ TABLES = {
         "filtering. Bias is mean signed test-minus-gold time among matched flights; "
         "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn. "
         "OpenSky denotes the published "
-        "flight dataset. Exact denominators are included in the CSV.",
+        "flight dataset; OpenSky-NN uses those same flights with NN airport predictions. "
+        "Exact denominators are included in the CSV.",
         ("gold_icao_count", "gold_flight_count", "test_flight_count", "true_positive"),
     ),
     "segmentation": Table(
@@ -141,7 +142,8 @@ TABLES = {
     ),
 }
 # These metric families depend on the flight segmentation, not on the airport
-# assignment method. Nearest and NN share them for the same ADS-B input.
+# assignment method. Nearest/NN share them for the same ADS-B input;
+# OpenSky/OpenSky-NN share the published flight boundaries.
 # Airport-dependent metrics (including fully-correct flight scores) stay separate.
 SHARED_FLIGHT_METRICS = {
     column
@@ -211,9 +213,9 @@ def reference_sort_key(row: dict[str, Any]) -> tuple:
     rank = REFERENCE_ORDER.index(source) if source in REFERENCE_ORDER else len(REFERENCE_ORDER)
     # The published OpenSky dataset has no ADS-B provider metadata, but belongs
     # beside the methods evaluated on OpenSky messages in the paper table.
-    provider = row["adsb_src"] or ("opensky" if row["test_src"] == "opensky" else "")
+    provider = row["adsb_src"] or ("opensky" if row["test_src"] in {"opensky", "opensky-nn"} else "")
     provider_rank = {"adsblol": 0, "opensky": 1, "adsbx": 2}.get(provider, 3)
-    method_rank = {"opensky": 0, "algorithm-nearest": 1, "algorithm-nn": 2}.get(row["test_src"], 3)
+    method_rank = {"opensky": 0, "opensky-nn": 1, "algorithm-nearest": 2, "algorithm-nn": 3}.get(row["test_src"], 4)
     return (rank, source, row["test_date"], row["target_day_adsb"], provider_rank, provider, method_rank, row["test_src"])
 
 
@@ -367,21 +369,27 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
         shared_starts: dict[int, set[int]] = {}
         shared_ends: dict[int, set[int]] = {}
-        for index, (nearest, nn) in enumerate(zip(group_rows, group_rows[1:])):
-            if (nearest["test_src"] != "algorithm-nearest" or nn["test_src"] != "algorithm-nn"
-                    or nearest["adsb_src"] != nn["adsb_src"]):
+        for index, (base, nn) in enumerate(zip(group_rows, group_rows[1:])):
+            pair = (base["test_src"], nn["test_src"])
+            algorithm_pair = (pair == ("algorithm-nearest", "algorithm-nn")
+                              and base["adsb_src"] == nn["adsb_src"])
+            opensky_pair = (pair == ("opensky", "opensky-nn")
+                            and base["adsb_src"] in {"", "opensky"}
+                            and nn["adsb_src"] in {"", "opensky"})
+            if not (algorithm_pair or opensky_pair):
                 continue
             shared = {
                 column_index for column_index, (_, keys) in enumerate(columns)
                 if set(keys) <= SHARED_FLIGHT_METRICS
-                and all(nearest.get(key) is not None and nearest[key] == nn.get(key) for key in keys)
+                and all(base.get(key) is not None and base[key] == nn.get(key) for key in keys)
             }
             if shared:
                 shared_starts[index] = shared
                 shared_ends[index + 1] = shared
                 has_shared_cells = True
         for index, row in enumerate(group_rows):
-            method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN", "opensky": "OpenSky"}.get(row["test_src"], row["test_src"])
+            method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN",
+                      "opensky": "OpenSky", "opensky-nn": "OpenSky-NN"}.get(row["test_src"], row["test_src"])
             if show_provider and row["adsb_src"]:
                 provider = provider_labels.get(row["adsb_src"], row["adsb_src"])
                 method += " / " + provider
@@ -397,7 +405,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
             lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
     note = TABLES["reference_summary"].note if note is None else note
     if has_shared_cells:
-        note += " Cells spanning Nearest and NN report values shared by both methods."
+        note += " Cells spanning a method pair report values shared by both methods."
     if len(providers) == 1:
         provider = next(iter(providers))
         note += f" {provider_labels.get(provider, provider)} ADS-B."
