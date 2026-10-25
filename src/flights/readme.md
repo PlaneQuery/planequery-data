@@ -21,9 +21,10 @@ archives, extracted traces, and canonical ADS-B Parquet downloaded or generated
 by that invocation after the flight files have been written. ADS-B cache paths
 that existed before the command and the generated flight Parquet are preserved.
 
-`algorithm-nn`, `algorithm-nearest`, and `junzis` use the worker budget at the widest
-available level. A one-day range processes complete-aircraft ADS-B batches in
-parallel; a multi-day range processes days in parallel and keeps each day
+`algorithm-nn`, `algorithm-nearest`, `junzis`, `openap`, and `plane-notify` use the
+worker budget at the widest available level. A one-day range processes
+complete-aircraft ADS-B batches in parallel; a multi-day range processes days
+in parallel and keeps each day
 single-process to avoid nested pools. The default uses half of the machine's
 logical CPUs, is limited to roughly one worker per 4 GiB of RAM while retaining
 20% memory headroom, and can be overridden with `--workers`.
@@ -90,6 +91,29 @@ upstream checkout, or additional dependency is required. Standard flight files
 and catalog/ADS-B manifests are written under
 `data/flights/source=junzis/adsb_source=PROVIDER/version=2/` (with a separate
 `target_day_adsb=true/` partition when requested).
+
+## OpenAP and Plane Notify flight extraction
+
+These sources use independent per-ICAO segmentation, batches of up to 500
+complete aircraft traces, and the standard provider-specific input windows,
+`--target-day-adsb`, flight caches, evaluation, and worker options.
+
+- [`openap/`](openap/README.md) exposes `OpenAPFlightSource` and contains the
+  OpenAP phase-to-flight adapter. Install the optional dependency with
+  `pip install -e '.[openap]'`. Other flight sources do not require OpenAP.
+- [`plane_notify/`](plane_notify/README.md) exposes `PlaneNotifyFlightSource`
+  under the source name `plane-notify` (from the `groundcontrol-algorithm`
+  worktree). It contains the minute-poll replay adapter, the extracted upstream
+  event detector, and its GPL-3.0 license. No extra dependency is needed.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 openap --adsb-source adsblol --workers 4
+python -m flights.cli 2026-03-01 2026-03-02 plane-notify --adsb-source adsblol --workers 4
+```
+
+Both source classes keep their original public import paths and source version
+1. Packaging the implementations in folders does not change their detection
+rules or cache identities.
 
 ## ADS-B Exchange published flights
 

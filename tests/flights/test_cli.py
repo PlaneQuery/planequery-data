@@ -9,6 +9,11 @@ from flights import cli
 from flights.flight_source import ADSBFlightSource, NonADSBFlightSource
 
 
+BATCHED_ALGORITHM_SOURCES = (
+    "algorithm-nearest", "algorithm-nn", "junzis", "openap", "plane-notify",
+)
+
+
 @dataclass(frozen=True)
 class DummySource(NonADSBFlightSource):
     name: str = "bts"
@@ -80,7 +85,7 @@ def test_verified_cli_always_uses_adsblol(monkeypatch, source_name, provider):
     assert calls[0].enrichment_adsb_source() is ADSBSource.ADSBLOL
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 @pytest.mark.parametrize("workers", [1, 4])
 def test_range_skips_flights_requiring_bad_adsblol_day(
     monkeypatch, tmp_path, capsys, source_name, workers
@@ -117,7 +122,7 @@ def test_range_with_only_bad_days_does_not_start_pool(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 def test_target_day_range_skips_only_bad_target_days(
     monkeypatch, tmp_path, capsys, source_name
 ):
@@ -201,7 +206,7 @@ def test_write_flights_range_passes_adsb_source(monkeypatch, tmp_path):
     assert calls == [ADSBSource.ADSBX]
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 def test_algorithm_sources_default_workers_from_machine_resources(
     monkeypatch,
     source_name,
@@ -223,7 +228,7 @@ def test_non_algorithm_source_defaults_to_one_worker(monkeypatch):
     assert cli.default_workers_for_source(DummySource()) == 1
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 def test_adsblol_algorithm_dates_include_adjacent_days(source_name):
     source = cli.FLIGHT_SOURCES_BY_NAME[source_name]
 
@@ -238,7 +243,7 @@ def test_adsblol_algorithm_dates_include_adjacent_days(source_name):
     ]
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 @pytest.mark.parametrize(
     "adsb_source, expected",
     [
@@ -260,7 +265,7 @@ def test_non_adsblol_algorithm_dates_use_provider_window(
     ) == expected
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 @pytest.mark.parametrize("adsb_source", list(ADSBSource))
 def test_target_day_dates_exclude_adjacent_days(source_name, adsb_source):
     source = replace(cli.FLIGHT_SOURCES_BY_NAME[source_name], target_day_adsb=True)
@@ -289,7 +294,8 @@ def test_range_worker_reuses_initialized_source(monkeypatch, tmp_path):
     assert result == (date(2026, 3, 1), 0, tmp_path / "data.parquet")
 
 
-def test_algorithm_range_uses_configured_parallel_workers(monkeypatch, tmp_path):
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
+def test_algorithm_range_uses_configured_parallel_workers(monkeypatch, tmp_path, source_name):
     calls = []
     pool_settings = []
 
@@ -318,7 +324,7 @@ def test_algorithm_range_uses_configured_parallel_workers(monkeypatch, tmp_path)
     cli.write_flights_range(
         date(2026, 3, 1),
         date(2026, 3, 3),
-        cli.FLIGHT_SOURCES_BY_NAME["algorithm-nearest"],
+        cli.FLIGHT_SOURCES_BY_NAME[source_name],
         workers=2,
     )
 
@@ -326,9 +332,11 @@ def test_algorithm_range_uses_configured_parallel_workers(monkeypatch, tmp_path)
     assert calls == [date(2026, 3, 1), date(2026, 3, 2)]
 
 
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 def test_single_algorithm_day_uses_workers_for_adsb_batches(
     monkeypatch,
     tmp_path,
+    source_name,
 ):
     calls = []
 
@@ -345,7 +353,7 @@ def test_single_algorithm_day_uses_workers_for_adsb_batches(
             AssertionError("one day must not create the day-level pool")
         ),
     )
-    source = cli.FLIGHT_SOURCES_BY_NAME["algorithm-nn"]
+    source = cli.FLIGHT_SOURCES_BY_NAME[source_name]
 
     cli.write_flights_range(
         date(2026, 6, 1),
@@ -425,7 +433,7 @@ def test_main_passes_explicit_worker_override(monkeypatch):
     assert prepared_years == [{2026}]
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 @pytest.mark.parametrize("target_day_adsb", [False, True])
 def test_main_configures_target_day_adsb_before_planning(
     monkeypatch, tmp_path, source_name, target_day_adsb
@@ -585,7 +593,7 @@ def test_no_save_cleans_between_batches_and_preserves_shared_inputs(
     assert all(not path.exists() for path in created if path != existing)
 
 
-@pytest.mark.parametrize("source_name", ["algorithm-nearest", "algorithm-nn"])
+@pytest.mark.parametrize("source_name", BATCHED_ALGORITHM_SOURCES)
 def test_algorithm_sources_accept_opensky(monkeypatch, source_name):
     calls = []
     monkeypatch.setattr(

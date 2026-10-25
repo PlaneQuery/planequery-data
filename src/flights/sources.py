@@ -2,8 +2,10 @@ from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.algorithm import AlgorithmNearestFlightSource
 from flights.ground_truth.source import GroundTruthFlightSource
 from flights.junzis import JunzisFlightSource
+from flights.openap import OpenAPFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.opensky_reverse_eng_nearest import OpenSkyReverseEngNearestFlightSource
+from flights.plane_notify import PlaneNotifyFlightSource
 from flights.providers.adsbx import ADSBXPublishedFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
@@ -23,10 +25,12 @@ GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
 JUNZIS_SOURCE = JunzisFlightSource()
 BTS_VERIFIED_SOURCE = VerifiedFlightSource(BTS_SOURCE)
 MIKE_SOURCE = MikeFlightSource()
+OPENAP_SOURCE = OpenAPFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
 OPENSKY_NN_SOURCE = OpenSkyNNFlightSource()
 OPENSKY_REVERSE_ENG_SOURCE = OpenSkyReverseEngFlightSource()
 OPENSKY_REVERSE_ENG_NEAREST_SOURCE = OpenSkyReverseEngNearestFlightSource()
+PLANE_NOTIFY_SOURCE = PlaneNotifyFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
 SFDPS_VERIFIED_SOURCE = VerifiedFlightSource(SFDPS_SOURCE)
 
@@ -41,10 +45,12 @@ FLIGHT_SOURCES = (
     GROUND_TRUTH_SOURCE,
     JUNZIS_SOURCE,
     MIKE_SOURCE,
+    OPENAP_SOURCE,
     OPENSKY_SOURCE,
     OPENSKY_NN_SOURCE,
     OPENSKY_REVERSE_ENG_SOURCE,
     OPENSKY_REVERSE_ENG_NEAREST_SOURCE,
+    PLANE_NOTIFY_SOURCE,
     SFDPS_SOURCE,
     SFDPS_VERIFIED_SOURCE,
 )

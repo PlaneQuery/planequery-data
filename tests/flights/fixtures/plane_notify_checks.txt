@@ -1,0 +1,60 @@
+#Check if below desire ft
+        desired_ft = 15000
+        if self.alt_ft is None or self.alt_ft > desired_ft:
+            self.below_desired_ft = False
+        elif self.alt_ft < desired_ft:
+            self.below_desired_ft = True
+#Check if tookoff
+        if self.below_desired_ft and self.on_ground is False:
+            if self.last_on_ground:
+                self.tookoff = True
+                trigger_type = "no longer on ground"
+                type_header = "Took off from"
+            elif self.last_feeding is False and self.feeding and self.landing_plausible == False:
+                from defAirport import getClosestAirport
+                nearest_airport_dict = getClosestAirport(self.latitude, self.longitude, self.config.get("AIRPORT", "TYPES"))
+                if nearest_airport_dict['elevation_ft'] != "":
+                    alt_above_airport = (self.alt_ft - int(nearest_airport_dict['elevation_ft']))
+                    print(f"AGL nearest airport: {alt_above_airport}")
+                else:
+                    alt_above_airport = None
+                if (alt_above_airport != None and alt_above_airport <= 10000) or self.alt_ft <= 15000:
+                    self.tookoff = True
+                    trigger_type = "data acquisition"
+                    type_header = "Took off near"
+            else:
+                self.tookoff = False
+        else:
+            self.tookoff = False
+
+#Check if Landed
+        if self.on_ground and self.last_on_ground is False and self.last_below_desired_ft:
+            self.landed = True
+            trigger_type = "now on ground"
+            type_header = "Landed in"
+            self.landing_plausible = False
+        #Set status for landing plausible
+        elif self.below_desired_ft and self.last_feeding and self.feeding is False and self.last_on_ground is False:
+            self.landing_plausible = True
+            print("Near landing conditions, if contiuned data loss for configured time, and  if under 10k AGL landing true")
+
+        elif self.landing_plausible and self.feeding is False and time_since_contact.total_seconds() >= (self.data_loss_mins * 60):
+            from defAirport import getClosestAirport
+            nearest_airport_dict = getClosestAirport(self.latitude, self.longitude, self.config.get("AIRPORT", "TYPES"))
+            if nearest_airport_dict['elevation_ft'] != "":
+                alt_above_airport = (self.alt_ft - int(nearest_airport_dict['elevation_ft']))
+                print(f"AGL nearest airport: {alt_above_airport}")
+            else:
+                alt_above_airport = None
+            if (alt_above_airport != None and alt_above_airport <= 10000) or self.alt_ft <= 15000:
+                self.landing_plausible = False
+                self.on_ground = None
+                self.landed = True
+                trigger_type = "data loss"
+                type_header = "Landed near"
+            else:
+                print("Alt greater then 10k AGL")
+                self.landing_plausible = False
+                self.on_ground = None
+        else:
+            self.landed = False
