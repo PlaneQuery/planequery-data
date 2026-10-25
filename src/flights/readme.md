@@ -21,7 +21,7 @@ archives, extracted traces, and canonical ADS-B Parquet downloaded or generated
 by that invocation after the flight files have been written. ADS-B cache paths
 that existed before the command and the generated flight Parquet are preserved.
 
-`algorithm-nn` and `algorithm-nearest` use the worker budget at the widest
+`algorithm-nn`, `algorithm-nearest`, and `junzis` use the worker budget at the widest
 available level. A one-day range processes complete-aircraft ADS-B batches in
 parallel; a multi-day range processes days in parallel and keeps each day
 single-process to avoid nested pools. The default uses half of the machine's
@@ -34,6 +34,58 @@ and metadata and reads only that provider's ADS-B columns needed for airport
 inference. For example, OpenSky inference reuses only OpenSky segmentation.
 Missing or stale nearest output falls back to normal segmentation of the same
 ADS-B provider.
+
+## Junzis flight extraction
+
+`junzis` implements the extraction method in
+[junzis/flight-data-processor](https://github.com/junzis/flight-data-processor)
+at revision `12ed7b73d202b1d3c836323026725120501a40e5`,
+described by Sun, Ellerbroek, and Hoekstra in
+[Flight Extraction and Phase Identification for Large ADS-B Datasets (2017)](https://doi.org/10.2514/1.I010520).
+It clusters each aircraft's observations using time-only DBSCAN with a
+30-minute radius and 100 observations per core neighborhood. Noise is discarded,
+and only clusters with **more than 100** distinct timestamps are retained, as in
+the upstream extractor. It uses scikit-learn's DBSCAN and the original input
+order within each aircraft during fitting. Every operation is partitioned by
+ICAO: timestamp deduplication, time scaling, density checks, clustering, and
+metadata aggregation. Adding other aircraft or changing batch boundaries cannot
+change an aircraft's flights.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 junzis --adsb-source adsblol
+python -m flights.evaluation.evaluation --test-source junzis \
+  --gold-source bts --adsb-source adsblol
+```
+
+The first and last cluster observations provide nominal takeoff/landing times
+and positions; these can describe partial flights. Airports and aircraft metadata
+use the same endpoint-nearest matcher and per-segment modes as
+`algorithm-nearest`. Upstream extraction does not separate ground observations
+or require airborne motion: continuous ground coverage can join consecutive
+flights, and sparse traces can be discarded. Fuzzy flight-phase labeling is a
+separate upstream feature and is not part of this flight source.
+
+Input uses the same provider-specific windows as `algorithm-nearest`: the
+previous, target, and next day for ADSB.lol and OpenSky, and only the target day
+for ADSBX. `--target-day-adsb` restricts input to the target day for any provider.
+Daily output is selected by the first cluster observation's date. Duplicate
+timestamps are removed **within each ICAO**, keeping its first input row at
+that timestamp. Simultaneous observations from different aircraft are retained.
+Missing positions
+do not change clustering; an invalid endpoint receives no airport assignment.
+Rows without a timestamp or ICAO cannot be clustered and are excluded.
+
+Like `algorithm-nearest`, `junzis` reads batches of up to 500 complete aircraft
+traces. A single-day CLI run can process those batches in parallel; multi-day
+runs parallelize days. Version 2 replaces the former global timestamp
+deduplication and shared scaling with independent per-aircraft preprocessing.
+Version 1 flight and evaluation caches are not reused.
+
+This is an in-process implementation of the extraction rules; no MongoDB,
+upstream checkout, or additional dependency is required. Standard flight files
+and catalog/ADS-B manifests are written under
+`data/flights/source=junzis/adsb_source=PROVIDER/version=2/` (with a separate
+`target_day_adsb=true/` partition when requested).
 
 ## ADS-B Exchange published flights
 
