@@ -6,6 +6,82 @@ used for evaluation. Explicit `--output-dir` overrides still work; the candidate
 input figure uses `--output`. For standalone table generation from absolute CSV
 paths without `OUTPUT_DIR`, supply `--output-dir` explicitly.
 
+## Reference-flight aircraft categories and airport characteristics
+
+`reference_flight_breakdown_table.py` exports two matching `booktabs`/`longtable`
+tables for **BTS and SFDPS on 2026-03-01** and **Eurocontrol on 2024-06-01**:
+
+```bash
+OUTPUT_DIR=/Volumes/T2-SSD/planequery .venv/bin/python scripts/paper/reference_flight_breakdown_table.py
+```
+
+The aircraft table uses ADS-B emitter `category` (A1, A2, A3, etc.), with category
+names, illustrative aircraft, and weight definitions. For example, Boeing 737
+is an A3 example; `aircraft_type` instead contains model codes such as B738.
+Reported categories are preserved, including anomalies and unrecognized codes;
+missing categories are not imputed from aircraft models. Categories are enriched
+by the reference providers: OpenAirframes for BTS/Eurocontrol and ADS-B
+observations for SFDPS. These are not independently verified classifications.
+The LaTeX table combines B0 through D2 into one "Other reported categories" row,
+calculated from their summed counts before rounding. The CSV retains each code.
+
+The airport table shows **takeoff / landing percentages** for small, medium,
+large, and unknown airports. Heliport through Closed rows are omitted.
+Code availability has one row, **No IATA or ICAO**, counting resolved airports
+with both explicit `iata_code` and `icao_code` fields blank. Unresolved airports
+and absent code metadata are excluded from this numerator. LAX / KLAX is an
+example of an airport with both codes. An `ident` or `gps_code` is not treated
+as evidence of an ICAO code. The CSV retains all airport types and code groups;
+all displayed percentages still use the full flight count as denominator.
+
+Airport sizes use the flight-date catalog. Code availability uses **one shared
+dated snapshot for all three datasets** (the latest in local history by default).
+The 2024 OurAirports schema lacked an explicit `icao_code` field, so treating its
+nulls as missing codes would falsely classify major airports as IATA only.
+The table records the selected snapshot date and states that code availability
+describes that snapshot, not historical assignments. Use
+`--airport-code-date 2026-10-25` to pin it; snapshots without ICAO metadata are rejected.
+
+Both tables describe **all flights in the current-version reference caches**,
+after provider preprocessing but before evaluation matching/boundary filtering.
+Each flight contributes once to the aircraft table and once to each airport
+endpoint distribution. Repeated airport visits count repeatedly. Missing values
+remain in denominators; each full CSV distribution sums to 100% before rounding.
+The airport table displays selected rows, so its displayed rows need not sum to 100%.
+These are flight-weighted shares, not shares of unique aircraft or airports.
+
+The generator reads existing cache files and airport history without refreshing,
+downloading, or regenerating data. It checks flight manifests against the
+flight-date catalog, including the existing one-month grace policy, and fails
+if a required cache is absent or stale. Eurocontrol uses its default ADSB.lol
+enrichment cache. Its population retains the provider's registration-matching
+requirements, so this is not a count of all raw Eurocontrol records.
+
+Outputs default to `$OUTPUT_DIR/paper/tables/reference_flight_breakdown/`:
+
+- `reference_flight_breakdown_aircraft.latex`: category percentages and definitions.
+- `reference_flight_breakdown_airports.latex`: airport size/type and code percentages.
+- `reference_flight_breakdown.csv`: exact counts, denominators, and unrounded percentages (0–100).
+- `reference_flight_breakdown_manifest.json`: source versions, dates, cache/history hashes,
+  catalog provenance, definitions, and documentation URLs.
+
+Use `--output-dir outputs/paper/tables` for a workspace-local export, `--prefix`
+to change the folder/file names, and `--decimals` to change displayed precision.
+Include in a full-width/single-column area without a surrounding table float:
+
+```latex
+% Preamble:
+\usepackage{booktabs,longtable,array}
+% Body:
+\input{tables/reference_flight_breakdown/reference_flight_breakdown_aircraft.latex}
+\input{tables/reference_flight_breakdown/reference_flight_breakdown_airports.latex}
+```
+
+Labels are `tab:reference-flight-breakdown-aircraft` and
+`tab:reference-flight-breakdown-airports`. Definitions follow
+[ADS-B Exchange's emitter-category documentation](https://support.adsbexchange.com/hc/en-us/articles/44705224053517-Emitter-Category-ADS-B-DO-260B-2-2-3-2-5-2)
+and the [OurAirports data dictionary](https://ourairports.com/help/data-dictionary.html).
+
 ## Airport NN candidate input figure
 
 `airport_nn_candidate_view.py` creates separate figures for A96262's departure
@@ -189,14 +265,15 @@ The script now produces **one compact summary table**, grouped by reference
 flight dataset: BTS, SFDPS, and Eurocontrol first, followed by BTS-verified,
 SFDPS-verified, and Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
 Only reference datasets present in the input are included.
-The published OpenSky flights row appears directly before Nearest/OpenSky and
-NN/OpenSky within each reference dataset, keeping the OpenSky comparisons together.
+The published OpenSky flights and OpenSky-NN rows appear directly before
+Nearest/OpenSky and NN/OpenSky within each reference dataset. OpenSky-NN keeps
+OpenSky's flight boundaries and replaces the airport predictions with the NN.
 
 With `OUTPUT_DIR` set as for evaluation, read the existing evaluation cache:
 
 ```bash
 .venv/bin/python scripts/paper/csvs_to_latex_table.py \
-  --test-source opensky algorithm-nearest algorithm-nn \
+  --test-source opensky opensky-nn algorithm-nearest algorithm-nn \
   --adsb-source opensky none \
   --gold-source bts bts-verified sfdps sfdps-verified eurocontrol eurocontrol-verified \
   --reference-date bts=2026-03-01 \
@@ -213,6 +290,26 @@ only entries supported by the current evaluation cache version, including the
 cache reader's existing validity checks. It never runs evaluations or modifies
 cache files. Missing results cause an error if nothing matches; individual
 uncached source/date combinations are not invented or recomputed.
+
+If OpenSky-NN results are missing, evaluate the published and NN-enriched
+OpenSky sources with the current evaluator before exporting (this can run NN
+inference and requires the downloaded flights and OpenSky observations):
+
+```bash
+PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
+  --test-source opensky opensky-nn \
+  --gold-source bts sfdps bts-verified sfdps-verified \
+  --test-dates 2026-03-01
+
+PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
+  --test-source opensky opensky-nn \
+  --gold-source eurocontrol eurocontrol-verified \
+  --test-dates 2024-06-01
+```
+
+Use the same `OUTPUT_DIR` as the table export. Omit `--target-day-adsb` for these
+sources. `--require-complete` checks metrics in available rows, so explicitly
+requesting `opensky-nn` does not fail if that method has no cached rows.
 
 Use `--cache-dir /path/to/evaluation` to override the cache root. Cache mode
 requires the project's Python environment and `OUTPUT_DIR`, just like the
@@ -268,9 +365,10 @@ once in its note and uses short row labels such as `OpenSky`, `Nearest`, and `NN
 When multiple providers are present, the column becomes `Method / ADS-B` and
 provider suffixes remain on the rows. CSV metadata always retains the provider.
 
-For adjacent Nearest and NN rows using the same provider, all metrics from the
-segmentation, aircraft-coverage, and timing families can share cells spanning
-both rows. This covers counts, precision/recall/F1, zero-flight ICAOs, and timing
+For adjacent Nearest and NN rows using the same provider, and for adjacent
+OpenSky and OpenSky-NN rows, all metrics from the segmentation, aircraft-coverage,
+and timing families can share cells spanning both rows.
+This covers counts, precision/recall/F1, zero-flight ICAOs, and timing
 errors or threshold recalls. Airport-dependent metrics stay separate, including
 any scores requiring correct airports. Cells merge only when the underlying selected values match exactly,
 not merely after rounding; missing values are not merged. CSV rows remain complete.
