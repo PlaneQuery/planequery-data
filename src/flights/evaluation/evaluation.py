@@ -27,7 +27,7 @@ from flights.evaluation.models import (
     EvaluationStats,
 )
 from flights.flight_source import ADSBFlightSource, FlightSource, get_flights
-from flights.flights_comparison import df_flights_comparison
+from flights.flights_comparison import MAX_FLIGHT_MATCH_TIME_DELTA, df_flights_comparison
 from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
     BTS_SOURCE,
@@ -203,7 +203,6 @@ def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     )
 
 
-
 def _assert_no_null_icaos(flights: pl.DataFrame, source_role: str) -> None:
     null_count = flights.get_column("icao").null_count()
     assert null_count == 0, (
@@ -232,44 +231,51 @@ def _gold_icao_cohort(
 def _compare_day(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
-    target_date: date,
+    start_dt: datetime,
+    end_dt: datetime,
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
     _assert_no_null_icaos(test_flights, "test_source")
     _assert_no_null_icaos(gold_flights, "gold_source")
-    test_flights = _flights_on_date(test_flights, target_date)
-    gold_flights = _flights_on_date(gold_flights, target_date)
+    assert test_flights.select(
+    (pl.col("takeoff_time").dt.date() == start_dt.date())
+    .fill_null(False)
+    .all()
+    ).item(), f"Not all test flights take off on {start_dt.date()}"
+
+
     test_flights, gold_flights = _gold_icao_cohort(
         test_flights,
         gold_flights,
     )
-    assert not gold_flights.is_empty(), (
-        f"gold_source contains no flights for {target_date}"
-    )
-    assert not test_flights.is_empty(), (
-        f"test_source contains no flights for {target_date}"
-    )
-    # assert test_flights.select(
-    #   (pl.col("takeoff_time").dt.date() == target_date)
-    #   .fill_null(False)
-    #   .all()
-    # ).item(), f"Expected all flights to take off on {target_date}"
+    assert not gold_flights.is_empty()
+    assert not test_flights.is_empty()
+
     assert gold_flights.select(
-      (pl.col("takeoff_time").dt.date() == target_date)
+      (pl.col("takeoff_time").dt.date() == start_dt.date())
       .fill_null(False)
       .all()
-    ).item(), f"Expected all flights to take off on {target_date}"
+    ).item(), f"Expected all flights to take off on {start_dt.date()}"
 
-    start = datetime(target_date.year, target_date.month, target_date.day)
-    end = start + timedelta(days=1)
-    return df_flights_comparison(
+    comparison = df_flights_comparison(
         test_flights,
         gold_flights,
-        start,
-        end,
+        start_dt,
+        end_dt,
         airport_catalog,
     )
+    # Keep full-day gold as matching context, then score by gold departure
+    # when present, or test departure for an unmatched test flight.
+    return comparison.filter(
+        pl.coalesce("takeoff_time_df1", "takeoff_time").is_between(
+            start_dt, end_dt, closed="both"
+        )
+    )
 
+def get_start_dt_end_dt_for_gold(target_date: date) -> tuple[datetime, datetime]:
+    start_dt = datetime.combine(target_date, datetime.min.time()) + MAX_FLIGHT_MATCH_TIME_DELTA
+    end_dt = datetime.combine(target_date + timedelta(days=1), datetime.min.time()) - MAX_FLIGHT_MATCH_TIME_DELTA
+    return start_dt, end_dt
 
 def evaluate(
     test_source: SourceInput | Sequence[SourceInput],
@@ -398,19 +404,21 @@ def evaluate(
                         gold_flights = read_flights(
                             resolved_gold_source, gold_adsb_source, target_date
                         )
+                        start_dt, end_dt = get_start_dt_end_dt_for_gold(target_date)
                         comparison = _compare_day(
                             test_flights,
                             gold_flights,
-                            target_date,
+                            start_dt,
+                            end_dt,
                             airport_catalog,
                         )
-                        # Measure aircraft presence in the inputs, before matching
-                        # discards unmatched flights near the day's boundaries.
+                        # Measure aircraft presence in the full-day inputs,
+                        # before applying the evaluation window.
                         test_icaos = set(
-                            _flights_on_date(test_flights, target_date)["icao"]
+                            test_flights.get_column("icao").unique().to_list()
                         )
                         gold_icaos = set(
-                            _flights_on_date(gold_flights, target_date)["icao"]
+                            gold_flights.get_column("icao").unique().to_list()
                         )
                         stats = EvaluationStats.from_comparison(
                             comparison,

@@ -7,6 +7,14 @@ negatives while test-only aircraft are outside the evaluation cohort. Daily
 comparison details and metric rows are cached under
 `OUTPUT_DIR/data/cache/evaluation`.
 
+Matching uses the full UTC departure day as context. After matching, only rows
+whose gold departure falls within 01:00–23:00 UTC (inclusive) are scored;
+unmatched test flights use their own departure time for this check. A test
+flight matched to gold outside the window is excluded along with that gold
+flight, rather than counted as a false positive. Landing after midnight does
+not exclude a flight. The margins equal the one-hour matching tolerance.
+Aircraft-presence metrics use the full-day inputs before this window filter.
+
 BTS excludes an aircraft's entire UTC takeoff day when a non-cancelled,
 non-diverted report is missing `air_time`, `wheels_on`, or `arr_delay`. The
 exclusion uses the mapped ICAO and also removes that aircraft's diversion legs
