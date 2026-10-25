@@ -1,4 +1,4 @@
-# OpenAP / traffic phase segmentation
+# OpenAP phase segmentation
 
 `__init__.py` exposes `OpenAPFlightSource`; `segmentation.py` contains the
 phase-to-flight adapter. The public import is

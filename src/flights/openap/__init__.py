@@ -1,4 +1,4 @@
-"""OpenAP/traffic phase segmentation in the standard flight-source interface."""
+"""OpenAP phase segmentation in the standard flight-source interface."""
 
 from dataclasses import dataclass
 from datetime import date, datetime
