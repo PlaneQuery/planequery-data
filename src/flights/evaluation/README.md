@@ -109,13 +109,13 @@ Use `--refresh-cache` to recalculate and replace matching entries.
 
 ## Additional segmentation baselines
 
-`junzis`, [`openap`](../openap/README.md), and
+`sun`, [`openap`](../openap/README.md), and
 [`plane-notify`](../plane_notify/README.md) are available through the same
 evaluation interface as `algorithm-nearest`:
 
 ```bash
 python -m flights.evaluation.evaluation \
-  --test-source algorithm-nearest junzis openap plane-notify \
+  --test-source algorithm-nearest sun openap plane-notify \
   --gold-source bts sfdps bts-verified sfdps-verified \
   --adsb-source adsblol --test-dates 2026-03-01
 ```

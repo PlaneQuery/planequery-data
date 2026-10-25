@@ -151,7 +151,7 @@ from flights.sources import FLIGHT_SOURCES_BY_NAME
 from flights.openap.segmentation import _phase_detector
 assert "openap" in FLIGHT_SOURCES_BY_NAME
 assert "plane-notify" in FLIGHT_SOURCES_BY_NAME
-assert "junzis" in FLIGHT_SOURCES_BY_NAME
+assert "sun" in FLIGHT_SOURCES_BY_NAME
 try:
     _phase_detector()
 except ImportError as exc:

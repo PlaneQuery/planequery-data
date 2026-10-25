@@ -19,8 +19,8 @@ from flights import cli, flight_source
 from flights.evaluation import evaluation
 from flights.flight_manifest import FlightManifest, flight_manifest_path
 from flights.flight_type import FLIGHT_POLARS_SCHEMA
-from flights.junzis import JunzisFlightSource
-from flights.sources import FLIGHT_SOURCES_BY_NAME, JUNZIS_SOURCE
+from flights.sun import SunFlightSource
+from flights.sources import FLIGHT_SOURCES_BY_NAME, SUN_SOURCE
 
 
 DAY = date(2026, 3, 1)
@@ -61,14 +61,14 @@ def bounds(flights):
 
 @pytest.mark.parametrize("size, expected", [(0, 0), (99, 0), (100, 0), (101, 1)])
 def test_strict_upstream_observation_threshold(catalog, size, expected):
-    result = JUNZIS_SOURCE.create_flights_for_day(DAY, observations(range(size)), catalog)
+    result = SUN_SOURCE.create_flights_for_day(DAY, observations(range(size)), catalog)
     assert result.schema == FLIGHT_POLARS_SCHEMA
     assert result.height == expected
 
 
 def test_separated_clusters_and_noise(catalog):
     frame = observations([*range(101), *range(4000, 4101), 8000])
-    result = JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog)
+    result = SUN_SOURCE.create_flights_for_day(DAY, frame, catalog)
     assert bounds(result) == [
         (START, START + timedelta(seconds=100)),
         (START + timedelta(seconds=4000), START + timedelta(seconds=4100)),
@@ -78,14 +78,14 @@ def test_separated_clusters_and_noise(catalog):
 def test_sparse_chain_is_noise_despite_short_gaps(catalog):
     # More than 100 total rows and every gap below 30 minutes are insufficient:
     # no 30-minute neighborhood has the 100 points needed to be a DBSCAN core.
-    result = JUNZIS_SOURCE.create_flights_for_day(
+    result = SUN_SOURCE.create_flights_for_day(
         DAY, observations(np.arange(200) * 300), catalog,
     )
     assert result.is_empty()
 
 
 def test_cluster_size_is_strict_even_when_aircraft_has_enough_rows(catalog):
-    result = JUNZIS_SOURCE.create_flights_for_day(
+    result = SUN_SOURCE.create_flights_for_day(
         DAY, observations([*range(100), *range(4000, 4101)]), catalog,
     )
     assert bounds(result) == [
@@ -97,7 +97,7 @@ def test_identical_timestamps_on_different_aircraft_are_preserved(catalog):
     first = observations(range(101), "aaa111")
     second = observations(range(101), "bbb222")
     for frames in ([first, second], [second, first]):
-        result = JUNZIS_SOURCE.create_flights_for_day(
+        result = SUN_SOURCE.create_flights_for_day(
             DAY, pl.concat(frames), catalog,
         ).sort("icao")
         assert result["icao"].to_list() == ["aaa111", "bbb222"]
@@ -106,7 +106,7 @@ def test_identical_timestamps_on_different_aircraft_are_preserved(catalog):
 
 def test_duplicate_rows_do_not_satisfy_minimum_density(catalog):
     frame = observations(range(60))
-    assert JUNZIS_SOURCE.create_flights_for_day(
+    assert SUN_SOURCE.create_flights_for_day(
         DAY, pl.concat([frame, frame]), catalog,
     ).is_empty()
 
@@ -118,10 +118,10 @@ def test_input_order_controls_ambiguous_border_point(catalog):
     left = observations([*range(100), 400])
     right = observations([3800, *range(4100, 4200)])
     border = observations([2100])
-    earlier_first = JUNZIS_SOURCE.create_flights_for_day(
+    earlier_first = SUN_SOURCE.create_flights_for_day(
         DAY, pl.concat([left, right, border]), catalog,
     ).sort("takeoff_time")
-    later_first = JUNZIS_SOURCE.create_flights_for_day(
+    later_first = SUN_SOURCE.create_flights_for_day(
         DAY, pl.concat([right, left, border]), catalog,
     ).sort("takeoff_time")
     assert bounds(earlier_first) == [
@@ -145,7 +145,7 @@ def test_ground_observations_and_metadata_do_not_split_clusters(catalog):
         pl.lit("Owner").alias("owner"),
         pl.lit("C172").alias("aircraft_type"),
     ).reverse()
-    result = JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog)
+    result = SUN_SOURCE.create_flights_for_day(DAY, frame, catalog)
     assert result.height == 1
     row = result.row(0, named=True)
     assert row["takeoff_airport_id"] == 1
@@ -168,7 +168,7 @@ def test_invalid_endpoint_positions_preserve_clustering(catalog, invalid_lat):
     frame = observations(range(101)).with_columns(
         pl.Series("lat", [invalid_lat] + [0.0] * 100, dtype=pl.Float64),
     )
-    row = JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog).row(0, named=True)
+    row = SUN_SOURCE.create_flights_for_day(DAY, frame, catalog).row(0, named=True)
     assert row["takeoff_time"] == START
     assert row["takeoff_airport_id"] is None
     assert row["landing_airport_id"] == 2
@@ -176,7 +176,7 @@ def test_invalid_endpoint_positions_preserve_clustering(catalog, invalid_lat):
 
 def test_overnight_clusters_belong_only_to_start_day(catalog):
     frame = observations([*range(-50, 51), *range(86350, 86451)])
-    result = JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog)
+    result = SUN_SOURCE.create_flights_for_day(DAY, frame, catalog)
     assert bounds(result) == [
         (START + timedelta(seconds=86350), START + timedelta(seconds=86450)),
     ]
@@ -187,7 +187,7 @@ def test_many_aircraft_with_simultaneous_observations(catalog):
         observations(range(101), f"{i:06x}")
         for i in range(51)
     ])
-    result = JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog)
+    result = SUN_SOURCE.create_flights_for_day(DAY, frame, catalog)
     assert result.height == 51
     assert result["icao"].n_unique() == 51
 
@@ -201,11 +201,11 @@ def test_aircraft_results_are_independent_of_other_aircraft_and_batches(catalog)
         for i in range(52)
     ]
     expected = pl.concat([
-        JUNZIS_SOURCE.create_flights_for_day(DAY, frame, catalog)
+        SUN_SOURCE.create_flights_for_day(DAY, frame, catalog)
         for frame in [target, *others]
     ]).sort("icao", "takeoff_time")
     for frames in ([target, *others], [*others, target]):
-        actual = JUNZIS_SOURCE.create_flights_for_day(
+        actual = SUN_SOURCE.create_flights_for_day(
             DAY, pl.concat(frames), catalog,
         ).sort("icao", "takeoff_time")
         assert actual.equals(expected)
@@ -214,25 +214,25 @@ def test_aircraft_results_are_independent_of_other_aircraft_and_batches(catalog)
 def test_source_public_import_and_worker_serialization():
     # Keep the public type identity stable when moving the implementation:
     # evaluation fingerprints and multiprocessing workers both depend on it.
-    assert JunzisFlightSource.__module__ == "flights.junzis"
-    restored = pickle.loads(pickle.dumps(JUNZIS_SOURCE))
-    assert type(restored) is JunzisFlightSource
-    assert restored == JUNZIS_SOURCE
+    assert SunFlightSource.__module__ == "flights.sun"
+    restored = pickle.loads(pickle.dumps(SUN_SOURCE))
+    assert type(restored) is SunFlightSource
+    assert restored == SUN_SOURCE
 
 
 def test_source_registration_and_evaluation_dispatch(monkeypatch):
-    assert FLIGHT_SOURCES_BY_NAME["junzis"] is JUNZIS_SOURCE
-    assert isinstance(JUNZIS_SOURCE, flight_source.ADSBFlightSource)
-    assert JUNZIS_SOURCE.adsb_icao_batch_size() == 500
-    assert JUNZIS_SOURCE.version == 2
-    assert JUNZIS_SOURCE.reusable_flight_source() is None
-    assert cli.parse_args(["2026-03-01", "2026-03-02", "junzis"]).source == "junzis"
-    args = evaluation.parse_args(["--test-source", "junzis", "--adsb-source", "opensky"])
-    assert args.test_source == ["junzis"]
+    assert FLIGHT_SOURCES_BY_NAME["sun"] is SUN_SOURCE
+    assert isinstance(SUN_SOURCE, flight_source.ADSBFlightSource)
+    assert SUN_SOURCE.adsb_icao_batch_size() == 500
+    assert SUN_SOURCE.version == 2
+    assert SUN_SOURCE.reusable_flight_source() is None
+    assert cli.parse_args(["2026-03-01", "2026-03-02", "sun"]).source == "sun"
+    args = evaluation.parse_args(["--test-source", "sun", "--adsb-source", "opensky"])
+    assert args.test_source == ["sun"]
     calls = []
     monkeypatch.setattr(evaluation, "get_flights", lambda *args: calls.append(args))
-    evaluation.source_flights_reader("junzis", ADSBSource.OPENSKY)(DAY)
-    assert calls == [(JUNZIS_SOURCE, DAY, ADSBSource.OPENSKY)]
+    evaluation.source_flights_reader("sun", ADSBSource.OPENSKY)(DAY)
+    assert calls == [(SUN_SOURCE, DAY, ADSBSource.OPENSKY)]
 
 
 @pytest.mark.parametrize("provider", list(ADSBSource))
@@ -240,10 +240,10 @@ def test_source_registration_and_evaluation_dispatch(monkeypatch):
 def test_pipeline_aircraft_batches_windows_and_cache(
     monkeypatch, tmp_path, catalog, provider, target_day,
 ):
-    source = JunzisFlightSource(target_day_adsb=target_day)
+    source = SunFlightSource(target_day_adsb=target_day)
     monkeypatch.setattr(flight_source, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(flight_source, "airport_catalog_for_date", lambda dt: catalog)
-    monkeypatch.setattr(JunzisFlightSource, "adsb_icao_batch_size", lambda self: 1)
+    monkeypatch.setattr(SunFlightSource, "adsb_icao_batch_size", lambda self: 1)
     frame = pl.concat([observations(range(101)), observations(range(101), "def456")])
     reads = []
 
@@ -275,7 +275,7 @@ def test_pipeline_aircraft_batches_windows_and_cache(
         (*window, False, ["def456"]),
     ]
     path = flight_source.flight_path(source, DAY, provider)
-    assert f"source=junzis/adsb_source={provider.value}/" in str(path)
+    assert f"source=sun/adsb_source={provider.value}/" in str(path)
     assert ("target_day_adsb=true" in str(path)) is target_day
     assert "/version=2/" in str(path)
     manifest = FlightManifest.read(flight_manifest_path(path))
@@ -294,13 +294,13 @@ def test_single_day_cli_uses_within_day_aircraft_workers(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(cli, "flight_path", lambda *args: tmp_path / "data.parquet")
     monkeypatch.setattr(cli, "default_worker_count", lambda: 4)
-    assert cli.default_workers_for_source(JUNZIS_SOURCE) == 4
-    cli.write_flights_range(DAY, DAY + timedelta(days=1), JUNZIS_SOURCE, workers=4)
+    assert cli.default_workers_for_source(SUN_SOURCE) == 4
+    cli.write_flights_range(DAY, DAY + timedelta(days=1), SUN_SOURCE, workers=4)
     assert calls == [
-        ((JUNZIS_SOURCE, DAY, ADSBSource.ADSBLOL), {"batch_workers": 4})
+        ((SUN_SOURCE, DAY, ADSBSource.ADSBLOL), {"batch_workers": 4})
     ]
 
 
 def test_target_day_cli_planning():
-    source = replace(JUNZIS_SOURCE, target_day_adsb=True)
+    source = replace(SUN_SOURCE, target_day_adsb=True)
     assert cli.adsb_dates_for_run(source, [DAY], ADSBSource.OPENSKY) == [DAY]
