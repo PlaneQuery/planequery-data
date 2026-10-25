@@ -12,7 +12,6 @@ from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 from flights.verified import source as verified_source
-from flights.verified import verification
 
 
 DAY = date(2024, 6, 1)
@@ -89,8 +88,6 @@ def test_eurocontrol_verified_checks_global_flight_sequences(monkeypatch, provid
 
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", get_base)
     monkeypatch.setattr(verified_source, "read_adsb", read)
-    monkeypatch.setattr(verification, "_check_flights_in_us_faa_airspace", lambda *args: pytest.fail("EUROCONTROL must allow European flights"))
-
     result = source.create_flights_for_day(DAY, catalog)
 
     if scenario == "valid":
@@ -185,13 +182,12 @@ def test_empty_eurocontrol_verified_does_not_read_adsb(monkeypatch):
 
 
 @pytest.mark.parametrize("base_source", [BTSFlightSource(), SFDPSFlightSource()])
-def test_existing_verified_sources_use_adsblol_and_keep_us_faa_filter(
+def test_existing_verified_sources_use_adsblol_without_us_faa_filter(
     monkeypatch, base_source
 ):
     base = european_flights().with_columns(
         pl.Series("callsign", ["BAW1", "BAW2", "BAW3", "BAW4"])
     )
-    calls = []
     monkeypatch.setattr(verified_source, "get_flights_for_catalog", lambda *args: base)
     def read(day, *, columns, icaos, source):
         assert day == DAY
@@ -201,11 +197,6 @@ def test_existing_verified_sources_use_adsblol_and_keep_us_faa_filter(
         return observed_callsigns()
 
     monkeypatch.setattr(verified_source, "read_adsb", read)
-    monkeypatch.setattr(
-        verification,
-        "_check_flights_in_us_faa_airspace",
-        lambda *args: calls.append(True) or [],
-    )
     source = verified_source.VerifiedFlightSource(base_source)
     assert source.enrichment_adsb_source() is ADSBSource.ADSBLOL
     assert "adsb_source=adsblol" in flight_source.flight_path(
@@ -213,5 +204,4 @@ def test_existing_verified_sources_use_adsblol_and_keep_us_faa_filter(
     ).parts
     assert source.flight_manifest(Catalog.provenance, None).adsb_source == "adsblol"
     result = source.create_flights_for_day(DAY, Catalog())
-    assert calls == [True]
-    assert result.is_empty()
+    assert result.height == 4

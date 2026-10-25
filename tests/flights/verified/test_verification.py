@@ -11,7 +11,7 @@ from data_engineering.adsb.canonical import ADSBSource
 from data_engineering.adsb.read_adsb import read_adsb
 from flights.flight_source import get_flights
 from flights.sources import BTS_SOURCE
-from flights.verified.verification import _validate_callsign_history, verify_flights
+from flights.verified.verification import _validate_callsign_history
 
 def test_0():
     # 2026-03-01

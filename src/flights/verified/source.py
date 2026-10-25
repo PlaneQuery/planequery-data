@@ -82,16 +82,14 @@ class VerifiedFlightSource(NonADSBFlightSource):
             # Verification may have fetched data missing when the base cache
             # was built. Refresh callsigns from the observations just loaded.
             df_flights = assign_callsigns(df_flights, df_adsb.lazy())
-            return verify_flights(
-                airport_catalog, df_flights, df_adsb, require_us_faa_airspace=False
-            )
+            return verify_flights(df_flights, df_adsb)
         df_adsb = read_adsb(
             dt,
             columns=["icao", "time", "callsign"],
             icaos=df_flights["icao"].unique().to_list(),
             source=self.adsb_source,
         ).sort("icao", "time")
-        return verify_flights(airport_catalog, df_flights, df_adsb)
+        return verify_flights(df_flights, df_adsb)
 
 if __name__ == "__main__":
     from flights.sources import BTS_SOURCE
