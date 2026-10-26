@@ -17,8 +17,8 @@ def exposure_rows():
             for endpoint in ("takeoff", "landing"):
                 count = 4 if group == "training" else 0
                 correct = (3 if method == "algorithm-nn" else 2) if count else 0
-                rows.append(dict(test_date="2026-03-01", test_src=method,
-                                 gold_src="bts", adsb_src="opensky", target_day_adsb="false",
+                rows.append(dict(test_date="2024-06-01", test_src=method,
+                                 gold_src="eurocontrol", adsb_src="opensky", target_day_adsb="false",
                                  airport_group=group, endpoint=endpoint,
                                  matched_endpoint_count=count, correct_count=correct,
                                  airport_accuracy=correct/count if count else None,
@@ -38,12 +38,17 @@ def run_export(tmp_path, rows, *options):
 
 
 def test_export_percentages_and_zero_denominators(tmp_path):
-    result = run_export(tmp_path, exposure_rows())
+    rows = exposure_rows()
+    # Other datasets in the same input must not appear in this Eurocontrol table.
+    rows += [{**row, "gold_src": source} for source in ("bts", "eurocontrol-verified")
+             for row in exposure_rows()]
+    result = run_export(tmp_path, rows)
     assert result.returncode == 0, result.stderr
     folder = tmp_path / "tables/test"
     with (folder / "test_training_vs_non_training.csv").open() as stream:
         rows = list(csv.DictReader(stream))
     assert len(rows) == 8
+    assert {row["gold_src"] for row in rows} == {"eurocontrol"}
     assert {row["airport_accuracy_percent"] for row in rows} == {"50.0", "75.0", ""}
     assert all(row["matched_endpoint_count"] == "0" for row in rows if row["airport_group"] == "nontraining")
     assert all(row["accuracy_drop_pp"] == "" for row in rows)
@@ -52,6 +57,30 @@ def test_export_percentages_and_zero_denominators(tmp_path):
     assert "--- / ---" in latex
     assert "OpenSky ADS-B" in latex
     assert "NN / OpenSky" not in latex
+    assert latex.count(r"\multirow{2}{*}{4 / 4}") == 1
+    assert latex.count(r"\multirow{2}{*}{0 / 0}") == 1
+    assert "NN &  & 75.00 / 75.00 &  & --- / ---" in latex
+    assert r"\caption{Eurocontrol airport accuracy" in latex
+    assert "2024-06-01" in latex
+    assert r"\textbf{Eurocontrol" not in latex
+    assert "Continued on next page" not in latex
+
+
+@pytest.mark.parametrize("different_method_count", [False, True])
+def test_counts_merge_only_when_both_endpoints_match(tmp_path, different_method_count):
+    rows = exposure_rows()
+    for row in rows:
+        if row["airport_group"] == "training" and row["endpoint"] == "landing":
+            count = 6 if different_method_count and row["test_src"] == "algorithm-nn" else 5
+            row.update(matched_endpoint_count=count, airport_accuracy=row["correct_count"] / count)
+    result = run_export(tmp_path, rows)
+    assert result.returncode == 0, result.stderr
+    latex = (tmp_path / "tables/test/test_training_vs_non_training.tex").read_text()
+    assert (r"\multirow{2}{*}{4 / 5}" in latex) != different_method_count
+    if different_method_count:
+        assert "Nearest & 4 / 5 &" in latex
+        assert "NN & 4 / 6 &" in latex
+    assert r"\multirow{2}{*}{0 / 0}" in latex
 
 
 def test_drop_is_paired_by_method_endpoint_and_provider(tmp_path):

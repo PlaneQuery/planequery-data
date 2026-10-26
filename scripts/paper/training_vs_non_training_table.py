@@ -1,4 +1,4 @@
-"""Export Nearest/NN airport accuracy on training and nontraining airports.
+"""Export Eurocontrol Nearest/NN accuracy on training and nontraining airports.
 
 Read evaluation caches by default, or pass *_airport_exposure.csv files.
 Existing evaluator metrics are reused; missing evaluations are never run.
@@ -9,7 +9,6 @@ import argparse
 import csv
 from datetime import date
 import hashlib
-from itertools import groupby
 import json
 import os
 from pathlib import Path
@@ -17,7 +16,7 @@ import re
 from typing import Any
 
 from csvs_to_latex_table import (
-    DEFAULT_OUTPUT_DIR, METADATA, REFERENCE_LABELS, latex_escape,
+    DEFAULT_OUTPUT_DIR, METADATA, latex_escape,
     load_cache_rows, number, reference_sort_key, row_key, select_reference_dates,
 )
 
@@ -29,7 +28,8 @@ RATES = ("airport_accuracy", "airport_macro_accuracy", "flight_match_coverage",
 NOTE = (
     "TO/LD = takeoff/landing. Accuracy (%) = correct airport IDs divided by "
     "matched endpoints with known gold airport IDs; null predictions are incorrect. "
-    "n gives the corresponding matched endpoint counts (TO/LD). Training airports "
+    "n gives the corresponding matched endpoint counts (TO/LD); a count cell "
+    "spanning Nearest and NN applies to both methods. Training airports "
     "are eligible positive labels used for NN training, combining takeoff and "
     "landing labels; validation labels are excluded. Both methods use the same "
     "training airport set. Unknown gold airport IDs are excluded. A dash denotes "
@@ -123,6 +123,10 @@ def validate_rows(rows: list[dict], methods: list[str], gold_sources: list[str] 
 
 
 def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
+    contexts = {(row["gold_src"], row["test_date"], row["target_day_adsb"]) for row in rows}
+    if len(contexts) != 1 or next(iter(contexts))[0] != "eurocontrol":
+        raise ValueError("This table requires Eurocontrol on one date with one ADS-B input window.")
+    _, day, _ = next(iter(contexts))
     comparisons = {row_key(row): row for row in rows}
     lookup = {exposure_key(row): row for row in rows}
     providers = {row["adsb_src"] for row in rows}
@@ -132,37 +136,48 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
                r"\shortstack{Nontraining $n$\\TO / LD} & "
                r"\shortstack{Nontraining\\accuracy (\%)\\TO / LD} & "
                r"\shortstack{Drop (pp)\\TO / LD} \\")
-    lines = [r"% Requires \usepackage{booktabs,longtable}.", r"\begingroup",
+    lines = [r"% Requires \usepackage{booktabs,longtable,multirow}.", r"\begingroup",
              r"\footnotesize", r"\setlength{\tabcolsep}{3pt}",
              r"\begin{longtable}{@{}lrrrrr@{}}",
-             r"\caption{Airport accuracy on training and nontraining airports}",
+             r"\caption{Eurocontrol airport accuracy on training and nontraining airports (" + latex_escape(day) + ")}",
              r"\label{tab:" + prefix.replace("_", "-") + r"-training-vs-non-training}\\",
-             r"\toprule", heading, r"\midrule", r"\endfirsthead",
-             r"\toprule", heading, r"\midrule", r"\endhead",
-             r"\midrule\multicolumn{6}{r}{Continued on next page}\\", r"\endfoot",
-             r"\bottomrule", r"\endlastfoot"]
-    ordered = sorted(comparisons.values(), key=reference_sort_key)
-    for context, group in groupby(ordered, lambda r: (r["gold_src"], r["test_date"], r["target_day_adsb"])):
-        source, day, window = context
-        title = f"{REFERENCE_LABELS.get(source, source)} | {day}"
-        if len({row["target_day_adsb"] for row in rows}) > 1:
-            title += f" | Target-day ADS-B: {window}"
-        lines += [r"\addlinespace[4pt]", r"\multicolumn{6}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"]
-        for row in group:
-            method = "Nearest" if row["test_src"] == METHODS[0] else "NN"
-            if len(providers) > 1:
-                method += " / " + labels.get(row["adsb_src"], row["adsb_src"])
-            cells = [latex_escape(method)]
-            for airport_group in GROUPS:
-                values = [lookup.get((*row_key(row), airport_group, endpoint), {}) for endpoint in ENDPOINTS]
-                cells.append(" / ".join("---" if value.get("matched_endpoint_count") is None
-                                         else f"{int(value['matched_endpoint_count']):,}" for value in values))
-                cells.append(" / ".join("---" if value.get("airport_accuracy") is None
-                                         else f"{100 * value['airport_accuracy']:.{decimals}f}" for value in values))
-            drops = [lookup.get((*row_key(row), "training", endpoint), {}).get("accuracy_drop_pp")
-                     for endpoint in ENDPOINTS]
-            cells.append(" / ".join("---" if drop is None else f"{drop:.{decimals}f}" for drop in drops))
-            lines.append(" & ".join(cells) + r" \\")
+             r"\toprule", heading, r"\midrule"]
+    group_rows = sorted(comparisons.values(), key=reference_sort_key)
+    shared_starts, shared_ends = {}, {}
+    for index, (nearest, nn) in enumerate(zip(group_rows, group_rows[1:])):
+        if ((nearest["test_src"], nn["test_src"]) != METHODS
+                or nearest["adsb_src"] != nn["adsb_src"]):
+            continue
+        shared = set()
+        for airport_group in GROUPS:
+            counts = [[lookup.get((*row_key(row), airport_group, endpoint), {})
+                       .get("matched_endpoint_count") for endpoint in ENDPOINTS]
+                      for row in (nearest, nn)]
+            if all(count is not None for count in counts[0]) and counts[0] == counts[1]:
+                shared.add(airport_group)
+        if shared:
+            shared_starts[index] = shared
+            shared_ends[index + 1] = shared
+    for index, row in enumerate(group_rows):
+        method = "Nearest" if row["test_src"] == METHODS[0] else "NN"
+        if len(providers) > 1:
+            method += " / " + labels.get(row["adsb_src"], row["adsb_src"])
+        cells = [latex_escape(method)]
+        for airport_group in GROUPS:
+            values = [lookup.get((*row_key(row), airport_group, endpoint), {}) for endpoint in ENDPOINTS]
+            count_cell = " / ".join("---" if value.get("matched_endpoint_count") is None
+                                    else f"{int(value['matched_endpoint_count']):,}" for value in values)
+            if airport_group in shared_starts.get(index, set()):
+                count_cell = r"\multirow{2}{*}{" + count_cell + "}"
+            elif airport_group in shared_ends.get(index, set()):
+                count_cell = ""
+            cells.append(count_cell)
+            cells.append(" / ".join("---" if value.get("airport_accuracy") is None
+                                     else f"{100 * value['airport_accuracy']:.{decimals}f}" for value in values))
+        drops = [lookup.get((*row_key(row), "training", endpoint), {}).get("accuracy_drop_pp")
+                 for endpoint in ENDPOINTS]
+        cells.append(" / ".join("---" if drop is None else f"{drop:.{decimals}f}" for drop in drops))
+        lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
     note = NOTE
     if len(providers) == 1:
         provider = next(iter(providers))
@@ -170,7 +185,7 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
     windows = {row["target_day_adsb"] for row in rows}
     if len(windows) == 1:
         note += f" Target-day-only ADS-B input: {next(iter(windows))}."
-    lines += [r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+    lines += [r"\bottomrule", r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
               latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""]
     return "\n".join(lines)
 
@@ -186,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prefix", help="Output subfolder/filename prefix; default includes the date range.")
     parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD")
     parser.add_argument("--test-source", nargs="+", action="extend", choices=METHODS)
-    for flag in ("gold-source", "adsb-source", "date"):
+    parser.add_argument("--gold-source", nargs="+", choices=("eurocontrol",),
+                        default=["eurocontrol"], help="This table includes only Eurocontrol (unverified).")
+    for flag in ("adsb-source", "date"):
         parser.add_argument("--" + flag, nargs="+", action="extend")
     parser.add_argument("--target-day-adsb", choices=("true", "false", "unknown"), default="false")
     parser.add_argument("--require-complete", action="store_true", help="Require selected sources, both methods, and both endpoints/groups; zero denominators are allowed.")

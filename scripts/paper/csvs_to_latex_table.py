@@ -63,15 +63,16 @@ TABLES = {
             Metric("takeoff_time_bias_minutes", "Takeoff bias (min)", "minutes"),
             Metric("landing_time_bias_minutes", "Landing bias (min)", "minutes"),
         ),
-        "G/T = retained gold/test flights; P/R/F1 = segmentation precision/recall/F1; "
+        "G = retained gold flights in the heading; T = retained test flights. "
+        "P/R/F1 = segmentation precision/recall/F1; "
         "F1 is the harmonic mean of precision and recall. "
         "TO/LD = takeoff/landing. All rates are percentages. Zero flights is the "
         "percentage of gold ICAOs with no test flights. Airport accuracy divides "
         "by matched flights; null airports divide by T. Matched flights = G times "
         "R/100, false negatives = G minus matched, and false positives = T minus "
         "matched. Other counts follow from their percentages and denominators "
-        "(approximately, due to rounding). G varies by method because of boundary "
-        "filtering. Bias is mean signed test-minus-gold time among matched flights; "
+        "(approximately, due to rounding). Gold counts must agree within each group. "
+        "Bias is mean signed test-minus-gold time among matched flights; "
         "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn. "
         "OpenSky denotes the published "
         "flight dataset; OpenSky-NN uses those same flights with NN airport predictions. "
@@ -163,7 +164,7 @@ REFERENCE_LABELS = {
     "eurocontrol": "Eurocontrol", "eurocontrol-verified": "Eurocontrol (verified)",
 }
 SUMMARY_COLUMNS = (
-    ("Flights", "G / T", ("gold_flight_count", "test_flight_count")),
+    ("Test flights", "T", ("test_flight_count",)),
     ("Segmentation", "P / R / F1 (%)", ("precision", "recall", "f1")),
     ("Zero flights", "ICAOs (%)", ("gold_icao_missing_from_test_pct",)),
     ("Airport acc.", "TO / LD (%)", ("takeoff_airport_id_match_pct", "landing_airport_id_match_pct")),
@@ -352,6 +353,18 @@ def format_metric(row: dict[str, Any], metric: Metric, decimals: int) -> str:
     return formatted
 
 
+def gold_flights_heading(rows: list[dict[str, Any]], context: str) -> str:
+    """Assert that a group has one gold-flight denominator, even under python -O."""
+    counts = {row.get("gold_flight_count") for row in rows}
+    if len(counts) != 1:
+        details = "; ".join(f"{row['test_src']}/{row['adsb_src'] or 'none'}: "
+                            f"{row.get('gold_flight_count')}" for row in rows)
+        raise ValueError(f"Gold flight totals differ within {context}: {details}. "
+                         "Use a consistent gold cohort.")
+    count = next(iter(counts))
+    return "Gold flights: " + ("unavailable" if count is None else f"{int(count):,}")
+
+
 def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
                   prefix: str, decimals: int, *,
                   caption: str = "Flight evaluation by reference dataset",
@@ -401,6 +414,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         total = next(iter(icao_counts))
         total_text = "unavailable" if total is None else f"{int(total):,}"
         title = f"{REFERENCE_LABELS.get(source, source)} | {day} | Gold ICAOs: {total_text}"
+        title += " | " + gold_flights_heading(group_rows, f"{source} on {day} (target-day ADS-B: {window})")
         if len(windows) > 1:
             title += f" | Target-day ADS-B: {window}"
         lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
@@ -458,6 +472,9 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
 
 def latex_table(rows: list[dict[str, Any]], name: str, table: Table,
                 metrics: tuple[Metric, ...], prefix: str, decimals: int) -> str:
+    show_gold = ("gold_flight_count" in table.denominators
+                 or any(metric.key == "gold_flight_count" for metric in metrics))
+    metrics = tuple(metric for metric in metrics if metric.key != "gold_flight_count")
     count = 1 + len(metrics)
     headers = ["Method"] + [
         r"\shortstack{" + r"\\".join(latex_escape(line) for line in metric.label.splitlines()) + "}"
@@ -478,10 +495,13 @@ def latex_table(rows: list[dict[str, Any]], name: str, table: Table,
     ]
     for context, group in groupby(rows, key=lambda row: row_key(row)[:-1]):
         day, gold, adsb, window = context
+        group_rows = list(group)
         title = f"{REFERENCE_LABELS.get(gold, gold)} | {day} | ADS-B: {adsb or 'N/A'} | Target-day ADS-B: {window}"
+        if show_gold:
+            title += " | " + gold_flights_heading(group_rows, title)
         lines.extend([r"\addlinespace[3pt]", r"\multicolumn{" + str(count) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*",
                       r"\nopagebreak"])
-        for row in group:
+        for row in group_rows:
             lines.append(" & ".join([latex_escape(row["test_src"])] + [
                 format_metric(row, metric, decimals) for metric in metrics
             ]) + r" \\")
@@ -532,6 +552,11 @@ def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, .
 
 def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
                   selected: dict[str, tuple[Metric, ...]], decimals: int) -> list[Path]:
+    # Validate all shared counts before replacing any existing export files.
+    rendered = {name: (summary_latex(rows, metrics, prefix, decimals)
+                       if name == "reference_summary" else
+                       latex_table(rows, name, TABLES[name], metrics, prefix, decimals))
+                for name, metrics in selected.items()}
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs = []
     for name, metrics in selected.items():
@@ -553,9 +578,7 @@ def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
                     values[csv_column(column)] = value
                 writer.writerow(values)
         latex_path = csv_path.with_suffix(".tex")
-        latex = (summary_latex(rows, metrics, prefix, decimals) if name == "reference_summary"
-                 else latex_table(rows, name, table, metrics, prefix, decimals))
-        latex_path.write_text(latex, encoding="utf-8")
+        latex_path.write_text(rendered[name], encoding="utf-8")
         outputs.extend([csv_path, latex_path])
     return outputs
 
