@@ -6,6 +6,10 @@ used for evaluation. Explicit `--output-dir` overrides still work; the candidate
 input figure uses `--output`. For standalone table generation from absolute CSV
 paths without `OUTPUT_DIR`, supply `--output-dir` explicitly.
 
+Explanatory notes beneath tables are commented out in generated `.tex` files.
+Remove the leading `%` from the note line to show them; definitions remain in
+the manifests and the commented source.
+
 ## Airport-NN training curve
 
 `airport_nn_training_curve.py` plots neural-network validation accuracy versus

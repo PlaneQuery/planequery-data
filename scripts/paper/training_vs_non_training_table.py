@@ -185,7 +185,7 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
     windows = {row["target_day_adsb"] for row in rows}
     if len(windows) == 1:
         note += f" Target-day-only ADS-B input: {next(iter(windows))}."
-    lines += [r"\bottomrule", r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+    lines += [r"\bottomrule", r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
               latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""]
     return "\n".join(lines)
 
