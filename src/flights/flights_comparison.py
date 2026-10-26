@@ -70,8 +70,6 @@ def compare_flight(
 def flights_comparison(
     flights_0: list[Flight],
     flights_1: list[Flight],
-    start_dt,
-    end_dt,
 ):
     """Compare flight lists assigned to the same UTC takeoff day."""
     f0_series: list[int | None] = [None] * len(flights_0)
