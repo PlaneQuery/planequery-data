@@ -22,8 +22,11 @@ METHOD_LABELS = {
     "plane-notify": "plane-notify",
     "openap": "OpenAP",
 }
-REFERENCE_DATES = {source: "2024-06-01" if source.startswith("eurocontrol")
-                   else "2026-03-01" for source in REFERENCE_ORDER}
+REFERENCE_DATES = {
+    "bts": "2026-03-01",
+    "sfdps": "2026-03-01",
+    "eurocontrol": "2024-06-01",
+}
 METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
                 if metric.key in {"precision", "recall", "f1",
                                   "takeoff_airport_id_match_pct",
@@ -66,8 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csvs", nargs="*", type=Path,
                         help="Evaluation CSVs; relative paths use $OUTPUT_DIR/data/experiments/comparison. Default: current-version cache.")
-    parser.add_argument("--gold-source", nargs="+", choices=REFERENCE_ORDER,
-                        default=list(REFERENCE_ORDER))
+    parser.add_argument("--gold-source", nargs="+", choices=REFERENCE_DATES,
+                        default=list(REFERENCE_DATES))
     parser.add_argument("--target-day-adsb", choices=("true", "false"), default="false")
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--cache-policy", choices=("latest", "error"), default="latest")

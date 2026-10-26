@@ -171,9 +171,9 @@ All three methods use OpenSky ADS-B messages.
 OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/paper/algoirthm_comparision.py
 ```
 
-The default references are BTS, SFDPS, and their verified variants on
-**2026-03-01**, and Eurocontrol and its verified variant on **2024-06-01**.
-All 18 comparisons must be present before files are written. Use `--gold-source`
+The references are BTS and SFDPS on **2026-03-01**, and Eurocontrol on
+**2024-06-01**. Verified datasets are excluded from this preset.
+All nine comparisons must be present before files are written. Use `--gold-source`
 to select fewer reference datasets; all three methods are still required for each.
 The default input-window setting is `--target-day-adsb false`, matching the
 overall evaluation table. Pass `--target-day-adsb true` only when those results
