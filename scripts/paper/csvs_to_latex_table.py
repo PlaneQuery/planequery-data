@@ -154,14 +154,12 @@ SHARED_FLIGHT_METRICS = {
         *(column for metric in TABLES[name].metrics for column in metric.columns),
     )
 }
-REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")
+REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol")
 # These sources have no selectable ADS-B provider in evaluation metadata.
 # Keep the CSV exporter usable with only the standard library.
 PROVIDER_INDEPENDENT_SOURCES = {*REFERENCE_ORDER, "opensky", "opensky-nn", "adsbx", "mike"}
 REFERENCE_LABELS = {
-    "bts": "BTS", "bts-verified": "BTS (verified)",
-    "sfdps": "SFDPS", "sfdps-verified": "SFDPS (verified)",
-    "eurocontrol": "Eurocontrol", "eurocontrol-verified": "Eurocontrol (verified)",
+    "bts": "BTS", "sfdps": "SFDPS", "eurocontrol": "Eurocontrol",
 }
 SUMMARY_COLUMNS = (
     ("Test flights", "T", ("test_flight_count",)),
@@ -183,33 +181,31 @@ def row_key(row: dict[str, Any]) -> tuple[str, ...]:
 
 
 def select_reference_dates(rows: list[dict[str, Any]], overrides: list[str]) -> list[dict[str, Any]]:
-    """Choose one shared date per reference family, without pooling daily metrics."""
+    """Choose one date per reference dataset, without pooling daily metrics."""
     requested = {}
     for item in overrides:
         source, separator, day = item.partition("=")
         if not separator or not source:
             raise ValueError("--reference-date expects SOURCE=YYYY-MM-DD")
         date.fromisoformat(day)
-        family = source.removesuffix("-verified")
-        if family in requested and requested[family] != day:
-            raise ValueError(f"Conflicting dates for reference family {family}")
-        requested[family] = day
-    families: dict[str, dict[str, set[str]]] = {}
+        if source.endswith("-verified"):
+            raise ValueError("Verified flight sources are excluded from paper tables.")
+        if source in requested and requested[source] != day:
+            raise ValueError(f"Conflicting dates for reference dataset {source}")
+        requested[source] = day
+    available: dict[str, set[str]] = {}
     for row in rows:
         source = row["gold_src"]
-        families.setdefault(source.removesuffix("-verified"), {}).setdefault(source, set()).add(row["test_date"])
-    unknown = requested.keys() - families.keys()
+        available.setdefault(source, set()).add(row["test_date"])
+    unknown = requested.keys() - available.keys()
     if unknown:
-        raise ValueError(f"No rows for requested reference families: {sorted(unknown)}")
+        raise ValueError(f"No rows for requested reference datasets: {sorted(unknown)}")
     chosen = {}
-    for family, sources in families.items():
-        common = set.intersection(*sources.values())
-        if not common:
-            raise ValueError(f"No shared date for {family} and its verified variant.")
-        chosen[family] = requested.get(family, max(common))
-        if chosen[family] not in common:
-            raise ValueError(f"Date {chosen[family]} unavailable for every {family} variant; available: {sorted(common)}")
-    return [row for row in rows if row["test_date"] == chosen[row["gold_src"].removesuffix("-verified")]]
+    for source, days in available.items():
+        chosen[source] = requested.get(source, max(days))
+        if chosen[source] not in days:
+            raise ValueError(f"Date {chosen[source]} unavailable for {source}; available: {sorted(days)}")
+    return [row for row in rows if row["test_date"] == chosen[row["gold_src"]]]
 
 
 def reference_sort_key(row: dict[str, Any]) -> tuple:
@@ -285,6 +281,8 @@ def load_rows(paths: list[Path], *, include: dict[str, set[str]] | None = None) 
                 date.fromisoformat(raw["test_date"])
                 if not raw["test_src"] or not raw["gold_src"]:
                     raise ValueError(f"{path}:{line}: empty source name")
+                if any(raw[key].endswith("-verified") for key in ("test_src", "gold_src")):
+                    continue
                 row = {key: (value or "" if key in METADATA else number(value)) for key, value in raw.items()}
                 row["target_day_adsb"] = raw.get("target_day_adsb", "unknown").lower()
                 if row["target_day_adsb"] not in {"true", "false", "unknown"}:
@@ -308,6 +306,8 @@ def load_cache_rows(cache: Any, include: dict[str, set[str]], policy: str = "lat
     selected = {}
     for entry in entries:
         row = entry.stats.to_row()
+        if any(row[key].endswith("-verified") for key in ("test_src", "gold_src")):
+            continue
         row["target_day_adsb"] = str(row["target_day_adsb"]).lower()
         row["adsb_src"] = row["adsb_src"] or ""
         if any(row[column] not in values for column, values in include.items()):
@@ -599,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tables", nargs="+", choices=TABLES, action="extend",
                         help="Default: one compact reference_summary table. Other topics are optional.")
     parser.add_argument("--reference-date", action="append", default=[], metavar="SOURCE=YYYY-MM-DD",
-                        help="Choose a date for a reference family, including its verified variant. Repeat as needed; default is latest shared date.")
+                        help="Choose a date for a reference dataset. Repeat as needed; default is latest available date.")
     all_metrics = sorted({metric.key for table in TABLES.values() for metric in table.metrics})
     parser.add_argument("--metrics", nargs="+", choices=all_metrics, action="extend",
                         help="Restrict tables to these metric keys; paired percentages stay with counts.")
@@ -613,6 +613,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Require all requested comparisons and selected metrics (now always enabled; retained for compatibility).")
     parser.add_argument("--decimals", type=int, default=2, help="LaTeX decimals (CSV retains numeric precision).")
     args = parser.parse_args(argv)
+    if any(source.endswith("-verified") for source in
+           [*(args.test_source or []), *(args.gold_source or [])]):
+        parser.error("Verified flight sources are excluded from paper tables; select their base sources instead.")
     args.tables = args.tables or ["reference_summary"]
     if args.list_metrics:
         for name, table in TABLES.items():

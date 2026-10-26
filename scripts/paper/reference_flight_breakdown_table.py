@@ -23,9 +23,6 @@ from csvs_to_latex_table import DEFAULT_OUTPUT_DIR, latex_escape
 REFERENCE_DATES = {"bts": "2026-03-01", "sfdps": "2026-03-01", "eurocontrol": "2024-06-01"}
 LABELS = {"bts": "BTS", "sfdps": "SFDPS", "eurocontrol": "Eurocontrol"}
 BASE_SOURCES = tuple(REFERENCE_DATES)
-VERIFIED_SOURCES = tuple(f"{source}-verified" for source in BASE_SOURCES)
-REFERENCE_DATES.update({f"{source}-verified": REFERENCE_DATES[source] for source in BASE_SOURCES})
-LABELS.update({f"{source}-verified": f"{LABELS[source]}-verified" for source in BASE_SOURCES})
 GROUPED_CATEGORIES = frozenset(
     [f"{letter}{number}" for letter in "BC" for number in range(8)]
     + [f"D{number}" for number in range(3)]
@@ -65,8 +62,7 @@ SOURCES = {
 POPULATION_NOTE = (
     "All cached reference flights on the indicated UTC takeoff day, before evaluation "
     "matching or boundary filtering; provider preprocessing still applies. "
-    "Verified datasets use the existing ADSB.lol callsign and airport-continuity "
-    "verification, with target-day-only input disabled. Percentages use each dataset's own n. "
+    "Percentages use each dataset's own n. "
     "Percentages include missing values in the denominator. CSV counts are exact; "
     "rounding may prevent displayed percentages summing to 100."
 )
@@ -185,21 +181,19 @@ def render_latex(rows: list[dict], prefix: str, kind: str, decimals: int,
                      ["small_airport", "medium_airport", "large_airport", "unknown"], SIZE_LABELS),
                     ("airport_codes", "", ["neither"],
                      {"neither": "No IATA or ICAO"})]
-    for panel, sources in (("Reference flights", BASE_SOURCES), ("Verified reference flights", VERIFIED_SOURCES)):
-        lines += [r"\addlinespace[5pt]", r"\multicolumn{4}{@{}l}{\textbf{" + panel + r"}}\\*",
-                  heading(sources), r"\midrule"]
-        for dimension, section, keys, labels in sections:
-            if section:
-                lines += [r"\addlinespace[4pt]", r"\multicolumn{4}{@{}l}{\textbf{" + section + r"}}\\*"]
-            for key in keys:
-                label = labels.get(key, "Unrecognized reported code" if aircraft else key)
-                if aircraft and key != "missing":
-                    label = f"{key}: {label}"
-                cells = [latex_escape(label)]
-                for source in sources:
-                    endpoints = ("flight",) if aircraft else ("takeoff", "landing")
-                    cells.append(" / ".join(f"{lookup.get((source, dimension, ep, key), 0):.{decimals}f}" for ep in endpoints))
-                lines.append(" & ".join(cells) + r" \\")
+    lines += [heading(BASE_SOURCES), r"\midrule"]
+    for dimension, section, keys, labels in sections:
+        if section:
+            lines += [r"\addlinespace[4pt]", r"\multicolumn{4}{@{}l}{\textbf{" + section + r"}}\\*"]
+        for key in keys:
+            label = labels.get(key, "Unrecognized reported code" if aircraft else key)
+            if aircraft and key != "missing":
+                label = f"{key}: {label}"
+            cells = [latex_escape(label)]
+            for source in BASE_SOURCES:
+                endpoints = ("flight",) if aircraft else ("takeoff", "landing")
+                cells.append(" / ".join(f"{lookup.get((source, dimension, ep, key), 0):.{decimals}f}" for ep in endpoints))
+            lines.append(" & ".join(cells) + r" \\")
     note = AIRCRAFT_NOTE if aircraft else (
         f"Code availability for all datasets uses the {airport_code_date} OurAirports snapshot, "
         "because the 2024 schema lacked an explicit ICAO-code field; these code shares "
@@ -225,7 +219,6 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
     from flights.providers.bts import BTSFlightSource
     from flights.providers.eurocontrol import EurocontrolFlightSource
     from flights.providers.sfdps import SFDPSFlightSource
-    from flights.verified.source import VerifiedFlightSource
 
     history = AirportHistory(HistoryPaths.defaults())  # open() may refresh/download.
     code_date = code_date or history.latest_available_date
@@ -238,7 +231,7 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
                      for row in code_frame.select("id", "iata_code", "icao_code").iter_rows(named=True)}
     rows, inputs, catalogs = [], [], {}
     base_sources = (BTSFlightSource(), SFDPSFlightSource(), EurocontrolFlightSource())
-    for source in (*base_sources, *(VerifiedFlightSource(base) for base in base_sources)):
+    for source in base_sources:
         day = date.fromisoformat(REFERENCE_DATES[source.name])
         path = flight_path(source, day)
         manifest_path = flight_manifest_path(path)

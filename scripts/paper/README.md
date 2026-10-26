@@ -9,6 +9,8 @@ paths without `OUTPUT_DIR`, supply `--output-dir` explicitly.
 Explanatory notes beneath tables are commented out in generated `.tex` files.
 Remove the leading `%` from the note line to show them; definitions remain in
 the manifests and the commented source.
+All table exporters exclude verified flight sources, including from CSV inputs.
+Use base reference names (`bts`, `sfdps`, `eurocontrol`) in source filters.
 
 ## Airport-NN training curve
 
@@ -55,8 +57,8 @@ checkpoint-selection rule.
 ## Reference-flight aircraft categories and airport characteristics
 
 `reference_flight_breakdown_table.py` exports two matching `booktabs`/`longtable`
-tables for **BTS, SFDPS, BTS-verified, and SFDPS-verified on 2026-03-01** and
-**Eurocontrol and Eurocontrol-verified on 2024-06-01**:
+tables for **BTS and SFDPS on 2026-03-01** and
+**Eurocontrol on 2024-06-01**:
 
 ```bash
 OUTPUT_DIR=/Volumes/T2-SSD/planequery .venv/bin/python scripts/paper/reference_flight_breakdown_table.py
@@ -71,10 +73,8 @@ by the reference providers: OpenAirframes for BTS/Eurocontrol and ADS-B
 observations for SFDPS. These are not independently verified classifications.
 The LaTeX table combines B0 through D2 into one "Other reported categories" row,
 calculated from their summed counts before rounding. The CSV retains each code.
-Each table has separate reference and verified blocks with three dataset columns.
-Verified percentages use their own flight counts, shown in their column headings.
-The verified caches use the existing ADSB.lol callsign and airport-continuity
-verification with `target_day_adsb=false`, matching the default verified sources.
+Each table has one block with three dataset columns. Percentages use each
+dataset's flight count, shown once in its column heading.
 
 The airport table shows **takeoff / landing percentages** for small, medium,
 large, and unknown airports. Heliport through Closed rows are omitted.
@@ -86,7 +86,7 @@ as evidence of an ICAO code. The CSV retains all airport types and code groups;
 all displayed percentages still use the full flight count as denominator.
 
 Airport sizes use the flight-date catalog. Code availability uses **one shared
-dated snapshot for all six datasets** (the latest in local history by default).
+dated snapshot for all three datasets** (the latest in local history by default).
 The 2024 OurAirports schema lacked an explicit `icao_code` field, so treating its
 nulls as missing codes would falsely classify major airports as IATA only.
 The table records the selected snapshot date and states that code availability
@@ -219,15 +219,17 @@ PYTHONPATH=src .venv/bin/python scripts/paper/adsb_source_comparision_table.py
 Set `OUTPUT_DIR` to the evaluation data root (for example,
 `/Volumes/T2-SSD/planequery`). The preset selects:
 
-- BTS, SFDPS, BTS-verified, and SFDPS-verified on **2026-03-01**.
-- Eurocontrol and Eurocontrol-verified on **2024-06-01**.
+- BTS and SFDPS on **2026-03-01**.
+- Eurocontrol on **2024-06-01**.
 - ADSB.lol, OpenSky messages, and ADSBX, all with **target-day-only ADS-B**.
 - Nearest and NN, showing retained gold counts once in the dataset heading and **Test flights T**,
-  segmentation **P / R / F1 (%)**, and airport accuracy **takeoff / landing (%)**.
+  segmentation **P / R / F1 (%)**, **Zero flights ICAOs (%)**, and airport accuracy
+  **takeoff / landing (%)**. Zero flights is the percentage of gold ICAOs with
+  no test flights before matching or boundary filtering.
   Shared test-flight counts and segmentation cells span the two methods.
 
-Use `--test-source algorithm-nn` for NN only. The preset requires all 36
-comparisons (18 for NN only) and their selected metrics and denominator counts
+Use `--test-source algorithm-nn` for NN only. The preset requires all 18
+comparisons (9 for NN only) and their selected metrics and denominator counts
 before writing anything. The generic exporter can display these same metrics
 with `--metrics` and also requires its selected reference/provider/method grid.
 
@@ -243,13 +245,13 @@ separately (these commands may process data and run NN inference):
 ```bash
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
   --test-source algorithm-nearest algorithm-nn \
-  --gold-source bts sfdps bts-verified sfdps-verified \
+  --gold-source bts sfdps \
   --adsb-source adsblol opensky adsbx \
   --test-dates 2026-03-01 --target-day-adsb
 
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
   --test-source algorithm-nearest algorithm-nn \
-  --gold-source eurocontrol eurocontrol-verified \
+  --gold-source eurocontrol \
   --adsb-source adsblol opensky adsbx \
   --test-dates 2024-06-01 --target-day-adsb
 ```
@@ -358,8 +360,7 @@ surrounding `table` float. Reference with
 ## Overall evaluation table
 
 The script now produces **one compact summary table**, grouped by reference
-flight dataset: BTS, SFDPS, and Eurocontrol first, followed by BTS-verified,
-SFDPS-verified, and Eurocontrol-verified. Each method/ADS-B provider has a row within its group.
+flight dataset: BTS, SFDPS, and Eurocontrol. Each method/ADS-B provider has a row within its group.
 Explicitly requested methods and reference datasets must all be present.
 The published OpenSky flights and OpenSky-NN rows appear directly before
 Nearest/OpenSky and NN/OpenSky within each reference dataset. OpenSky-NN keeps
@@ -371,7 +372,7 @@ With `OUTPUT_DIR` set as for evaluation, read the existing evaluation cache:
 .venv/bin/python scripts/paper/csvs_to_latex_table.py \
   --test-source opensky opensky-nn algorithm-nearest algorithm-nn \
   --adsb-source opensky none \
-  --gold-source bts bts-verified sfdps sfdps-verified eurocontrol eurocontrol-verified \
+  --gold-source bts sfdps eurocontrol \
   --reference-date bts=2026-03-01 \
   --reference-date sfdps=2026-03-01 \
   --reference-date eurocontrol=2024-06-01 \
@@ -393,17 +394,17 @@ fingerprint freshness policy is applied by the exporter.
 results. To evaluate already-generated OpenSky-NN flights, run these two date
 groups in the same environment and checkout used to generate the flights.
 Valid flight caches are reused; missing or stale flight caches may trigger
-regeneration. These commands create the six missing reference comparisons:
+regeneration. These commands create the three missing reference comparisons:
 
 ```bash
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
   --test-source opensky-nn \
-  --gold-source bts sfdps bts-verified sfdps-verified \
+  --gold-source bts sfdps \
   --test-dates 2026-03-01
 
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
   --test-source opensky-nn \
-  --gold-source eurocontrol eurocontrol-verified \
+  --gold-source eurocontrol \
   --test-dates 2024-06-01
 ```
 
@@ -493,9 +494,8 @@ evaluation metrics or cache changes are required.
 
 ## Dates and filters
 
-`--reference-date SOURCE=YYYY-MM-DD` applies to both the reference dataset and
-its verified variant. Repeat for each family. If omitted, the script chooses
-the latest date shared by the available variants of that family. It never
+`--reference-date SOURCE=YYYY-MM-DD` chooses the date for that reference dataset.
+Repeat for each dataset. If omitted, the script chooses its latest available date. It never
 averages different dates. The chosen dates are printed and recorded in the
 manifest. To reproduce the paper selection, retain the three date options in
 the example above.
@@ -509,7 +509,7 @@ field. Filtering happens before duplicate checks and automatic date selection.
 | Argument | Example |
 | --- | --- |
 | `--test-source` | `--test-source algorithm-nn opensky` |
-| `--gold-source` | `--gold-source bts bts-verified sfdps sfdps-verified` |
+| `--gold-source` | `--gold-source bts sfdps` |
 | `--adsb-source` | `--adsb-source opensky none` |
 | `--date` | `--date 2024-06-01 2026-03-01` |
 | `--target-day-adsb` | `--target-day-adsb false` (also accepts `true` or `unknown`) |
@@ -522,7 +522,7 @@ datasets with no provider. Published OpenSky flights have no ADS-B provider
 value, so `--adsb-source opensky` alone does not select them. Pair this with
 `--test-source` to choose which published datasets and methods you want.
 Gold-source filters use exact names; `--reference-date` applies to the whole
-family including its verified variant.
+dataset.
 
 In CSV mode, exact duplicate rows are deduplicated and conflicting daily results
 are rejected. Cache mode follows the explicit cache-selection policy above.
