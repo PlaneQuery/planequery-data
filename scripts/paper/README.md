@@ -171,28 +171,28 @@ use `--endpoint takeoff` or `--endpoint landing` to generate only one.
 
 ## Algorithm comparison on OpenSky
 
-`algoirthm_comparision.py` compares **Sun, plane-notify, OpenAP, and Traffic**
+`algoirthm_comparision.py` compares **Sun, plane-notify, and Traffic**
 in the same grouped layout as the other paper tables.
 It shows retained gold flights once in each dataset heading, **Test flights T**, segmentation
 **P / R / F1 (%)**, and airport matches **TO / LD (%)**.
-Sun uses source `sun`, OpenAP uses source `openap`, and Traffic uses source
-`traffic`. All four methods use OpenSky ADS-B messages.
+Sun uses source `sun`, and Traffic uses source `traffic`. All three methods use
+OpenSky ADS-B messages.
 
 Install the optional dependencies, then generate any missing evaluations for
 the table's two reference dates. Existing valid evaluation caches are reused:
 
 ```bash
-.venv/bin/python -m pip install -e '.[openap,traffic]'
+.venv/bin/python -m pip install -e '.[traffic]'
 export OUTPUT_DIR=/Volumes/T2-SSD/planequery
 export PYTHONPATH=src
 
 .venv/bin/python -m flights.evaluation.evaluation \
-  --test-source sun plane-notify openap traffic \
+  --test-source sun plane-notify traffic \
   --gold-source bts sfdps \
   --adsb-source opensky --test-dates 2026-03-01
 
 .venv/bin/python -m flights.evaluation.evaluation \
-  --test-source sun plane-notify openap traffic \
+  --test-source sun plane-notify traffic \
   --gold-source eurocontrol \
   --adsb-source opensky --test-dates 2024-06-01
 ```
@@ -208,8 +208,8 @@ OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/pa
 
 The references are BTS and SFDPS on **2026-03-01**, and Eurocontrol on
 **2024-06-01**. Verified datasets are excluded from this preset.
-All 12 comparisons must be present before files are written. Use `--gold-source`
-to select fewer reference datasets; all four methods are still required for each.
+All 9 comparisons must be present before files are written. Use `--gold-source`
+to select fewer reference datasets; all three methods are still required for each.
 The default input-window setting is `--target-day-adsb false`, matching the
 overall evaluation table. Pass `--target-day-adsb true` only when those results
 have been evaluated. The generator reads existing current-version caches or
