@@ -465,7 +465,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         note += " Method suffixes identify the ADS-B provider."
     if len(windows) == 1:
         note += f" Target-day-only ADS-B input: {next(iter(windows))}."
-    lines.extend([r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+    lines.extend([r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
                   latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""])
     return "\n".join(lines)
 
@@ -505,7 +505,7 @@ def latex_table(rows: list[dict[str, Any]], name: str, table: Table,
             lines.append(" & ".join([latex_escape(row["test_src"])] + [
                 format_metric(row, metric, decimals) for metric in metrics
             ]) + r" \\")
-    lines.extend([r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+    lines.extend([r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
                   latex_escape(table.note) + r"\end{minipage}\par", r"\endgroup", ""])
     return "\n".join(lines)
 

@@ -204,7 +204,7 @@ def render_latex(rows: list[dict], prefix: str, kind: str, decimals: int,
         f"Code availability for all datasets uses the {airport_code_date} OurAirports snapshot, "
         "because the 2024 schema lacked an explicit ICAO-code field; these code shares "
         "describe that snapshot, not historical code assignments. " + AIRPORT_NOTE)
-    lines += [r"\end{longtable}", r"\noindent\begin{minipage}{\linewidth}\footnotesize " +
+    lines += [r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
               latex_escape(note) + r"\end{minipage}\par",
               r"\endgroup", ""]
     return "\n".join(lines)
