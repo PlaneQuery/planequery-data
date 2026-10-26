@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                                  value * 100 if key in RATES and value is not None else
                                  int(value) if key.endswith("_count") and value is not None else value
                                  for key, value in row.items()})
-        latex_path = csv_path.with_suffix(".latex")
+        latex_path = csv_path.with_suffix(".tex")
         latex_path.write_text(latex, encoding="utf-8")
         manifest = output / f"{prefix}_training_vs_non_training_manifest.json"
         provenance.update(training_manifest_sha256=rows[0]["training_manifest_sha256"],

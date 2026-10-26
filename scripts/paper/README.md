@@ -106,8 +106,8 @@ requirements, so this is not a count of all raw Eurocontrol records.
 
 Outputs default to `$OUTPUT_DIR/paper/tables/reference_flight_breakdown/`:
 
-- `reference_flight_breakdown_aircraft.latex`: category percentages and definitions.
-- `reference_flight_breakdown_airports.latex`: airport size/type and code percentages.
+- `reference_flight_breakdown_aircraft.tex`: category percentages and definitions.
+- `reference_flight_breakdown_airports.tex`: airport size/type and code percentages.
 - `reference_flight_breakdown.csv`: exact counts, denominators, and unrounded percentages (0–100).
 - `reference_flight_breakdown_manifest.json`: source versions, dates, cache/history hashes,
   catalog provenance, definitions, and documentation URLs.
@@ -120,8 +120,8 @@ Include in a full-width/single-column area without a surrounding table float:
 % Preamble:
 \usepackage{booktabs,longtable,array}
 % Body:
-\input{tables/reference_flight_breakdown/reference_flight_breakdown_aircraft.latex}
-\input{tables/reference_flight_breakdown/reference_flight_breakdown_airports.latex}
+\input{tables/reference_flight_breakdown/reference_flight_breakdown_aircraft.tex}
+\input{tables/reference_flight_breakdown/reference_flight_breakdown_airports.tex}
 ```
 
 Labels are `tab:reference-flight-breakdown-aircraft` and
@@ -181,7 +181,7 @@ have been evaluated. The generator reads existing current-version caches or
 explicit evaluation CSVs; it never runs missing evaluations. Cache selection
 uses the shared exporter's validity checks and latest-run policy.
 
-Outputs are `algorithm_comparison.latex`, `algorithm_comparison.csv`, and
+Outputs are `algorithm_comparison.tex`, `algorithm_comparison.csv`, and
 `algorithm_comparison_manifest.json` under
 `$OUTPUT_DIR/paper/tables/algorithm_comparison/`. The CSV retains source IDs,
 exact denominator counts, and unrounded percentages; the manifest records input
@@ -196,19 +196,19 @@ the other table presets. Absolute CSV inputs work without `OUTPUT_DIR` when
 ```latex
 \usepackage{booktabs,longtable,multirow}
 % In a single-column/full-width area, without a table float:
-\input{tables/algorithm_comparison/algorithm_comparison.latex}
+\input{tables/algorithm_comparison/algorithm_comparison.tex}
 ```
 
 Reference with `Table~\ref{tab:algorithm-comparison}`.
 
 ## Table 1: ADS-B source comparison
 
-`ads-b_source_comparision_table.py` is the preset for Table 0's ADS-B-provider
+`adsb_source_comparision_table.py` is the preset for Table 0's ADS-B-provider
 companion. It reuses `csvs_to_latex_table.py` for cache/CSV loading, metric
 definitions, percentage formatting, and the grouped LaTeX layout.
 
 ```bash
-PYTHONPATH=src .venv/bin/python scripts/paper/ads-b_source_comparision_table.py
+PYTHONPATH=src .venv/bin/python scripts/paper/adsb_source_comparision_table.py
 ```
 
 Set `OUTPUT_DIR` to the evaluation data root (for example,
@@ -252,7 +252,7 @@ PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
 Then rerun the table preset. Outputs default to
 `$OUTPUT_DIR/paper/tables/table_1_adsb_sources/`:
 
-- `table_1_adsb_sources.latex`: the paper table.
+- `table_1_adsb_sources.tex`: the paper table.
 - `table_1_adsb_sources.csv`: exact counts and unrounded percentages (0–100).
 - `table_1_adsb_sources_manifest.json`: filters, dates, definitions, and input provenance.
 
@@ -264,7 +264,7 @@ to place the folder beside Table 0. `--prefix` defaults to `table_1_adsb_sources
 With `\usepackage{booktabs,longtable,multirow}`, include the table using:
 
 ```latex
-\input{tables/table_1_adsb_sources/table_1_adsb_sources.latex}
+\input{tables/table_1_adsb_sources/table_1_adsb_sources.tex}
 ```
 
 Reference `Table~\ref{tab:table-1-adsb-sources}`. Use a full-width/single-column
@@ -333,7 +333,7 @@ named once in the note; multiple providers are named beside each method.
 
 Outputs are under `$OUTPUT_DIR/paper/tables/<prefix>/`:
 
-- `<prefix>_training_vs_non_training.latex`: compact paper table.
+- `<prefix>_training_vs_non_training.tex`: compact paper table.
 - `<prefix>_training_vs_non_training.csv`: one row per method/reference/group/
   endpoint, preserving exact counts and provenance. All rate columns are renamed
   with `_percent` and scaled to 0–100. This is a table export, not an evaluator
@@ -342,7 +342,7 @@ Outputs are under `$OUTPUT_DIR/paper/tables/<prefix>/`:
   training manifest hash, filters, dates, and metric definitions.
 
 Include with `\usepackage{booktabs,longtable}` and
-`\input{tables/table_1/table_1_training_vs_non_training.latex}` after copying the
+`\input{tables/table_1/table_1_training_vs_non_training.tex}` after copying the
 folder into the paper project. Use a single-column/full-width area, without a
 surrounding `table` float. Reference with
 `Table~\ref{tab:table-1-training-vs-non-training}`.
@@ -432,13 +432,13 @@ library. Put filenames before options accepting multiple values. CSV inputs and
 All outputs default to `$OUTPUT_DIR/paper/tables/<prefix>/`. For the command
 above, the folder is `$OUTPUT_DIR/paper/tables/evaluation_target_day_adsb_false/`:
 
-- `<prefix>_reference_summary.latex`: the single paper table.
+- `<prefix>_reference_summary.tex`: the single paper table.
 - `<prefix>_reference_summary.csv`: separate numeric columns, including exact
   denominator counts; percentage columns contain values from 0 to 100.
 - `<prefix>_manifest.json`: CSV hashes or cache provenance, selected dates, filters and definitions.
 
 Rerunning replaces the same named outputs. Previously generated detailed tables
-are left in place; use the new `_reference_summary.latex` file in the paper.
+are left in place; use the new `_reference_summary.tex` file in the paper.
 
 ## What appears in the table
 
@@ -546,7 +546,7 @@ The JOAS class already loads `booktabs`. Add to the preamble:
 After copying the generated prefix folder into the paper project's `tables/`:
 
 ```latex
-\input{tables/evaluation_target_day_adsb_false/evaluation_target_day_adsb_false_reference_summary.latex}
+\input{tables/evaluation_target_day_adsb_false/evaluation_target_day_adsb_false_reference_summary.tex}
 ```
 
 Reference it with:

@@ -552,7 +552,7 @@ def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
                             value = int(value)
                     values[csv_column(column)] = value
                 writer.writerow(values)
-        latex_path = csv_path.with_suffix(".latex")
+        latex_path = csv_path.with_suffix(".tex")
         latex = (summary_latex(rows, metrics, prefix, decimals) if name == "reference_summary"
                  else latex_table(rows, name, table, metrics, prefix, decimals))
         latex_path.write_text(latex, encoding="utf-8")
