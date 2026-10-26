@@ -58,8 +58,8 @@ TABLES = {
             Metric("gold_icao_missing_from_test_pct", "Zero flights (%)", "percent"),
             Metric("takeoff_airport_id_match_pct", "Takeoff accuracy (%)", "percent"),
             Metric("landing_airport_id_match_pct", "Landing accuracy (%)", "percent"),
-            Metric("takeoff_airport_id_null_pct", "Takeoff null (%)", "percent"),
-            Metric("landing_airport_id_null_pct", "Landing null (%)", "percent"),
+            Metric("takeoff_airport_id_null_pct", "Takeoff airport null rate (%)", "percent"),
+            Metric("landing_airport_id_null_pct", "Landing airport null rate (%)", "percent"),
             Metric("takeoff_time_bias_minutes", "Takeoff bias (min)", "minutes"),
             Metric("landing_time_bias_minutes", "Landing bias (min)", "minutes"),
         ),
@@ -67,8 +67,8 @@ TABLES = {
         "P/R/F1 = segmentation precision/recall/F1; "
         "F1 is the harmonic mean of precision and recall. "
         "TO/LD = takeoff/landing. All rates are percentages. Zero flights is the "
-        "percentage of gold ICAOs with no test flights. Airport accuracy divides "
-        "by matched flights; null airports divide by T. Matched flights = G times "
+        "percentage of gold ICAOs with no test flights. Airport accuracy and airport "
+        "null rates both use matched flights; unmatched flights are excluded. Matched flights = G times "
         "R/100, false negatives = G minus matched, and false positives = T minus "
         "matched. Other counts follow from their percentages and denominators "
         "(approximately, due to rounding). Gold counts must agree within each group. "
@@ -76,7 +76,8 @@ TABLES = {
         "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn. "
         "OpenSky denotes the published "
         "flight dataset; OpenSky-NN uses those same flights with NN airport predictions. "
-        "Exact denominators are included in the CSV.",
+        "Exact denominators are included in the CSV. Airport null rates are undefined "
+        "when no flights match (blank CSV / dash in LaTeX).",
         ("gold_icao_count", "gold_flight_count", "test_flight_count", "true_positive"),
     ),
     "segmentation": Table(
@@ -105,21 +106,22 @@ TABLES = {
         "of all gold ICAOs. Coverage is measured before flight matching/boundary filtering.",
     ),
     "airport_accuracy": Table(
-        "Airport identification accuracy and missing outputs",
+        "Airport identification accuracy and null rates",
         (
             Metric("takeoff_airport_id_match_count", "Takeoff correct\nn (%)",
                    rate="takeoff_airport_id_match_pct"),
             Metric("landing_airport_id_match_count", "Landing correct\nn (%)",
                    rate="landing_airport_id_match_pct"),
             Metric("airport_id_match_count", "Both correct\nn (%)", rate="airport_id_match_pct"),
-            Metric("takeoff_airport_id_null_count", "Takeoff null\nn (%)",
+            Metric("takeoff_airport_id_null_count", "Takeoff airport null\nn (%)",
                    rate="takeoff_airport_id_null_pct"),
-            Metric("landing_airport_id_null_count", "Landing null\nn (%)",
+            Metric("landing_airport_id_null_count", "Landing airport null\nn (%)",
                    rate="landing_airport_id_null_pct"),
         ),
         "Correct-airport percentages divide by matched flights (TP); null IDs are incorrect. "
-        "Both correct requires both airport IDs to match. Null-output percentages divide "
-        "by all retained test flights (TP+FP), including unmatched test flights.",
+        "Both correct requires both airport IDs to match. Airport null counts and rates "
+        "also use only matched flights: null rate = matched null airports / TP. "
+        "Rates are undefined when TP is zero (blank CSV / dash in LaTeX).",
         ("true_positive", "test_flight_count"),
     ),
     "timing_accuracy": Table(
@@ -166,7 +168,7 @@ SUMMARY_COLUMNS = (
     ("Segmentation", "P / R / F1 (%)", ("precision", "recall", "f1")),
     ("Zero flights", "ICAOs (%)", ("gold_icao_missing_from_test_pct",)),
     ("Airport acc.", "TO / LD (%)", ("takeoff_airport_id_match_pct", "landing_airport_id_match_pct")),
-    ("Null airports", "TO / LD (%)", ("takeoff_airport_id_null_pct", "landing_airport_id_null_pct")),
+    ("Airport null rate", "TO / LD (%)", ("takeoff_airport_id_null_pct", "landing_airport_id_null_pct")),
     ("Time bias", "TO / LD (min)", ("takeoff_time_bias_minutes", "landing_time_bias_minutes")),
 )
 RATE_COLUMNS = {
@@ -513,10 +515,34 @@ def latex_table(rows: list[dict[str, Any]], name: str, table: Table,
 def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, ...]],
                  require_complete: bool) -> list[str]:
     missing = set()
+    selected_columns = {column for metrics in selected.values()
+                        for metric in metrics for column in metric.columns}
+    null_endpoints = [endpoint for endpoint in ("takeoff", "landing")
+                      if selected_columns & {f"{endpoint}_airport_id_null_count",
+                                             f"{endpoint}_airport_id_null_pct"}]
     for row in rows:
         for name, other in (("test_flight_count", "false_positive"), ("gold_flight_count", "false_negative")):
             row[name] = (row["true_positive"] + row[other]
                          if row.get("true_positive") is not None and row.get(other) is not None else None)
+        for endpoint in null_endpoints:
+            # Evaluation caches count nulls across TP+FP. Derive matched-only
+            # nulls from the existing matched non-null count, never that total.
+            non_null_column = f"{endpoint}_airport_id_non_null_count"
+            matched, non_null = row.get("true_positive"), row.get(non_null_column)
+            null_count = null_rate = None
+            if matched is None or non_null is None:
+                missing.update(column for column in ("true_positive", non_null_column)
+                               if row.get(column) is None)
+            else:
+                for column, value in (("true_positive", matched), (non_null_column, non_null)):
+                    if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0 or not float(value).is_integer():
+                        raise ValueError(f"Invalid matched-flight count {column}: {value!r}")
+                if non_null > matched:
+                    raise ValueError(f"{non_null_column} exceeds matched flights: {non_null} > {matched}")
+                null_count = matched - non_null
+                null_rate = null_count / matched if matched else None
+            row[f"{endpoint}_airport_id_null_count"] = null_count
+            row[f"{endpoint}_airport_id_null_pct"] = null_rate
         for name in selected:
             for column in TABLES[name].denominators if name in TABLES else ():
                 value = row.get(column)
@@ -529,8 +555,9 @@ def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, .
                 for column in metric.columns:
                     value = row.get(column)
                     if value is None:
-                        # Matched-only timing statistics are undefined when TP is zero.
-                        if not (metric.kind == "minutes" and row.get("true_positive") == 0):
+                        # Matched-only timing and null rates are undefined at TP=0.
+                        if not (row.get("true_positive") == 0 and
+                                (metric.kind == "minutes" or column.endswith("_airport_id_null_pct"))):
                             missing.add(column)
                         continue
                     if not isinstance(value, (int, float)) or not math.isfinite(value):
