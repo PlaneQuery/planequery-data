@@ -207,6 +207,28 @@ observation provenance. As with `algorithm-nn`, regenerate flight files with
 `--workers` parallelizes days for this source; each day's flight batches run
 sequentially. `--target-day-adsb` is not supported for `opensky-nn`.
 
+### OpenSky segments with nearest airports
+
+`opensky-nearest` preserves the same published OpenSky segments and metadata as
+`opensky-nn`, replacing only the airport IDs and identifiers. It chooses the
+geographically nearest airport to the first/last valid OpenSky position within
+one-minute endpoint windows, clipped to the flight boundaries. There
+is no distance or altitude cutoff. Missing endpoint observations leave null
+airport references. No model checkpoint is needed.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-nearest
+python -m flights.evaluation.evaluation \
+  --test-source opensky-nearest --gold-source bts \
+  --test-dates 2026-03-01
+```
+
+It uses the same published-flight cache, OpenSky observation provider, batching,
+and overnight read coverage as `opensky-nn`. Its independent output cache is
+`data/flights/source=opensky-nearest/adsb_source=opensky/version=2/`.
+`--adsb-source` does not change its observation provider, and `--target-day-adsb`
+is not supported.
+
 ## Code
 
 - `features.py`: candidate search and trajectory features shared by training/inference.
