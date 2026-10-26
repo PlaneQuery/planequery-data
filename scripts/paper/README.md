@@ -83,7 +83,7 @@ with both explicit `iata_code` and `icao_code` fields blank. Unresolved airports
 and absent code metadata are excluded from this numerator. LAX / KLAX is an
 example of an airport with both codes. An `ident` or `gps_code` is not treated
 as evidence of an ICAO code. The CSV retains all airport types and code groups;
-all displayed percentages still use the full flight count as denominator.
+all displayed percentages still use the retained gold-flight count as denominator.
 
 Airport sizes use the flight-date catalog. Code availability uses **one shared
 dated snapshot for all three datasets** (the latest in local history by default).
@@ -93,8 +93,14 @@ The table records the selected snapshot date and states that code availability
 describes that snapshot, not historical assignments. Use
 `--airport-code-date 2026-10-25` to pin it; snapshots without ICAO metadata are rejected.
 
-Both tables describe **all flights in the current-version reference caches**,
-after provider preprocessing but before evaluation matching/boundary filtering.
+Both tables describe **the retained evaluation gold cohort**. They read the
+current-version reference caches and apply the evaluator's shared departure-window
+helper: currently **01:00–23:00 UTC, inclusive**, on the indicated date.
+Both matched and unmatched gold flights are retained; the population does not
+depend on a method's successful matches. Counts therefore correspond to G in
+the evaluation tables, and percentages are recomputed for that same cohort.
+The manifest records the exact window, full-day counts, excluded counts, and
+retained counts for each source.
 Each flight contributes once to the aircraft table and once to each airport
 endpoint distribution. Repeated airport visits count repeatedly. Missing values
 remain in denominators; each full CSV distribution sums to 100% before rounding.

@@ -1,14 +1,14 @@
-"""Export aircraft-category and airport breakdowns from cached reference flights.
+"""Export aircraft-category and airport breakdowns of the evaluation gold cohort.
 
 Reads current-version daily flight caches and existing airport history only.
-No downloads, flight generation, evaluation matching, or boundary filtering.
+Applies the evaluator's gold departure window; no downloads or flight generation.
 """
 from __future__ import annotations
 
 import argparse
 from collections import Counter
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 import os
@@ -60,8 +60,10 @@ SOURCES = {
     "airports": "https://ourairports.com/help/data-dictionary.html",
 }
 POPULATION_NOTE = (
-    "All cached reference flights on the indicated UTC takeoff day, before evaluation "
-    "matching or boundary filtering; provider preprocessing still applies. "
+    "Gold reference flights with UTC takeoff times inside the evaluator's inclusive "
+    "scoring window. Both matched and unmatched gold flights are included; "
+    "provider preprocessing still applies. The manifest records the scoring window "
+    "and full-day, excluded, and retained flight counts. "
     "Percentages use each dataset's own n. "
     "Percentages include missing values in the denominator. CSV counts are exact; "
     "rounding may prevent displayed percentages summing to 100."
@@ -138,11 +140,17 @@ def summarize(flights: pl.DataFrame, airports: dict, source: str, day: str,
     return rows
 
 
+def retain_gold_flights(flights: pl.DataFrame, start_dt: datetime,
+                        end_dt: datetime) -> pl.DataFrame:
+    """Use gold departure, including both boundaries, just like the evaluator."""
+    return flights.filter(pl.col("takeoff_time").is_between(start_dt, end_dt, closed="both"))
+
+
 def render_latex(rows: list[dict], prefix: str, kind: str, decimals: int,
                  airport_code_date: str = "unspecified") -> str:
     aircraft = kind == "aircraft"
-    title = ("Aircraft categories of reference flights" if aircraft else
-             "Airport characteristics of reference flights")
+    title = ("Aircraft categories of gold reference flights" if aircraft else
+             "Airport characteristics of gold reference flights")
     totals = {r["source"]: r["denominator"] for r in rows}
     lookup = {(r["source"], r["dimension"], r["endpoint"], r["category"]): r["percent"] for r in rows}
     first_column = "Category / description" if aircraft else "Airport characteristic"
@@ -216,6 +224,7 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
     from airports.history.schema import HistoryPaths
     from flights.flight_manifest import FlightManifest, flight_manifest_path
     from flights.flight_source import flight_path
+    from flights.evaluation.evaluation import get_start_dt_end_dt_for_gold
     from flights.providers.bts import BTSFlightSource
     from flights.providers.eurocontrol import EurocontrolFlightSource
     from flights.providers.sfdps import SFDPSFlightSource
@@ -244,9 +253,16 @@ def load_inputs(code_date: date | None = None) -> tuple[list[dict], list[dict]]:
         if manifest.flight_cache_key != source.flight_manifest(catalog.provenance, None).flight_cache_key:
             raise ValueError(f"Stale flight cache/catalog: {path}; regenerate flights first.")
         flights = pl.read_parquet(path)
+        full_day_count = flights.height
+        start_dt, end_dt = get_start_dt_end_dt_for_gold(day)
+        flights = retain_gold_flights(flights, start_dt, end_dt)
         rows.extend(summarize(flights, catalog.id_index, source.name, day.isoformat(), code_airports))
         inputs.append(dict(source=source.name, date=day.isoformat(), source_version=source.version,
                            path=str(path.resolve()), sha256=sha256(path), flight_count=flights.height,
+                           full_day_flight_count=full_day_count,
+                           excluded_flight_count=full_day_count - flights.height,
+                           gold_window_start_utc=start_dt.isoformat(),
+                           gold_window_end_utc=end_dt.isoformat(), gold_window_closed="both",
                            flight_manifest=asdict(manifest), manifest_sha256=sha256(manifest_path),
                            airport_catalog=asdict(catalog.provenance)))
     inputs.append({"airport_code_date": code_date.isoformat(),
@@ -283,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         for kind, latex in tables.items():
             (output / f"{args.prefix}_{kind}.tex").write_text(latex, encoding="utf-8")
         provenance = dict(reference_dates=REFERENCE_DATES, inputs=inputs, definitions=SOURCES,
+                          population="evaluation_gold_cohort",
                           aircraft_note=AIRCRAFT_NOTE, airport_note=AIRPORT_NOTE,
                           airport_code_date=code_date, percent_scale="0-100", latex_decimals=args.decimals)
         (output / f"{args.prefix}_manifest.json").write_text(json.dumps(provenance, indent=2, default=str) + "\n", encoding="utf-8")

@@ -88,3 +88,23 @@ def test_code_snapshot_is_separate_from_historical_airport_size():
     assert lookup["airport_size", "takeoff", "large_airport"] == 2
     assert lookup["airport_codes", "takeoff", "icao_only"] == 2
     assert lookup["airport_codes", "takeoff", "unknown"] == 4
+
+
+def test_gold_cohort_includes_window_boundaries_and_recalculates_percentages():
+    flights, airports = fixture_data()
+    flights = flights.with_columns(pl.Series("takeoff_time", [
+        datetime(2026, 3, 1, 0, 59, 59), datetime(2026, 3, 1, 1),
+        datetime(2026, 3, 1, 12), datetime(2026, 3, 1, 23),
+        datetime(2026, 3, 1, 23, 0, 1), datetime(2026, 3, 1, 23, 59, 59),
+    ]))
+    retained = table.retain_gold_flights(flights, datetime(2026, 3, 1, 1), datetime(2026, 3, 1, 23))
+    assert retained.height == 3
+    assert retained["takeoff_time"].to_list() == [datetime(2026, 3, 1, hour) for hour in (1, 12, 23)]
+    rows = table.summarize(retained, airports, "bts", "2026-03-01")
+    assert {row["denominator"] for row in rows} == {3}
+    categories = {row["category"]: row for row in rows if row["dimension"] == "aircraft_category"}
+    assert categories["A3"]["count"] == 1
+    assert categories["A3"]["percent"] == pytest.approx(100 / 3)
+    assert categories["missing"]["count"] == 2
+    assert "D2" not in categories
+    assert categories["A0"]["count"] == 0
