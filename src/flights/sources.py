@@ -3,6 +3,7 @@ from flights.algorithm import AlgorithmNearestFlightSource
 from flights.ground_truth.source import GroundTruthFlightSource
 from flights.sun import SunFlightSource
 from flights.openap import OpenAPFlightSource
+from flights.opensky_nearest import OpenSkyNearestFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.opensky_reverse_eng_nearest import OpenSkyReverseEngNearestFlightSource
 from flights.plane_notify import PlaneNotifyFlightSource
@@ -25,6 +26,7 @@ SUN_SOURCE = SunFlightSource()
 BTS_VERIFIED_SOURCE = VerifiedFlightSource(BTS_SOURCE)
 OPENAP_SOURCE = OpenAPFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
+OPENSKY_NEAREST_SOURCE = OpenSkyNearestFlightSource()
 OPENSKY_NN_SOURCE = OpenSkyNNFlightSource()
 OPENSKY_REVERSE_ENG_SOURCE = OpenSkyReverseEngFlightSource()
 OPENSKY_REVERSE_ENG_NEAREST_SOURCE = OpenSkyReverseEngNearestFlightSource()
@@ -44,6 +46,7 @@ FLIGHT_SOURCES = (
     SUN_SOURCE,
     OPENAP_SOURCE,
     OPENSKY_SOURCE,
+    OPENSKY_NEAREST_SOURCE,
     OPENSKY_NN_SOURCE,
     OPENSKY_REVERSE_ENG_SOURCE,
     OPENSKY_REVERSE_ENG_NEAREST_SOURCE,

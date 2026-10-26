@@ -368,15 +368,16 @@ surrounding `table` float. Reference with
 The script now produces **one compact summary table**, grouped by reference
 flight dataset: BTS, SFDPS, and Eurocontrol. Each method/ADS-B provider has a row within its group.
 Explicitly requested methods and reference datasets must all be present.
-The published OpenSky flights and OpenSky-NN rows appear directly before
-Nearest/OpenSky and NN/OpenSky within each reference dataset. OpenSky-NN keeps
-OpenSky's flight boundaries and replaces the airport predictions with the NN.
+The published OpenSky, OpenSky-Nearest, and OpenSky-NN rows appear directly before
+Nearest/OpenSky and NN/OpenSky within each reference dataset. Both OpenSky
+variants keep OpenSky's flight boundaries and replace only the airport predictions.
+OpenSky-Nearest uses one-minute endpoint windows; OpenSky-NN uses the NN.
 
 With `OUTPUT_DIR` set as for evaluation, read the existing evaluation cache:
 
 ```bash
 .venv/bin/python scripts/paper/csvs_to_latex_table.py \
-  --test-source opensky opensky-nn algorithm-nearest algorithm-nn \
+  --test-source opensky opensky-nearest opensky-nn algorithm-nearest algorithm-nn \
   --adsb-source opensky none \
   --gold-source bts sfdps eurocontrol \
   --reference-date bts=2026-03-01 \
@@ -384,7 +385,7 @@ With `OUTPUT_DIR` set as for evaluation, read the existing evaluation cache:
   --reference-date eurocontrol=2024-06-01 \
   --target-day-adsb false \
   --require-complete \
-  --prefix evaluation_target_day_adsb_false
+  --prefix table_0
 ```
 
 No CSV filenames are needed. The script calls `EvaluationCache.find_stats()`
@@ -396,30 +397,30 @@ error before any output is written. Missing selected metrics also fail by defaul
 Current means the current evaluation cache version; no extra source/model
 fingerprint freshness policy is applied by the exporter.
 
-`src/flights/cli.py ... opensky-nn` generates flight files, not evaluation
-results. To evaluate already-generated OpenSky-NN flights, run these two date
+`src/flights/cli.py ... opensky-nearest` generates flight files, not evaluation
+results. To evaluate OpenSky-Nearest and OpenSky-NN flights, run these two date
 groups in the same environment and checkout used to generate the flights.
 Valid flight caches are reused; missing or stale flight caches may trigger
-regeneration. These commands create the three missing reference comparisons:
+regeneration. These commands create any missing reference comparisons:
 
 ```bash
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
-  --test-source opensky-nn \
+  --test-source opensky-nearest opensky-nn \
   --gold-source bts sfdps \
   --test-dates 2026-03-01
 
 PYTHONPATH=src .venv/bin/python src/flights/evaluation/evaluation.py \
-  --test-source opensky-nn \
+  --test-source opensky-nearest opensky-nn \
   --gold-source eurocontrol \
   --test-dates 2024-06-01
 ```
 
 Use the same `OUTPUT_DIR` as the table export. Omit `--target-day-adsb` for these
-sources. Then rerun the table command above (use `--prefix table_0` for Table 0).
-An explicitly requested `opensky-nn` now fails if any selected comparison is
-missing. Published OpenSky and OpenSky-NN use the provider-independent evaluation
+sources. Then rerun the Table 0 command above.
+An explicitly requested method fails if any selected comparison is
+missing. All three OpenSky variants use the provider-independent evaluation
 metadata value `none`, so keep `--adsb-source opensky none` when exporting them
-alongside Nearest/NN. The model still uses OpenSky observations internally.
+alongside Nearest/NN. Both airport assignment methods use OpenSky observations internally.
 
 Use `--cache-dir /path/to/evaluation` to override the cache root. Cache mode
 requires the project's Python environment and `OUTPUT_DIR`, just like the
@@ -445,7 +446,7 @@ library. Put filenames before options accepting multiple values. CSV inputs and
 `--cache-dir` cannot be combined; input modes are not silently mixed.
 
 All outputs default to `$OUTPUT_DIR/paper/tables/<prefix>/`. For the command
-above, the folder is `$OUTPUT_DIR/paper/tables/evaluation_target_day_adsb_false/`:
+above, the folder is `$OUTPUT_DIR/paper/tables/table_0/`:
 
 - `<prefix>_reference_summary.tex`: the single paper table.
 - `<prefix>_reference_summary.csv`: separate numeric columns, including exact
@@ -478,12 +479,17 @@ When multiple providers are present, the column becomes `Method / ADS-B` and
 provider suffixes remain on the rows. CSV metadata always retains the provider.
 
 For adjacent Nearest and NN rows using the same provider, and for adjacent
-OpenSky and OpenSky-NN rows, all metrics from the segmentation, aircraft-coverage,
-and timing families can share cells spanning both rows.
+OpenSky, OpenSky-Nearest, and OpenSky-NN rows, all metrics from the segmentation,
+aircraft-coverage, and timing families can share cells spanning the corresponding rows.
 This covers counts, precision/recall/F1, zero-flight ICAOs, and timing
 errors or threshold recalls. Airport-dependent metrics stay separate, including
 any scores requiring correct airports. Cells merge only when the underlying selected values match exactly,
 not merely after rounding; missing values are not merged. CSV rows remain complete.
+
+The exporter requires exact equality of TP, FP, FN, precision, recall, F1, and
+test/gold flight totals across the OpenSky variants for each reference dataset,
+date, and input-window/provider context. It checks even metrics omitted from the
+rendered table and rejects differences before replacing any output files.
 
 Counts are not repeated next to every percentage. Recover matched flights as
 `G * recall / 100`; false negatives as `G - matched`, and false positives as

@@ -623,6 +623,23 @@ def test_source_names_come_from_flight_source_objects():
     ]
 
 
+def test_opensky_nearest_cli_uses_fixed_provider(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        cli, "write_flights",
+        lambda *args: calls.append(args) or empty_flights(),
+    )
+    monkeypatch.setattr(cli, "flight_path", lambda *args: tmp_path / "data.parquet")
+
+    cli.main([
+        "2026-03-01", "2026-03-02", "opensky-nearest",
+        "--adsb-source", "adsbx",
+    ])
+
+    assert calls == [(cli.FLIGHT_SOURCES_BY_NAME["opensky-nearest"], date(2026, 3, 1), None)]
+    assert calls[0][0].enrichment_adsb_source() is ADSBSource.OPENSKY
+
+
 def test_opensky_nn_cli_uses_checkpoint_and_fixed_provider(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(

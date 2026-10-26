@@ -75,7 +75,8 @@ TABLES = {
         "Bias is mean signed test-minus-gold time among matched flights; "
         "negative is early. Nearest/NN denote algorithm-nearest/algorithm-nn. "
         "OpenSky denotes the published "
-        "flight dataset; OpenSky-NN uses those same flights with NN airport predictions. "
+        "flight dataset; OpenSky-Nearest and OpenSky-NN use those same flights with "
+        "nearest-airport and NN airport predictions, respectively. "
         "Exact denominators are included in the CSV. Airport null rates are undefined "
         "when no flights match (blank CSV / dash in LaTeX).",
         ("gold_icao_count", "gold_flight_count", "test_flight_count", "true_positive"),
@@ -146,7 +147,7 @@ TABLES = {
 }
 # These metric families depend on the flight segmentation, not on the airport
 # assignment method. Nearest/NN share them for the same ADS-B input;
-# OpenSky/OpenSky-NN share the published flight boundaries.
+# All three OpenSky variants share the published flight boundaries.
 # Airport-dependent metrics (including fully-correct flight scores) stay separate.
 SHARED_FLIGHT_METRICS = {
     column
@@ -157,9 +158,14 @@ SHARED_FLIGHT_METRICS = {
     )
 }
 REFERENCE_ORDER = ("bts", "sfdps", "eurocontrol")
+OPENSKY_METHODS = {"opensky", "opensky-nearest", "opensky-nn"}
+SEGMENTATION_METRICS = {
+    *TABLES["segmentation"].denominators,
+    *(column for metric in TABLES["segmentation"].metrics for column in metric.columns),
+}
 # These sources have no selectable ADS-B provider in evaluation metadata.
 # Keep the CSV exporter usable with only the standard library.
-PROVIDER_INDEPENDENT_SOURCES = {*REFERENCE_ORDER, "opensky", "opensky-nn", "adsbx", "mike"}
+PROVIDER_INDEPENDENT_SOURCES = {*REFERENCE_ORDER, "opensky", "opensky-nn", "opensky-nearest", "adsbx", "mike"}
 REFERENCE_LABELS = {
     "bts": "BTS", "sfdps": "SFDPS", "eurocontrol": "Eurocontrol",
 }
@@ -215,9 +221,9 @@ def reference_sort_key(row: dict[str, Any]) -> tuple:
     rank = REFERENCE_ORDER.index(source) if source in REFERENCE_ORDER else len(REFERENCE_ORDER)
     # The published OpenSky dataset has no ADS-B provider metadata, but belongs
     # beside the methods evaluated on OpenSky messages in the paper table.
-    provider = row["adsb_src"] or ("opensky" if row["test_src"] in {"opensky", "opensky-nn"} else "")
+    provider = row["adsb_src"] or ("opensky" if row["test_src"] in {"opensky", "opensky-nn", "opensky-nearest"} else "")
     provider_rank = {"adsblol": 0, "opensky": 1, "adsbx": 2}.get(provider, 3)
-    method_rank = {"opensky": 0, "opensky-nn": 1, "algorithm-nearest": 2, "algorithm-nn": 3}.get(row["test_src"], 4)
+    method_rank = {"opensky": 0, "opensky-nearest": 1, "opensky-nn": 2, "algorithm-nearest": 3, "algorithm-nn": 4}.get(row["test_src"], 5)
     return (rank, source, row["test_date"], row["target_day_adsb"], provider_rank, provider, method_rank, row["test_src"])
 
 
@@ -367,6 +373,27 @@ def gold_flights_heading(rows: list[dict[str, Any]], context: str) -> str:
     return "Gold flights: " + ("unavailable" if count is None else f"{int(count):,}")
 
 
+def validate_opensky_segmentation(rows: list[dict[str, Any]]) -> None:
+    """Assert exact segmentation equality across the published-flight variants."""
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row["test_src"] in OPENSKY_METHODS:
+            context = (row["gold_src"], row["test_date"], row["target_day_adsb"],
+                       row["adsb_src"] or "opensky")
+            groups.setdefault(context, []).append(row)
+    for context, group in groups.items():
+        base = next((row for row in group if row["test_src"] == "opensky"), group[0])
+        for row in group:
+            for metric in sorted(SEGMENTATION_METRICS):
+                if row.get(metric) != base.get(metric):
+                    raise ValueError(
+                        f"OpenSky segmentation metrics differ within {context}: "
+                        f"{metric}: {base['test_src']}={base.get(metric)!r}, "
+                        f"{row['test_src']}={row.get(metric)!r}. "
+                        "Reevaluate these methods using the same published flights and cohort."
+                    )
+
+
 def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
                   prefix: str, decimals: int, *,
                   caption: str = "Flight evaluation by reference dataset",
@@ -420,29 +447,42 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         if len(windows) > 1:
             title += f" | Target-day ADS-B: {window}"
         lines.extend([r"\addlinespace[4pt]", r"\multicolumn{" + str(width) + r"}{@{}l}{\textbf{" + latex_escape(title) + r"}}\\*"])
-        shared_starts: dict[int, set[int]] = {}
-        shared_ends: dict[int, set[int]] = {}
-        for index, (base, nn) in enumerate(zip(group_rows, group_rows[1:])):
-            pair = (base["test_src"], nn["test_src"])
-            algorithm_pair = (pair == ("algorithm-nearest", "algorithm-nn")
-                              and base["adsb_src"] == nn["adsb_src"])
-            opensky_pair = (pair == ("opensky", "opensky-nn")
-                            and base["adsb_src"] in {"", "opensky"}
-                            and nn["adsb_src"] in {"", "opensky"})
-            if not (algorithm_pair or opensky_pair):
+        shared_starts: dict[tuple[int, int], int] = {}
+        shared_continuations: set[tuple[int, int]] = set()
+        keep_with_next: set[int] = set()
+        for column_index, (_, keys) in enumerate(columns):
+            if not set(keys) <= SHARED_FLIGHT_METRICS:
                 continue
-            shared = {
-                column_index for column_index, (_, keys) in enumerate(columns)
-                if set(keys) <= SHARED_FLIGHT_METRICS
-                and all(base.get(key) is not None and base[key] == nn.get(key) for key in keys)
-            }
-            if shared:
-                shared_starts[index] = shared
-                shared_ends[index + 1] = shared
-                has_shared_cells = True
+            start = 0
+            for index in range(1, len(group_rows) + 1):
+                same = False
+                if index < len(group_rows):
+                    base, following = group_rows[index - 1:index + 1]
+                    pair = (base["test_src"], following["test_src"])
+                    same_family = (
+                        pair == ("algorithm-nearest", "algorithm-nn")
+                        and base["adsb_src"] == following["adsb_src"]
+                    ) or (
+                        set(pair) <= OPENSKY_METHODS and pair[0] != pair[1]
+                        and base["adsb_src"] in {"", "opensky"}
+                        and following["adsb_src"] in {"", "opensky"}
+                    )
+                    same = same_family and all(
+                        base.get(key) is not None and base[key] == following.get(key)
+                        for key in keys
+                    )
+                if same:
+                    continue
+                if index - start > 1:
+                    shared_starts[start, column_index] = index - start
+                    shared_continuations.update((row, column_index) for row in range(start + 1, index))
+                    keep_with_next.update(range(start, index - 1))
+                    has_shared_cells = True
+                start = index
         for index, row in enumerate(group_rows):
             method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN",
-                      "opensky": "OpenSky", "opensky-nn": "OpenSky-NN"}.get(row["test_src"], row["test_src"])
+                      "opensky": "OpenSky", "opensky-nn": "OpenSky-NN",
+                      "opensky-nearest": "OpenSky-Nearest"}.get(row["test_src"], row["test_src"])
             method = (method_labels or {}).get(row["test_src"], method)
             if show_provider and row["adsb_src"]:
                 provider = provider_labels.get(row["adsb_src"], row["adsb_src"])
@@ -450,16 +490,16 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
             cells = [latex_escape(method)]
             for column_index, (_, keys) in enumerate(columns):
                 cell = " / ".join(format_metric(row, by_key[key], decimals) for key in keys)
-                if column_index in shared_starts.get(index, set()):
-                    cell = r"\multirow{2}{*}{" + cell + "}"
-                elif column_index in shared_ends.get(index, set()):
+                if (index, column_index) in shared_starts:
+                    cell = r"\multirow{" + str(shared_starts[index, column_index]) + r"}{*}{" + cell + "}"
+                elif (index, column_index) in shared_continuations:
                     cell = ""
                 cells.append(cell)
-            # Keep the two methods on the same page when they share cells.
-            lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
+            # Keep every row of a shared cell on the same page.
+            lines.append(" & ".join(cells) + (r" \\*" if index in keep_with_next else r" \\"))
     note = TABLES["reference_summary"].note if note is None else note
     if has_shared_cells:
-        note += " Cells spanning a method pair report values shared by both methods."
+        note += " Cells spanning multiple methods report values shared by those methods."
     if len(providers) == 1:
         provider = next(iter(providers))
         note += f" {provider_labels.get(provider, provider)} ADS-B."
@@ -584,6 +624,7 @@ def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
                        if name == "reference_summary" else
                        latex_table(rows, name, TABLES[name], metrics, prefix, decimals))
                 for name, metrics in selected.items()}
+    validate_opensky_segmentation(rows)
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs = []
     for name, metrics in selected.items():

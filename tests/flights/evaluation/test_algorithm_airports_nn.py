@@ -13,6 +13,7 @@ from flights.sources import (
     EUROCONTROL_SOURCE,
     EUROCONTROL_VERIFIED_SOURCE,
     OPENSKY_NN_SOURCE,
+    OPENSKY_NEAREST_SOURCE,
     OPENSKY_SOURCE,
     SFDPS_SOURCE,
     SFDPS_VERIFIED_SOURCE,
@@ -144,7 +145,7 @@ def test_verified_source_always_uses_adsblol(
     ) == [None]
 
 
-@pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE, OPENSKY_NN_SOURCE])
+@pytest.mark.parametrize("source", [ADSBX_SOURCE, OPENSKY_SOURCE, OPENSKY_NN_SOURCE, OPENSKY_NEAREST_SOURCE])
 def test_independent_source_is_evaluated_once_across_adsb_sources(source):
     assert evaluation.resolve_source(source.name) is source
     assert evaluation.adsb_sources_for_evaluation(

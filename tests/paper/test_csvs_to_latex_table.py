@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/paper/csvs_to_latex_table.py"
-METHODS = ("opensky", "opensky-nn", "algorithm-nearest", "algorithm-nn")
+METHODS = ("opensky", "opensky-nearest", "opensky-nn", "algorithm-nearest", "algorithm-nn")
 REFERENCES = ("bts", "sfdps", "eurocontrol")
 
 
@@ -42,8 +42,75 @@ def test_complete_selection_accepts_provider_independent_opensky_nn(tmp_path):
     assert result.returncode == 0, result.stderr
     folder = tmp_path / "tables/table_0"
     manifest = json.loads((folder / "table_0_manifest.json").read_text())
-    assert manifest["daily_rows"] == 12
+    assert manifest["daily_rows"] == 15
     assert "OpenSky-NN" in (folder / "table_0_reference_summary.tex").read_text()
+
+
+def test_complete_selection_accepts_provider_independent_opensky_nearest(tmp_path):
+    rows = evaluation_rows()
+    result = run_export(tmp_path, rows)
+    assert result.returncode == 0, result.stderr
+    folder = tmp_path / "tables/table_0"
+    manifest = json.loads((folder / "table_0_manifest.json").read_text())
+    assert manifest["daily_rows"] == 15
+    latex = (folder / "table_0_reference_summary.tex").read_text()
+    assert "OpenSky-Nearest" in latex
+    assert latex.count(r"\multirow{3}{*}{80.00 / 80.00 / 80.00}") == 3
+    assert latex.count(r"\multirow{2}{*}{80.00 / 80.00 / 80.00}") == 3
+    assert latex.index("OpenSky &") < latex.index("OpenSky-Nearest &") < latex.index("OpenSky-NN &")
+
+
+@pytest.mark.parametrize("method", ["opensky-nearest", "opensky-nn"])
+@pytest.mark.parametrize("metric", ["true_positive", "false_positive", "false_negative", "precision", "recall", "f1", "test_flight_count", "gold_flight_count"])
+def test_opensky_segmentation_requires_exact_equality(method, metric):
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import validate_opensky_segmentation
+    rows = evaluation_rows()
+    # Both absent derived counts are allowed; unequal present counts are not.
+    row = next(row for row in rows if row["test_src"] == method)
+    row[metric] = row.get(metric, 10) + 1e-10
+    with pytest.raises(ValueError, match=f"OpenSky segmentation metrics differ.*{metric}"):
+        validate_opensky_segmentation(rows)
+
+
+def test_segmentation_mismatch_preserves_outputs_even_when_metric_not_selected(tmp_path):
+    rows = evaluation_rows()
+    rows[1]["precision"] += 1e-10  # Still renders as 80.00, but differs exactly.
+    folder = tmp_path / "tables/table_0"
+    folder.mkdir(parents=True)
+    sentinel = folder / "table_0_reference_summary.tex"
+    sentinel.write_text("previous table")
+    source = tmp_path / "input.csv"
+    with source.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    result = subprocess.run([
+        sys.executable, str(SCRIPT), str(source), "--output-dir", str(tmp_path / "tables"),
+        "--prefix", "table_0", "--metrics", "recall",
+    ], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "OpenSky segmentation metrics differ" in result.stderr
+    assert sentinel.read_text() == "previous table"
+    assert list(folder.iterdir()) == [sentinel]
+
+
+def test_opensky_shared_cells_keep_airport_metrics_separate():
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import TABLES, summary_latex, validate_opensky_segmentation
+    rows = evaluation_rows()[:3]
+    for index, row in enumerate(rows):
+        row.update(test_flight_count=10, gold_flight_count=10,
+                   takeoff_airport_id_match_pct=.5 + index / 10)
+    validate_opensky_segmentation(rows)
+    metrics = tuple(metric for metric in TABLES["reference_summary"].metrics
+                    if metric.key in {"test_flight_count", "precision", "takeoff_airport_id_match_pct"})
+    latex = summary_latex(rows, metrics, "table_0", 2)
+    assert r"\multirow{3}{*}{10}" in latex
+    assert r"\multirow{3}{*}{80.00}" in latex
+    assert "OpenSky & \\multirow{3}{*}{10} & \\multirow{3}{*}{80.00} & 50.00" in latex
+    assert "OpenSky-Nearest &  &  & 60.00 \\\\*" in latex
+    assert "OpenSky-NN &  &  & 70.00 \\\\" in latex
 
 
 @pytest.mark.parametrize("change, message", [
@@ -95,7 +162,7 @@ def test_explicit_missing_date_in_detailed_export_fails(tmp_path):
 
 def test_gold_count_in_heading_and_test_counts_in_rows(tmp_path):
     rows = evaluation_rows()
-    rows[0]["false_positive"] = 4
+    rows[3]["false_positive"] = 4
     result = run_export(tmp_path, rows, "--metrics", "gold_flight_count", "test_flight_count")
     assert result.returncode == 0, result.stderr
     folder = tmp_path / "tables/table_0"
@@ -103,10 +170,10 @@ def test_gold_count_in_heading_and_test_counts_in_rows(tmp_path):
     assert latex.count("Gold flights: 10") == len(REFERENCES)
     assert "G / T" not in latex
     assert r"\shortstack{Test flights\\T}" in latex
-    assert "OpenSky & 12 &" in latex
+    assert "Nearest & 12 &" in latex
     with (folder / "table_0_reference_summary.csv").open() as stream:
         exported = list(csv.DictReader(stream))
-    assert len(exported) == 12
+    assert len(exported) == 15
     assert {row["gold_flight_count"] for row in exported} == {"10"}
 
 
@@ -142,7 +209,7 @@ def test_verified_sources_excluded_without_explicit_filters(tmp_path, mode):
                    for row in rows]
         cache = SimpleNamespace(find_stats=lambda **kwargs: entries)
         selected, _ = load_cache_rows(cache, {})
-    assert len(selected) == 12
+    assert len(selected) == 15
     assert all(not row[key].endswith("-verified") for row in selected
                for key in ("gold_src", "test_src"))
 
