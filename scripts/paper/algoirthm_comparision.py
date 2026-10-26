@@ -28,10 +28,12 @@ REFERENCE_DATES = {
     "eurocontrol": "2024-06-01",
 }
 METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
-                if metric.key in {"precision", "recall", "f1",
+                if metric.key in {"gold_flight_count", "test_flight_count",
+                                  "precision", "recall", "f1",
                                   "takeoff_airport_id_match_pct",
                                   "landing_airport_id_match_pct"})
 NOTE = (
+    "G/T = retained gold/test flights. "
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
     "TO/LD = takeoff/landing airport match percentages among matched flights; "
     "null airport IDs are incorrect. All rates are percentages. "
