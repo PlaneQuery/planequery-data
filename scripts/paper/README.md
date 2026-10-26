@@ -163,7 +163,7 @@ use `--endpoint takeoff` or `--endpoint landing` to generate only one.
 
 `algoirthm_comparision.py` compares **Sun, plane-notify, and OpenAP**
 in the same grouped layout as the other paper tables.
-It shows retained flight counts **G / T** (gold / test), segmentation
+It shows retained gold flights once in each dataset heading, **Test flights T**, segmentation
 **P / R / F1 (%)**, and airport matches **TO / LD (%)**.
 Sun uses source `junzis`, and OpenAP uses source `openap`.
 All three methods use OpenSky ADS-B messages.
@@ -218,9 +218,9 @@ Set `OUTPUT_DIR` to the evaluation data root (for example,
 - BTS, SFDPS, BTS-verified, and SFDPS-verified on **2026-03-01**.
 - Eurocontrol and Eurocontrol-verified on **2024-06-01**.
 - ADSB.lol, OpenSky messages, and ADSBX, all with **target-day-only ADS-B**.
-- Nearest and NN, showing **Flights G / T** (retained gold/test counts),
+- Nearest and NN, showing retained gold counts once in the dataset heading and **Test flights T**,
   segmentation **P / R / F1 (%)**, and airport accuracy **takeoff / landing (%)**.
-  Shared flight counts and segmentation cells span the two methods.
+  Shared test-flight counts and segmentation cells span the two methods.
 
 Use `--test-source algorithm-nn` for NN only. The preset requires all 36
 comparisons (18 for NN only) and their selected metrics and denominator counts
@@ -273,8 +273,8 @@ area without a surrounding `table` float.
 
 ## Training versus nontraining airport accuracy
 
-`training_vs_non_training_table.py` produces a companion table for Nearest and
-NN. It reuses the existing airport-exposure evaluator and the summary script's
+`training_vs_non_training_table.py` compares Nearest and NN on **Eurocontrol only**
+(excluding its verified variant). It reuses the existing airport-exposure evaluator and the summary script's
 cache selection, reference dates, ordering, and LaTeX escaping. No new evaluation
 metrics are introduced.
 
@@ -283,9 +283,7 @@ From the repository root, using the same `OUTPUT_DIR` as evaluation:
 ```bash
 .venv/bin/python scripts/paper/training_vs_non_training_table.py \
   --adsb-source opensky \
-  --gold-source bts sfdps eurocontrol bts-verified sfdps-verified eurocontrol-verified \
-  --reference-date bts=2026-03-01 \
-  --reference-date sfdps=2026-03-01 \
+  --gold-source eurocontrol \
   --reference-date eurocontrol=2024-06-01 \
   --require-complete \
   --prefix table_1
@@ -307,18 +305,23 @@ the options. Relative filenames resolve under
 files, requires one shared manifest hash, and rejects conflicting duplicate rows.
 It does not combine CSV inputs with cache or training-manifest options.
 
-The default methods are `algorithm-nearest` and `algorithm-nn`. Inclusion filters
-`--test-source`, `--gold-source`, `--adsb-source`, and `--date` accept multiple
-values or repeated options. `--reference-date` chooses one date per reference
-family including its verified variant. `--target-day-adsb` defaults to `false`.
+The default methods are `algorithm-nearest` and `algorithm-nn`. `--gold-source`
+defaults to and accepts only `eurocontrol`. Inclusion filters `--test-source`,
+`--adsb-source`, and `--date` accept multiple values or repeated options.
+`--reference-date eurocontrol=YYYY-MM-DD` selects the date; otherwise the latest
+available date is used. `--target-day-adsb` defaults to `false`.
 `--cache-dir`, `--cache-policy latest|error`, `--decimals`, and `--output-dir`
 follow the summary script's conventions. `--require-complete` checks that all
 explicitly selected reference sources and all selected methods/endpoints/groups
 are present within the available reference/date/provider contexts. A group
 with zero matched endpoints is valid and displays a dash, rather than 0%.
 
-Each reference dataset has Nearest and NN rows, with training and nontraining
-matched counts and accuracy percentages, each shown as takeoff / landing.
+The compact table names Eurocontrol and its date in the caption, with no dataset
+section heading or continuation headings. It has Nearest and NN rows, with training
+and nontraining matched counts and accuracy percentages, each shown as takeoff / landing.
+Identical count pairs share a cell spanning Nearest and NN for the same ADS-B
+provider. Both endpoint counts must match exactly; differing or unavailable
+counts stay in separate cells. Accuracy and drop cells remain method-specific.
 The final **Drop (pp)** column gives training minus nontraining accuracy for
 each method, separately for takeoff and landing. Positive means lower accuracy
 on nontraining airports; negative means higher accuracy. Differences use the
@@ -342,7 +345,7 @@ Outputs are under `$OUTPUT_DIR/paper/tables/<prefix>/`:
 - `<prefix>_training_vs_non_training_manifest.json`: input/cache provenance,
   training manifest hash, filters, dates, and metric definitions.
 
-Include with `\usepackage{booktabs,longtable}` and
+Include with `\usepackage{booktabs,longtable,multirow}` and
 `\input{tables/table_1/table_1_training_vs_non_training.tex}` after copying the
 folder into the paper project. Use a single-column/full-width area, without a
 surrounding `table` float. Reference with
@@ -443,13 +446,15 @@ are left in place; use the new `_reference_summary.tex` file in the paper.
 
 ## What appears in the table
 
-The reference heading gives the dataset, date, and total gold ICAOs once.
+The reference heading gives the dataset, date, total gold ICAOs, and retained gold
+flights once. Gold-flight counts must agree across methods and providers in each
+reference/date/input-window group; mismatches fail before output files are replaced.
 Columns are:
 
 | Column | Meaning |
 | --- | --- |
 | Method | Evaluated method; OpenSky denotes its published flight dataset |
-| Flights G / T | Retained gold and test flight totals |
+| Test flights T | Retained test flight total; gold total G is in the heading |
 | Segmentation P / R / F1 (%) | Precision, recall, and their harmonic mean (F1) |
 | Zero flights ICAOs (%) | Gold ICAOs with no test flights / all gold ICAOs |
 | Airport acc. TO / LD (%) | Correct takeoff and landing airports / matched flights |
@@ -474,8 +479,10 @@ Counts are not repeated next to every percentage. Recover matched flights as
 `T - matched`. Airport-correct counts use matched flights as denominator;
 null-output counts use T; missing-aircraft counts use the gold ICAOs in the
 heading. Rounded percentages yield approximate counts. The CSV retains exact
-G, T, and matched-flight counts and unrounded percentages. Gold-flight totals
-can differ by method because the evaluator applies boundary filtering.
+G, T, and matched-flight counts and unrounded percentages for every row.
+Detailed segmentation and timing tables also put their shared gold count in
+the group heading. Reference-population breakdowns already show their counts
+once per dataset; airport-exposure counts remain specific to each method/group.
 
 Timing uses existing signed-bias columns, not mean absolute error. No new
 evaluation metrics or cache changes are required.

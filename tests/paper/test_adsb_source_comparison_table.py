@@ -58,6 +58,8 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
     assert "Target-day-only ADS-B input: true" in latex
     assert "75.00 / 62.50" in latex
     assert "Time bias" not in latex
+    assert latex.count("Gold flights: 10") == 6
+    assert "G / T" not in latex
     assert (r"\multirow{2}{*}{80.00 / 80.00 / 80.00}" in latex) != nn_only
     manifest = json.loads((folder / "table_1_adsb_sources_manifest.json").read_text())
     assert manifest["daily_rows"] == len(exported)
@@ -69,6 +71,7 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
     ("wrong_date", "Missing 1 of 36"),
     ("missing_metric", "Unavailable metrics"),
     ("conflict", "Conflicting daily rows"),
+    ("different_gold_count", "Gold flight totals differ"),
 ])
 def test_invalid_input_writes_nothing(tmp_path, change, message):
     rows = evaluation_rows()
@@ -78,6 +81,8 @@ def test_invalid_input_writes_nothing(tmp_path, change, message):
         rows[0]["test_date"] = "2024-06-01"
     elif change == "missing_metric":
         rows[0]["precision"] = None
+    elif change == "different_gold_count":
+        rows[0]["false_negative"] = 3
     else:
         rows.append({**rows[0], "precision": .1})
     result = run_export(tmp_path, rows)

@@ -33,13 +33,13 @@ METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
                                   "takeoff_airport_id_match_pct",
                                   "landing_airport_id_match_pct"})
 NOTE = (
-    "G/T = retained gold/test flights. "
+    "Gold flights are shown once in each heading; T = retained test flights. "
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
     "TO/LD = takeoff/landing airport match percentages among matched flights; "
     "null airport IDs are incorrect. All rates are percentages. "
     "All three methods use OpenSky ADS-B messages. Sun = junzis; "
-    "OpenAP = openap. Retained flight counts can differ by method because "
-    "of boundary filtering. Exact denominators are included in the CSV."
+    "OpenAP = openap. Gold counts must agree within each group. "
+    "Exact denominators are included in the CSV."
 )
 
 

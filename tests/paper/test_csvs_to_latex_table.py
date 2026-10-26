@@ -52,6 +52,7 @@ def test_complete_selection_accepts_provider_independent_opensky_nn(tmp_path):
     ("missing_provider", "Missing 12 requested evaluations"),
     ("missing_metric", "Unavailable metrics"),
     ("missing_denominator", "gold_icao_count"),
+    ("different_gold_count", "Gold flight totals differ"),
 ])
 def test_incomplete_selection_fails_by_default_and_preserves_outputs(tmp_path, change, message):
     rows = evaluation_rows()
@@ -66,6 +67,8 @@ def test_incomplete_selection_fails_by_default_and_preserves_outputs(tmp_path, c
         extra = ["--adsb-source", "adsbx"]
     elif change == "missing_denominator":
         rows[0]["gold_icao_count"] = None
+    elif change == "different_gold_count":
+        rows[0]["false_negative"] = 3
     else:
         rows[0]["precision"] = None
     folder = tmp_path / "tables/table_0"
@@ -87,3 +90,33 @@ def test_explicit_missing_date_in_detailed_export_fails(tmp_path):
             "test_src": {"opensky"}, "gold_src": {"bts"},
             "test_date": {"2026-03-01", "2026-03-02"}, "target_day_adsb": {"false"},
         })
+
+
+def test_gold_count_in_heading_and_test_counts_in_rows(tmp_path):
+    rows = evaluation_rows()
+    rows[0]["false_positive"] = 4
+    result = run_export(tmp_path, rows, "--metrics", "gold_flight_count", "test_flight_count")
+    assert result.returncode == 0, result.stderr
+    folder = tmp_path / "tables/table_0"
+    latex = (folder / "table_0_reference_summary.tex").read_text()
+    assert latex.count("Gold flights: 10") == len(REFERENCES)
+    assert "G / T" not in latex
+    assert r"\shortstack{Test flights\\T}" in latex
+    assert "OpenSky & 12 &" in latex
+    with (folder / "table_0_reference_summary.csv").open() as stream:
+        exported = list(csv.DictReader(stream))
+    assert len(exported) == 24
+    assert {row["gold_flight_count"] for row in exported} == {"10"}
+
+
+def test_detailed_table_checks_shared_gold_count():
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import TABLES, latex_table, prepare_rows
+    rows = evaluation_rows()[:2]
+    table = TABLES["segmentation"]
+    prepare_rows(rows, {"segmentation": table.metrics}, True)
+    latex = latex_table(rows, "segmentation", table, table.metrics, "test", 2)
+    assert latex.count("Gold flights: 10") == 1
+    rows[1]["gold_flight_count"] = 11
+    with pytest.raises(ValueError, match="Gold flight totals differ"):
+        latex_table(rows, "segmentation", table, table.metrics, "test", 2)
