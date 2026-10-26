@@ -1,7 +1,7 @@
 """Build table_1_adsb_sources from existing daily evaluations (no evaluation runs).
 
 Compare ADSB.lol, OpenSky, and ADSBX with target-day-only ADS-B: BTS/SFDPS
-and verified variants on 2026-03-01; Eurocontrol variants on 2024-06-01.
+on 2026-03-01; Eurocontrol on 2024-06-01. Verified sources are excluded.
 Reuse the summary table's metric definitions, cache selection, and renderer.
 """
 from __future__ import annotations
@@ -24,8 +24,7 @@ METHODS = ("algorithm-nearest", "algorithm-nn")
 PROVIDERS = ("adsblol", "opensky", "adsbx")
 REFERENCE_DATES = {
     "bts": "2026-03-01", "sfdps": "2026-03-01",
-    "eurocontrol": "2024-06-01", "bts-verified": "2026-03-01",
-    "sfdps-verified": "2026-03-01", "eurocontrol-verified": "2024-06-01",
+    "eurocontrol": "2024-06-01",
 }
 METRICS = tuple(metric for metric in TABLES["reference_summary"].metrics
                 if metric.key in {"gold_flight_count", "test_flight_count",

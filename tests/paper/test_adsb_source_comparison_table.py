@@ -48,17 +48,22 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
     folder = tmp_path / "tables/table_1_adsb_sources"
     with (folder / "table_1_adsb_sources.csv").open() as stream:
         exported = list(csv.DictReader(stream))
-    assert len(exported) == (18 if nn_only else 36)
+    assert len(exported) == (9 if nn_only else 18)
     assert {row["precision_percent"] for row in exported} == {"80.0"}
     assert {row["target_day_adsb"] for row in exported} == {"true"}
     assert {row["gold_flight_count"] for row in exported} == {"10"}
     assert {row["true_positive"] for row in exported} == {"8"}
+    assert {row["gold_src"] for row in exported} == {"bts", "sfdps", "eurocontrol"}
+    assert {row["gold_icao_missing_from_test_percent"] for row in exported} == {"20.0"}
     latex = (folder / "table_1_adsb_sources.tex").read_text()
     assert r"\label{tab:table-1-adsb-sources}" in latex
     assert "Target-day-only ADS-B input: true" in latex
     assert "75.00 / 62.50" in latex
     assert "Time bias" not in latex
-    assert latex.count("Gold flights: 10") == 6
+    assert r"\shortstack{Zero flights\\ICAOs (\%)}" in latex
+    assert "20.00" in latex
+    assert "verified" not in latex.lower()
+    assert latex.count("Gold flights: 10") == 3
     assert "G / T" not in latex
     assert (r"\multirow{2}{*}{80.00 / 80.00 / 80.00}" in latex) != nn_only
     manifest = json.loads((folder / "table_1_adsb_sources_manifest.json").read_text())
@@ -67,9 +72,10 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
 
 
 @pytest.mark.parametrize("change, message", [
-    ("missing_provider", "Missing 12 of 36"),
-    ("wrong_date", "Missing 1 of 36"),
+    ("missing_provider", "Missing 6 of 18"),
+    ("wrong_date", "Missing 1 of 18"),
     ("missing_metric", "Unavailable metrics"),
+    ("missing_zero_flights", "gold_icao_missing_from_test_pct"),
     ("conflict", "Conflicting daily rows"),
     ("different_gold_count", "Gold flight totals differ"),
 ])
@@ -81,6 +87,8 @@ def test_invalid_input_writes_nothing(tmp_path, change, message):
         rows[0]["test_date"] = "2024-06-01"
     elif change == "missing_metric":
         rows[0]["precision"] = None
+    elif change == "missing_zero_flights":
+        rows[0]["gold_icao_missing_from_test_pct"] = None
     elif change == "different_gold_count":
         rows[0]["false_negative"] = 3
     else:

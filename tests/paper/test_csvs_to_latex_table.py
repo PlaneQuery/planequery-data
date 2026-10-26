@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/paper/csvs_to_latex_table.py"
 METHODS = ("opensky", "opensky-nn", "algorithm-nearest", "algorithm-nn")
-REFERENCES = ("bts", "sfdps", "eurocontrol", "bts-verified", "sfdps-verified", "eurocontrol-verified")
+REFERENCES = ("bts", "sfdps", "eurocontrol")
 
 
 def evaluation_rows():
@@ -41,15 +42,15 @@ def test_complete_selection_accepts_provider_independent_opensky_nn(tmp_path):
     assert result.returncode == 0, result.stderr
     folder = tmp_path / "tables/table_0"
     manifest = json.loads((folder / "table_0_manifest.json").read_text())
-    assert manifest["daily_rows"] == 24
+    assert manifest["daily_rows"] == 12
     assert "OpenSky-NN" in (folder / "table_0_reference_summary.tex").read_text()
 
 
 @pytest.mark.parametrize("change, message", [
-    ("absent_method", "Missing 6 requested evaluations"),
+    ("absent_method", "Missing 3 requested evaluations"),
     ("missing_pair", "Missing 1 requested evaluations"),
-    ("absent_reference", "Missing evaluations for requested reference sources: bts-verified"),
-    ("missing_provider", "Missing 12 requested evaluations"),
+    ("absent_reference", "No rows for requested reference datasets: ['bts']"),
+    ("missing_provider", "Missing 6 requested evaluations"),
     ("missing_metric", "Unavailable metrics"),
     ("missing_denominator", "gold_icao_count"),
     ("different_gold_count", "Gold flight totals differ"),
@@ -62,7 +63,7 @@ def test_incomplete_selection_fails_by_default_and_preserves_outputs(tmp_path, c
     elif change == "missing_pair":
         rows.pop()
     elif change == "absent_reference":
-        rows = [row for row in rows if row["gold_src"] != "bts-verified"]
+        rows = [row for row in rows if row["gold_src"] != "bts"]
     elif change == "missing_provider":
         extra = ["--adsb-source", "adsbx"]
     elif change == "missing_denominator":
@@ -105,7 +106,7 @@ def test_gold_count_in_heading_and_test_counts_in_rows(tmp_path):
     assert "OpenSky & 12 &" in latex
     with (folder / "table_0_reference_summary.csv").open() as stream:
         exported = list(csv.DictReader(stream))
-    assert len(exported) == 24
+    assert len(exported) == 12
     assert {row["gold_flight_count"] for row in exported} == {"10"}
 
 
@@ -120,3 +121,27 @@ def test_detailed_table_checks_shared_gold_count():
     rows[1]["gold_flight_count"] = 11
     with pytest.raises(ValueError, match="Gold flight totals differ"):
         latex_table(rows, "segmentation", table, table.metrics, "test", 2)
+
+
+@pytest.mark.parametrize("mode", ["csv", "cache"])
+def test_verified_sources_excluded_without_explicit_filters(tmp_path, mode):
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import load_cache_rows, load_rows
+    rows = evaluation_rows()
+    rows += [{**row, key: "bts-verified"} for key in ("gold_src", "test_src")
+             for row in evaluation_rows()]
+    if mode == "csv":
+        path = tmp_path / "evaluations.csv"
+        with path.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        selected = load_rows([path])
+    else:
+        entries = [SimpleNamespace(stats=SimpleNamespace(to_row=lambda row=row: dict(row)))
+                   for row in rows]
+        cache = SimpleNamespace(find_stats=lambda **kwargs: entries)
+        selected, _ = load_cache_rows(cache, {})
+    assert len(selected) == 12
+    assert all(not row[key].endswith("-verified") for row in selected
+               for key in ("gold_src", "test_src"))
