@@ -25,7 +25,7 @@ from flights.sources import FLIGHT_SOURCES_BY_NAME
 
 DAY = date(2026, 3, 1)
 START = datetime(2026, 3, 1)
-SOURCE_NAMES = ("openap", "plane-notify")
+SOURCE_NAMES = ("openap", "plane-notify", "traffic")
 
 
 @pytest.fixture
@@ -97,6 +97,8 @@ def test_complete_aircraft_batches_match_unbatched_and_reuse_cache(
 ):
     if source_name == "openap":
         pytest.importorskip("openap.phase")
+    if source_name == "traffic":
+        pytest.importorskip("traffic.core")
     source_type = type(FLIGHT_SOURCES_BY_NAME[source_name])
     source = source_type(target_day_adsb=target_day)
     monkeypatch.setattr(flight_source, "OUTPUT_DIR", tmp_path)

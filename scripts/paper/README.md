@@ -119,11 +119,36 @@ use `--endpoint takeoff` or `--endpoint landing` to generate only one.
 
 ## Algorithm comparison on OpenSky
 
-`algoirthm_comparision.py` compares **Sun, plane-notify, and OpenAP**
+`algoirthm_comparision.py` compares **Sun, plane-notify, OpenAP, and Traffic**
 in the same grouped layout as the other paper tables.
 It shows segmentation **P / R / F1 (%)** and airport matches **TO / LD (%)**.
-Sun uses source `junzis`, and OpenAP uses source `openap`.
-All three methods use OpenSky ADS-B messages.
+Sun uses source `sun`, OpenAP uses source `openap`, and Traffic uses source
+`traffic`. All four methods use OpenSky ADS-B messages.
+
+Install the optional dependencies, then generate any missing evaluations for
+the table's two reference dates. Existing valid evaluation caches are reused:
+
+```bash
+.venv/bin/python -m pip install -e '.[openap,traffic]'
+export OUTPUT_DIR=/Volumes/T2-SSD/planequery
+export PYTHONPATH=src
+
+.venv/bin/python -m flights.evaluation.evaluation \
+  --test-source sun plane-notify openap traffic \
+  --gold-source bts sfdps bts-verified sfdps-verified \
+  --adsb-source opensky --test-dates 2026-03-01
+
+.venv/bin/python -m flights.evaluation.evaluation \
+  --test-source sun plane-notify openap traffic \
+  --gold-source eurocontrol eurocontrol-verified \
+  --adsb-source opensky --test-dates 2024-06-01
+```
+
+`--adsb-source opensky` selects the algorithm inputs. Verified references still
+use their fixed ADSB.lol verification provider, and Eurocontrol's reference
+callsign enrichment also defaults to ADSB.lol; this flag does not change them.
+
+Export the completed evaluations:
 
 ```bash
 OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/paper/algoirthm_comparision.py
@@ -131,8 +156,8 @@ OUTPUT_DIR=/Volumes/T2-SSD/planequery PYTHONPATH=src .venv/bin/python scripts/pa
 
 The default references are BTS, SFDPS, and their verified variants on
 **2026-03-01**, and Eurocontrol and its verified variant on **2024-06-01**.
-All 18 comparisons must be present before files are written. Use `--gold-source`
-to select fewer reference datasets; all three methods are still required for each.
+All 24 comparisons must be present before files are written. Use `--gold-source`
+to select fewer reference datasets; all four methods are still required for each.
 The default input-window setting is `--target-day-adsb false`, matching the
 overall evaluation table. Pass `--target-day-adsb true` only when those results
 have been evaluated. The generator reads existing current-version caches or
