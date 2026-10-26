@@ -9,7 +9,6 @@ from flights.plane_notify import PlaneNotifyFlightSource
 from flights.providers.adsbx import ADSBXPublishedFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
-from flights.providers.mike import MikeFlightSource
 from flights.providers.opensky import OpenSkyTrinoFlightSource
 from flights.providers.sfdps import SFDPSFlightSource
 from flights.verified.source import VerifiedFlightSource
@@ -24,7 +23,6 @@ EUROCONTROL_VERIFIED_SOURCE = VerifiedFlightSource(EUROCONTROL_SOURCE)
 GROUND_TRUTH_SOURCE = GroundTruthFlightSource()
 SUN_SOURCE = SunFlightSource()
 BTS_VERIFIED_SOURCE = VerifiedFlightSource(BTS_SOURCE)
-MIKE_SOURCE = MikeFlightSource()
 OPENAP_SOURCE = OpenAPFlightSource()
 OPENSKY_SOURCE = OpenSkyTrinoFlightSource()
 OPENSKY_NN_SOURCE = OpenSkyNNFlightSource()
@@ -44,7 +42,6 @@ FLIGHT_SOURCES = (
     BTS_VERIFIED_SOURCE,
     GROUND_TRUTH_SOURCE,
     SUN_SOURCE,
-    MIKE_SOURCE,
     OPENAP_SOURCE,
     OPENSKY_SOURCE,
     OPENSKY_NN_SOURCE,
