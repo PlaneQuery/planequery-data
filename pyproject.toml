@@ -28,6 +28,8 @@ dependencies = [
 
 [project.optional-dependencies]
 openap = ["openap==2.6.2"]
+# Traffic 2.13 imports DatetimeTZBlock, which pandas 3 removed.
+traffic = ["traffic==2.13", "pandas>=2.2,<3"]
 airport-nn = ["torch>=2.6,<3"]
 dev = [
     "pytest==9.1.1",

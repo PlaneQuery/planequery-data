@@ -109,16 +109,21 @@ Use `--refresh-cache` to recalculate and replace matching entries.
 
 ## Additional segmentation baselines
 
-`sun`, [`openap`](../openap/README.md), and
-[`plane-notify`](../plane_notify/README.md) are available through the same
+`sun`, [`openap`](../openap/README.md),
+[`plane-notify`](../plane_notify/README.md), and
+[`traffic`](../traffic/README.md) are available through the same
 evaluation interface as `algorithm-nearest`:
 
 ```bash
 python -m flights.evaluation.evaluation \
-  --test-source algorithm-nearest sun openap plane-notify \
+  --test-source algorithm-nearest sun openap plane-notify traffic \
   --gold-source bts sfdps bts-verified sfdps-verified \
   --adsb-source adsblol --test-dates 2026-03-01
 ```
+
+Traffic requires `pip install -e '.[traffic]'` and uses upstream default
+aircraft/callsign grouping and ten-minute gap splitting. Its endpoints are
+observation bounds, including ground reports, rather than detected takeoff/landing.
 
 OpenAP requires the optional `pip install -e '.[openap]'` dependency. Its
 additional diagnostic report can be generated with
