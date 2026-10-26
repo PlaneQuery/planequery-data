@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         output = args.output_dir.expanduser() / args.prefix
         output.mkdir(parents=True, exist_ok=True)
         csv_path = output / f"{args.prefix}.csv"
-        latex_path = output / f"{args.prefix}.latex"
+        latex_path = output / f"{args.prefix}.tex"
         manifest = output / f"{args.prefix}_manifest.json"
         columns = list(dict.fromkeys([*METADATA, *denominators, *(metric.key for metric in METRICS)]))
         with csv_path.open("w", newline="", encoding="utf-8") as stream:

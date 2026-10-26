@@ -8,7 +8,7 @@ import sys
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts/paper/ads-b_source_comparision_table.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts/paper/adsb_source_comparision_table.py"
 
 
 def evaluation_rows():
@@ -53,7 +53,7 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
     assert {row["target_day_adsb"] for row in exported} == {"true"}
     assert {row["gold_flight_count"] for row in exported} == {"10"}
     assert {row["true_positive"] for row in exported} == {"8"}
-    latex = (folder / "table_1_adsb_sources.latex").read_text()
+    latex = (folder / "table_1_adsb_sources.tex").read_text()
     assert r"\label{tab:table-1-adsb-sources}" in latex
     assert "Target-day-only ADS-B input: true" in latex
     assert "75.00 / 62.50" in latex

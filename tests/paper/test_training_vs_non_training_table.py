@@ -47,7 +47,7 @@ def test_export_percentages_and_zero_denominators(tmp_path):
     assert {row["airport_accuracy_percent"] for row in rows} == {"50.0", "75.0", ""}
     assert all(row["matched_endpoint_count"] == "0" for row in rows if row["airport_group"] == "nontraining")
     assert all(row["accuracy_drop_pp"] == "" for row in rows)
-    latex = (folder / "test_training_vs_non_training.latex").read_text()
+    latex = (folder / "test_training_vs_non_training.tex").read_text()
     assert "75.00 / 75.00" in latex
     assert "--- / ---" in latex
     assert "OpenSky ADS-B" in latex
@@ -73,7 +73,7 @@ def test_drop_is_paired_by_method_endpoint_and_provider(tmp_path):
     for row in exported:
         assert float(row["accuracy_drop_pp"]) == (0 if row["adsb_src"] == "adsblol" else
                                                   expected[row["test_src"], row["endpoint"]])
-    latex = (folder / "test_training_vs_non_training.latex").read_text()
+    latex = (folder / "test_training_vs_non_training.tex").read_text()
     assert "Drop (pp)" in latex
     assert "25.00 / -25.00" in latex
     assert "50.00 / 0.00" in latex

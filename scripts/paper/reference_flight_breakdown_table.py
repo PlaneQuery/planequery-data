@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         output.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(rows).write_csv(output / f"{args.prefix}.csv")
         for kind, latex in tables.items():
-            (output / f"{args.prefix}_{kind}.latex").write_text(latex, encoding="utf-8")
+            (output / f"{args.prefix}_{kind}.tex").write_text(latex, encoding="utf-8")
         provenance = dict(reference_dates=REFERENCE_DATES, inputs=inputs, definitions=SOURCES,
                           aircraft_note=AIRCRAFT_NOTE, airport_note=AIRPORT_NOTE,
                           airport_code_date=code_date, percent_scale="0-100", latex_decimals=args.decimals)

@@ -42,7 +42,7 @@ def test_complete_selection_accepts_provider_independent_opensky_nn(tmp_path):
     folder = tmp_path / "tables/table_0"
     manifest = json.loads((folder / "table_0_manifest.json").read_text())
     assert manifest["daily_rows"] == 24
-    assert "OpenSky-NN" in (folder / "table_0_reference_summary.latex").read_text()
+    assert "OpenSky-NN" in (folder / "table_0_reference_summary.tex").read_text()
 
 
 @pytest.mark.parametrize("change, message", [
@@ -70,7 +70,7 @@ def test_incomplete_selection_fails_by_default_and_preserves_outputs(tmp_path, c
         rows[0]["precision"] = None
     folder = tmp_path / "tables/table_0"
     folder.mkdir(parents=True)
-    sentinel = folder / "table_0_reference_summary.latex"
+    sentinel = folder / "table_0_reference_summary.tex"
     sentinel.write_text("previous table")
     result = run_export(tmp_path, rows, *extra)
     assert result.returncode != 0
