@@ -21,7 +21,6 @@ from flights.sun import SunFlightSource
 from flights.openap import OpenAPFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.plane_notify import PlaneNotifyFlightSource
-from flights.providers.mike import MikeFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
@@ -266,11 +265,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Checkpoint used by algorithm-nn or opensky-nn.",
     )
     parser.add_argument(
-        "--mike-input",
-        type=Path,
-        help="Input CSV used by the mike source.",
-    )
-    parser.add_argument(
         "--workers",
         type=int,
         help=(
@@ -299,9 +293,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     source = FLIGHT_SOURCES_BY_NAME[args.source]
     if isinstance(source, EurocontrolFlightSource):
         source = replace(source, callsign_source=args.adsb_source)
-    if args.mike_input is not None:
-        assert isinstance(source, MikeFlightSource)
-        source = replace(source, input_csv=args.mike_input)
     if args.airport_nn_model is not None:
         assert isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
         source = replace(source, model_path=args.airport_nn_model)
