@@ -123,8 +123,6 @@ def df_flights_comparison(
         match_0 = flights_comparison(
             flights_0,
             flights_1,
-            start_dt,
-            end_dt,
         )
         df0 = df0.with_row_index("idx")
 
