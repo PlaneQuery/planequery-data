@@ -6,6 +6,7 @@ from flights.openap import OpenAPFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.opensky_reverse_eng_nearest import OpenSkyReverseEngNearestFlightSource
 from flights.plane_notify import PlaneNotifyFlightSource
+from flights.traffic import TrafficFlightSource
 from flights.providers.adsbx import ADSBXPublishedFlightSource
 from flights.providers.bts import BTSFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
@@ -31,6 +32,7 @@ OPENSKY_NN_SOURCE = OpenSkyNNFlightSource()
 OPENSKY_REVERSE_ENG_SOURCE = OpenSkyReverseEngFlightSource()
 OPENSKY_REVERSE_ENG_NEAREST_SOURCE = OpenSkyReverseEngNearestFlightSource()
 PLANE_NOTIFY_SOURCE = PlaneNotifyFlightSource()
+TRAFFIC_SOURCE = TrafficFlightSource()
 SFDPS_SOURCE = SFDPSFlightSource()
 SFDPS_VERIFIED_SOURCE = VerifiedFlightSource(SFDPS_SOURCE)
 
@@ -51,6 +53,7 @@ FLIGHT_SOURCES = (
     OPENSKY_REVERSE_ENG_SOURCE,
     OPENSKY_REVERSE_ENG_NEAREST_SOURCE,
     PLANE_NOTIFY_SOURCE,
+    TRAFFIC_SOURCE,
     SFDPS_SOURCE,
     SFDPS_VERIFIED_SOURCE,
 )

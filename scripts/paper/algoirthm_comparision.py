@@ -1,4 +1,4 @@
-"""Compare three flight algorithms using existing OpenSky evaluation results.
+"""Compare four flight algorithms using existing OpenSky evaluation results.
 
 Reuse the paper's grouped booktabs/longtable layout; never run evaluations.
 """
@@ -18,9 +18,10 @@ from csvs_to_latex_table import (
 )
 
 METHOD_LABELS = {
-    "junzis": "Sun",
+    "sun": "Sun",
     "plane-notify": "plane-notify",
     "openap": "OpenAP",
+    "traffic": "Traffic",
 }
 REFERENCE_DATES = {source: "2024-06-01" if source.startswith("eurocontrol")
                    else "2026-03-01" for source in REFERENCE_ORDER}
@@ -32,8 +33,9 @@ NOTE = (
     "P/R/F1 = flight segmentation precision/recall/F1; F1 is their harmonic mean. "
     "TO/LD = takeoff/landing airport match percentages among matched flights; "
     "null airport IDs are incorrect. All rates are percentages. "
-    "All three methods use OpenSky ADS-B messages. Sun = junzis; "
-    "OpenAP = openap. Retained flight counts can differ by method because "
+    "All four methods use OpenSky ADS-B messages. Sun = sun; "
+    "OpenAP = openap; Traffic = traffic (default flight iterator). "
+    "Retained flight counts can differ by method because "
     "of boundary filtering. Exact denominators are included in the CSV."
 )
 

@@ -21,6 +21,7 @@ from flights.sun import SunFlightSource
 from flights.openap import OpenAPFlightSource
 from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
 from flights.plane_notify import PlaneNotifyFlightSource
+from flights.traffic import TrafficFlightSource
 from flights.providers.mike import MikeFlightSource
 from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.sources import (
@@ -39,6 +40,7 @@ PARALLEL_ALGORITHM_SOURCES = (
     OpenAPFlightSource,
     OpenSkyReverseEngFlightSource,
     PlaneNotifyFlightSource,
+    TrafficFlightSource,
 )
 _RANGE_WORKER_SOURCE: FlightSource | None = None
 _RANGE_WORKER_ADSB_SOURCE: ADSBSource | None = None
