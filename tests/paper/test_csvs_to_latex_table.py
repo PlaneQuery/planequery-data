@@ -145,3 +145,67 @@ def test_verified_sources_excluded_without_explicit_filters(tmp_path, mode):
     assert len(selected) == 12
     assert all(not row[key].endswith("-verified") for row in selected
                for key in ("gold_src", "test_src"))
+
+
+@pytest.mark.parametrize("mode", ["csv", "cache"])
+@pytest.mark.parametrize("matched, takeoff_non_null, landing_non_null", [
+    (8, 6, 7), (8, 8, 0), (0, 0, 0),
+])
+def test_airport_null_tables_use_only_matched_flights(
+        tmp_path, mode, matched, takeoff_non_null, landing_non_null):
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import TABLES, export_tables, load_cache_rows, load_rows, prepare_rows
+    row = dict(evaluation_rows()[0], true_positive=matched,
+               takeoff_airport_id_non_null_count=takeoff_non_null,
+               landing_airport_id_non_null_count=landing_non_null,
+               # Both unmatched test flights have null airports. These old
+               # counts/rates must not leak into either table or CSV export.
+               takeoff_airport_id_null_count=matched - takeoff_non_null + 2,
+               landing_airport_id_null_count=matched - landing_non_null + 2,
+               takeoff_airport_id_null_pct=(matched - takeoff_non_null + 2) / (matched + 2),
+               landing_airport_id_null_pct=(matched - landing_non_null + 2) / (matched + 2))
+    if mode == "csv":
+        source = tmp_path / "evaluations.csv"
+        with source.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(row))
+            writer.writeheader()
+            writer.writerow(row)
+        rows = load_rows([source])
+    else:
+        entry = SimpleNamespace(stats=SimpleNamespace(to_row=lambda: dict(row)))
+        rows, _ = load_cache_rows(SimpleNamespace(find_stats=lambda **kwargs: [entry]), {})
+    selected = {name: tuple(metric for metric in TABLES[name].metrics
+                            if "_null_" in metric.key)
+                for name in ("reference_summary", "airport_accuracy")}
+    assert prepare_rows(rows, selected, True) == []
+    # Reusing prepared rows must not change the derived metrics.
+    assert prepare_rows(rows, selected, True) == []
+    export_tables(rows, tmp_path, "nulls", selected, 2)
+    for name in selected:
+        with (tmp_path / f"nulls_{name}.csv").open() as stream:
+            exported = next(csv.DictReader(stream))
+        for endpoint, non_null in (("takeoff", takeoff_non_null), ("landing", landing_non_null)):
+            rate = exported[f"{endpoint}_airport_id_null_percent"]
+            if matched:
+                assert float(rate) == pytest.approx(100 * (matched - non_null) / matched)
+            else:
+                assert rate == ""
+            if name == "airport_accuracy":
+                assert int(exported[f"{endpoint}_airport_id_null_count"]) == matched - non_null
+    summary = (tmp_path / "nulls_reference_summary.tex").read_text()
+    assert "Airport null rate" in summary
+    assert "null airports divide by T" not in summary
+    if not matched:
+        assert "--- / ---" in summary
+
+
+@pytest.mark.parametrize("non_null", [None, 9, -1, 1.5])
+def test_airport_null_tables_reject_missing_or_invalid_matched_counts(non_null):
+    sys.path.insert(0, str(SCRIPT.parent))
+    from csvs_to_latex_table import TABLES, prepare_rows
+    row = dict(evaluation_rows()[0], takeoff_airport_id_non_null_count=non_null,
+               takeoff_airport_id_null_count=3, takeoff_airport_id_null_pct=.3)
+    selected = {"reference_summary": tuple(metric for metric in TABLES["reference_summary"].metrics
+                                            if metric.key == "takeoff_airport_id_null_pct")}
+    with pytest.raises(ValueError, match="takeoff_airport_id_non_null_count"):
+        prepare_rows([row], selected, True)

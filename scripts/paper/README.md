@@ -469,7 +469,7 @@ Columns are:
 | Segmentation P / R / F1 (%) | Precision, recall, and their harmonic mean (F1) |
 | Zero flights ICAOs (%) | Gold ICAOs with no test flights / all gold ICAOs |
 | Airport acc. TO / LD (%) | Correct takeoff and landing airports / matched flights |
-| Null airports TO / LD (%) | Null takeoff and landing outputs / retained test flights |
+| Airport null rate TO / LD (%) | Null takeoff and landing airports among matched flights / matched flights |
 | Time bias TO / LD (min) | Existing mean signed takeoff and landing errors; negative means early |
 
 When all ADS-B-based methods use one provider, the table identifies that provider
@@ -487,13 +487,24 @@ not merely after rounding; missing values are not merged. CSV rows remain comple
 
 Counts are not repeated next to every percentage. Recover matched flights as
 `G * recall / 100`; false negatives as `G - matched`, and false positives as
-`T - matched`. Airport-correct counts use matched flights as denominator;
-null-output counts use T; missing-aircraft counts use the gold ICAOs in the
+`T - matched`. Airport-correct and airport-null counts both use matched flights
+as denominator; missing-aircraft counts use the gold ICAOs in the
 heading. Rounded percentages yield approximate counts. The CSV retains exact
 G, T, and matched-flight counts and unrounded percentages for every row.
 Detailed segmentation and timing tables also put their shared gold count in
 the group heading. Reference-population breakdowns already show their counts
 once per dataset; airport-exposure counts remain specific to each method/group.
+
+All tables derive matched airport-null counts as `true_positive -
+{takeoff,landing}_airport_id_non_null_count`, and divide by `true_positive`.
+The input non-null counts already refer only to matched flights. Stored evaluation
+null counts/rates include unmatched test flights and are not used for table null
+metrics. Full evaluation CSVs or caches must supply the matched non-null counts;
+missing counts cause an error rather than falling back to the old percentages.
+Table CSV null-count and null-percent columns use this matched-only definition.
+With no matched flights, null counts are zero and rates are undefined (blank CSV /
+dash in LaTeX). Otherwise, correct + wrong non-null + null percentages sum to 100%
+for each endpoint, before rounding.
 
 Timing uses existing signed-bias columns, not mean absolute error. No new
 evaluation metrics or cache changes are required.
