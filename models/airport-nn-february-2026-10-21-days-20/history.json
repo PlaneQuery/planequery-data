@@ -1,0 +1,202 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 0.0612788897868934,
+    "validation_loss": 0.04506858947465621,
+    "validation": {
+      "2026-02-21": {
+        "primary": {
+          "endpoints": 44325,
+          "airports": 915,
+          "aircraft": 7705,
+          "nn_accuracy": 0.9827862380146644,
+          "nearest_accuracy": 0.9612633953750706,
+          "candidate_recall": 0.9973152848279752,
+          "nn_only_correct": 1009,
+          "nearest_only_correct": 55
+        }
+      },
+      "2026-02-22": {
+        "primary": {
+          "endpoints": 42034,
+          "airports": 903,
+          "aircraft": 7858,
+          "nn_accuracy": 0.9813722224865585,
+          "nearest_accuracy": 0.9631964600085645,
+          "candidate_recall": 0.9974544416424799,
+          "nn_only_correct": 813,
+          "nearest_only_correct": 49
+        }
+      },
+      "2026-02-23": {
+        "primary": {
+          "endpoints": 38804,
+          "airports": 923,
+          "aircraft": 6859,
+          "nn_accuracy": 0.9804917018864034,
+          "nearest_accuracy": 0.9608030099989692,
+          "candidate_recall": 0.9976806514792289,
+          "nn_only_correct": 823,
+          "nearest_only_correct": 59
+        }
+      },
+      "2026-02-24": {
+        "primary": {
+          "endpoints": 42810,
+          "airports": 963,
+          "aircraft": 8148,
+          "nn_accuracy": 0.9836953982714319,
+          "nearest_accuracy": 0.9629525811726232,
+          "candidate_recall": 0.9975940200887643,
+          "nn_only_correct": 945,
+          "nearest_only_correct": 57
+        }
+      },
+      "2026-02-25": {
+        "primary": {
+          "endpoints": 45011,
+          "airports": 1009,
+          "aircraft": 8483,
+          "nn_accuracy": 0.9846481971073737,
+          "nearest_accuracy": 0.9649641198818066,
+          "candidate_recall": 0.9976228033147453,
+          "nn_only_correct": 935,
+          "nearest_only_correct": 49
+        }
+      },
+      "2026-02-26": {
+        "primary": {
+          "endpoints": 48525,
+          "airports": 973,
+          "aircraft": 8696,
+          "nn_accuracy": 0.9833487892838743,
+          "nearest_accuracy": 0.9625553838227717,
+          "candidate_recall": 0.9976919113858835,
+          "nn_only_correct": 1074,
+          "nearest_only_correct": 65
+        }
+      },
+      "2026-02-27": {
+        "primary": {
+          "endpoints": 50136,
+          "airports": 1015,
+          "aircraft": 8600,
+          "nn_accuracy": 0.9845220998883039,
+          "nearest_accuracy": 0.962382320089357,
+          "candidate_recall": 0.9975865645444392,
+          "nn_only_correct": 1170,
+          "nearest_only_correct": 60
+        }
+      }
+    },
+    "validation_daily_losses": {
+      "2026-02-21": 0.043960426785881676,
+      "2026-02-22": 0.04924108065016108,
+      "2026-02-23": 0.052782787704285794,
+      "2026-02-24": 0.042456000148596525,
+      "2026-02-25": 0.04071492747309671,
+      "2026-02-26": 0.045197179377922836,
+      "2026-02-27": 0.04112772418264887
+    }
+  },
+  {
+    "epoch": 2,
+    "train_loss": 0.04543706863601005,
+    "validation_loss": 0.04325600821970153,
+    "validation": {
+      "2026-02-21": {
+        "primary": {
+          "endpoints": 44325,
+          "airports": 915,
+          "aircraft": 7705,
+          "nn_accuracy": 0.984478285391991,
+          "nearest_accuracy": 0.9612633953750706,
+          "candidate_recall": 0.9973152848279752,
+          "nn_only_correct": 1101,
+          "nearest_only_correct": 72
+        }
+      },
+      "2026-02-22": {
+        "primary": {
+          "endpoints": 42034,
+          "airports": 903,
+          "aircraft": 7858,
+          "nn_accuracy": 0.9831564923633249,
+          "nearest_accuracy": 0.9631964600085645,
+          "candidate_recall": 0.9974544416424799,
+          "nn_only_correct": 912,
+          "nearest_only_correct": 73
+        }
+      },
+      "2026-02-23": {
+        "primary": {
+          "endpoints": 38804,
+          "airports": 923,
+          "aircraft": 6859,
+          "nn_accuracy": 0.9824244923203793,
+          "nearest_accuracy": 0.9608030099989692,
+          "candidate_recall": 0.9976806514792289,
+          "nn_only_correct": 932,
+          "nearest_only_correct": 93
+        }
+      },
+      "2026-02-24": {
+        "primary": {
+          "endpoints": 42810,
+          "airports": 963,
+          "aircraft": 8148,
+          "nn_accuracy": 0.9849334267694464,
+          "nearest_accuracy": 0.9629525811726232,
+          "candidate_recall": 0.9975940200887643,
+          "nn_only_correct": 1039,
+          "nearest_only_correct": 98
+        }
+      },
+      "2026-02-25": {
+        "primary": {
+          "endpoints": 45011,
+          "airports": 1009,
+          "aircraft": 8483,
+          "nn_accuracy": 0.9863588900490992,
+          "nearest_accuracy": 0.9649641198818066,
+          "candidate_recall": 0.9976228033147453,
+          "nn_only_correct": 1044,
+          "nearest_only_correct": 81
+        }
+      },
+      "2026-02-26": {
+        "primary": {
+          "endpoints": 48525,
+          "airports": 973,
+          "aircraft": 8696,
+          "nn_accuracy": 0.9844410097887687,
+          "nearest_accuracy": 0.9625553838227717,
+          "candidate_recall": 0.9976919113858835,
+          "nn_only_correct": 1156,
+          "nearest_only_correct": 94
+        }
+      },
+      "2026-02-27": {
+        "primary": {
+          "endpoints": 50136,
+          "airports": 1015,
+          "aircraft": 8600,
+          "nn_accuracy": 0.9854196585288016,
+          "nearest_accuracy": 0.962382320089357,
+          "candidate_recall": 0.9975865645444392,
+          "nn_only_correct": 1256,
+          "nearest_only_correct": 101
+        }
+      }
+    },
+    "validation_daily_losses": {
+      "2026-02-21": 0.04120203022096309,
+      "2026-02-22": 0.045975453388493216,
+      "2026-02-23": 0.04914913472038139,
+      "2026-02-24": 0.04134096075401745,
+      "2026-02-25": 0.03963524823711842,
+      "2026-02-26": 0.04474431378517438,
+      "2026-02-27": 0.04074491643176279
+    }
+  }
+]
