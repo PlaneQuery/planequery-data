@@ -20,7 +20,7 @@ FLIGHT_BATCH_SIZE = 2048
 @dataclass(frozen=True)
 class OpenSkyNNFlightSource(NonADSBFlightSource):
     name: str = "opensky-nn"
-    version: int = 4
+    version: int = 5
     model_path: Path = DEFAULT_MODEL_PATH
 
     def enrichment_adsb_source(self) -> ADSBSource:
