@@ -1,0 +1,141 @@
+# ADS-B paper figures
+
+`adsb_track.py` overlays barometric altitude (blue, left axis) and ground speed
+(charcoal, right axis) in one graph. A narrow strip inside its bottom edge shows
+`on_ground`: orange for true and light blue for false; missing states stay blank. Defaults
+are a 7.2 × 4.8 inch figure with serif text, embedded
+TrueType fonts in vector PDF, editable SVG text, and a 300 dpi PNG preview.
+No LaTeX installation is required. Outputs default to `paper/figures/`.
+
+Reproduce the inspected example from the repository root:
+
+```sh
+.venv/bin/python src/visualization/adsb_track.py \
+  --icao a7ede5 --date 2026-03-01 --source adsbx \
+  --observations tmp/clear_adsbx_20260301/a7ede5_observations.parquet \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
+  --event-source 'algorithm flight estimates' \
+  --start 01:30 --end 06:30
+```
+
+For another aircraft, omit `--observations` to use the repository's canonical
+provider reader. Set `OUTPUT_DIR` to the data root, as with other data scripts:
+
+```sh
+OUTPUT_DIR=/Volumes/T2-SSD/planequery .venv/bin/python src/visualization/adsb_track.py \
+  --icao a7ede5 --date 2026-03-01 --source adsbx \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet
+```
+
+The reader can create/download a missing canonical partition. To plot only an
+existing file without that behavior, pass `--observations` explicitly.
+Flight input is a Parquet table with `icao`, `takeoff_time`, `landing_time`,
+`takeoff_airport_ident`, and `landing_airport_ident`. Supply the flight source you
+want to assess and identify it using `--event-source`. Missing airport codes are
+labeled `unknown airport`; missing event times are omitted. Without `--flights`,
+only observations are plotted: the script does not guess flight boundaries or
+airports from ground-state flips.
+
+All timestamps are UTC (naive input timestamps are interpreted as UTC). An
+annotation marks the supplied flight timestamp, not a guarantee of exact liftoff
+or touchdown. The state strip independently shows the reported flags, including
+brief flips. Null flags stay blank. It does not debounce or smooth them.
+The provider reader determines the meaning of its ground flags: for ADSBX the
+canonical conversion maps `alt_baro == "ground"` to true. Thus false is a
+reported/conversion state, not independently verified evidence of flight.
+
+Missing altitude is left missing, including on-ground samples; it is never set
+to zero. Negative barometric altitudes are retained. Lines break across missing
+values and observation gaps over `--gap-seconds` (default 30). Gaps stay blank,
+without shading; the ground-state strip does not bridge them. Points show actual
+samples, while connecting lines only aid reading. No state is inferred outside
+the observed interval. Use `--start 05:00 --end 07:00` to inspect a dense or
+ambiguous section, particularly when many event labels crowd a full-day plot.
+
+Use `--width` and `--height` to set the intended physical publication size,
+`--formats pdf` for PDF only, or `--output paper/figures/custom_name` to set the
+output stem. For a two-column paper:
+
+```tex
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/a7ede5_20260301_adsbx.pdf}
+  \caption{ADSBX observations for N61RJ (ICAO A7EDE5) on 1 March 2026 UTC.
+  Altitude uses the left axis and ground speed the right axis. Dotted lines mark
+  algorithm-estimated flight boundaries; the strip inside the bottom edge
+  shows reported ground states. Observation gaps longer than 30 seconds
+  are left blank.}
+  \label{fig:adsbx-a7ede5}
+\end{figure*}
+```
+
+For notebooks, import `visualization.adsb_track.plot_track`; it accepts Polars
+observation and flight frames and returns a Matplotlib figure.
+
+## Altitude anomaly example
+
+Add `--show-geometric` to compare both altitude channels on the same left axis,
+keeping ground speed on the right. Neither channel is treated as ground truth.
+The AA216C example shows the entire departure/arrival context around its anomalous
+barometric reports (18:26:08–18:29:08 UTC). Flight markers are algorithm estimates;
+in particular, its estimated 18:20 departure precedes the observed ground-to-air
+transition around 18:26.
+
+```sh
+.venv/bin/python src/visualization/adsb_track.py \
+  --icao aa216c --date 2026-03-01 --source adsbx \
+  --observations tmp/altitude_anomaly_20260301/aa216c_observations.parquet \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
+  --event-source 'algorithm flight estimates' \
+  --show-geometric --start 18:20 --end 18:38
+```
+
+## Position map
+
+`--show-map` adds a latitude/longitude panel beside the time series and adds four
+inches to the figure width. Positions are colored by observation time. Both
+panels break their lines across `--gap-seconds`; the map does not invent a route
+through missing coverage. The map uses a local latitude aspect correction and
+is intended for regional tracks, not polar or antimeridian-crossing routes.
+Airport stars come from the local OurAirports CSV (`--airports` can override it).
+They identify the airports referenced by the supplied flight estimates, not
+verified touchdown/liftoff positions.
+
+Use `--basemap` (implies `--show-map`) to add OpenStreetMap roads, waterways and
+place names in Web Mercator, with airport codes and locations overlaid. Green stars
+mark estimated endpoints; hollow diamonds mark up to eight other small, medium,
+and large airports in the viewport, selected by proximity to observed positions.
+Heliports and closed airports are omitted. Only the
+current viewport's tiles are fetched; they are cached in `data/cache/map_tiles/osm`
+and reused on subsequent renders. Network access is required on the first render.
+`--map-zoom` defaults to 11; reduce it for larger regions. This uses a raster
+basemap beneath vector observations and labels, including visible attribution
+to [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
+The basemap represents current geography, not a historical snapshot of flight day.
+
+For a cleaner layout, use `--map-events-only` for code-only airport labels on
+the map and dashed takeoff/landing markers without timeline text callouts.
+Nearby airports are ranked by distance to the first or last ADS-B position of
+each observed segment (split at time gaps or missing coordinates), rather than
+distance to any point along the track. `--nearby-airport-limit 8` shows up to
+eight context airports (the default). This changes presentation only, not the supplied airport
+assignments or observation data.
+
+Use `--map-below` for a full-width map on a second row. For example,
+`--map-below --nearby-airport-limit 12 --include-airports KCXO` reserves a context
+label for KCXO, then fills the remaining slots by endpoint proximity. Requested
+airports must be inside the viewport; this does not change flight assignments.
+
+`--compress-gaps` reduces message-free intervals longer than 30 minutes to twelve
+minutes of axis width. UTC timestamps remain unchanged, and `//` marks each
+compressed interval. Shorter gaps remain at their original scale; tracks are
+never connected across missing coverage. Map colors retain actual UTC time.
+
+```sh
+.venv/bin/python src/visualization/adsb_track.py \
+  --icao a5144d --date 2026-03-01 --source adsbx \
+  --observations tmp/difficult_adsbx_20260301/a5144d_observations.parquet \
+  --flights data/flights/algorithm/v1/adsbx/year=2026/month=03/day=01/flights.parquet \
+  --event-source 'algorithm flight estimates' --start 19:30 --end 21:40 \
+  --basemap --output paper/figures/a5144d_20260301_adsbx_map
+```

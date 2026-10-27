@@ -87,7 +87,7 @@ def test_publish_flights_parquet_uses_canonical_path(monkeypatch, tmp_path):
 
     assert path == (
         tmp_path
-        / "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=6"
+        / "data/flights/source=algorithm-nearest/adsb_source=adsblol/version=7"
         / "year=2026/month=03/day=01/data.parquet"
     )
     assert pl.read_parquet(path).schema == FLIGHT_POLARS_SCHEMA

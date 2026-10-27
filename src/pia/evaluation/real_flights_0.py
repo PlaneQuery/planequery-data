@@ -1,7 +1,9 @@
 # See if it can identify the Bezos and Elon
 # 1. did my flights algorihtm get them correct. Will they be in perfect icaos.
 from datetime import date, datetime
-from flights.algorithm import get_flights_range
+from data_engineering.adsb.read_adsb import ADSBSource
+from flights.algorithm import AlgorithmNearestFlightSource
+from flights.flight_source import get_flights_range
 from flights.flight_type import Flight, flights_df_to_flights
 
 
@@ -49,7 +51,12 @@ _mapping_dict_0 = None
 def _load_flights_0():
     global _flights_0, _mapping_dict_0
     if _flights_0 is None or _mapping_dict_0 is None:
-        df_flights_0 = get_flights_range(date(2025, 5, 14), date(2025, 5, 21))
+        df_flights_0 = get_flights_range(
+            AlgorithmNearestFlightSource(),
+            date(2025, 5, 14),
+            date(2025, 5, 21),
+            ADSBSource.ADSBLOL,
+        )
         # df_flights_0 = df_flights_0.filter(pl.col("pia"))
         _flights_0 = flights_df_to_flights(df_flights_0)
         _mapping_dict_0 = {}

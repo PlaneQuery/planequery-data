@@ -1,13 +1,17 @@
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 os.environ.setdefault("OUTPUT_DIR", str(Path(__file__).resolve().parents[3]))
 
 from flights.providers import sfdps
+from flights.providers.bts import BTSFlightSource
+from flights.verified.source import VerifiedFlightSource
+from data_engineering.swim import read_sfdps as sfdps_reader
 
 
 @dataclass(frozen=True)
@@ -129,7 +133,7 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
     )
     monkeypatch.setattr(sfdps, "sfdps_to_flights", lambda _day: source)
     monkeypatch.setattr(sfdps, "filter_sfdps_flights", lambda flights, _day: flights)
-    monkeypatch.setattr(sfdps, "sfdps_flights_derive_icao", lambda flights, _day: flights)
+    monkeypatch.setattr(sfdps, "add_adsb_icao_info", lambda flights, _day: flights)
     airport_catalog = FakeAirportCatalog()
 
     result = sfdps.create_sfdps_flights_day(target_date, airport_catalog)
@@ -144,18 +148,21 @@ def test_create_sfdps_flights_day_resolves_airport_codes(monkeypatch):
             "landing_airport_id": 202,
         }
     ]
-    assert sfdps.SFDPSFlightSource().version == 5
+    assert sfdps.SFDPSFlightSource().version == 14
 
 
-def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
-    monkeypatch,
-):
+def test_sfdps_to_flights_uses_aircraft_identification_as_callsign(monkeypatch):
     callsigns = ["NKS108", "N12345", "N123AB", "N123A4", "C-GABC"]
+    registrations = ["N345NK", None, "N123AB", None, "C-GABC"]
     source = pl.DataFrame(
         {
             "gufi": [f"gufi-{index}" for index in range(len(callsigns))],
+            "sup_msg_seq_no": list(range(len(callsigns))),
             "timestamp": [datetime(2026, 3, 1, 2, 0)] * len(callsigns),
-            "callsign": callsigns,
+            "aircraft_identification": callsigns,
+            "aircraft_address": [None] * len(callsigns),
+            "aircraft_registration": registrations,
+            "aircraft_type": [None] * len(callsigns),
             "flightStatus": ["COMPLETED"] * len(callsigns),
             "takeoff_time": [datetime(2026, 3, 1, 1, 0)] * len(callsigns),
             "takeoff_airport_icao": ["KJFK"] * len(callsigns),
@@ -165,11 +172,14 @@ def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
             "estimated_takeoff_time": [None] * len(callsigns),
         },
         schema_overrides={
+            "aircraft_address": pl.String,
+            "aircraft_registration": pl.String,
+            "aircraft_type": pl.String,
             "estimated_landing_time": pl.Datetime("us"),
             "estimated_takeoff_time": pl.Datetime("us"),
         },
     )
-    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", lambda _current_day: source)
+    monkeypatch.setattr(sfdps, "read_sfdps", lambda _current_day: source)
 
     result = (
         sfdps.sfdps_to_flights(datetime(2026, 3, 1))
@@ -179,68 +189,395 @@ def test_sfdps_to_flights_only_treats_valid_registrations_as_registrations(
 
     assert result.to_dicts() == [
         {"callsign": "C-GABC", "registration": "C-GABC"},
-        {"callsign": "N12345", "registration": "N12345"},
+        {"callsign": "N12345", "registration": None},
         {"callsign": "N123A4", "registration": None},
         {"callsign": "N123AB", "registration": "N123AB"},
-        {"callsign": "NKS108", "registration": None},
+        {"callsign": "NKS108", "registration": "N345NK"},
     ]
 
 
-def test_airline_callsign_starting_with_n_uses_callsign_icao_matching(monkeypatch):
+@pytest.mark.parametrize("landing", [datetime(2026, 3, 1, 2), datetime(2026, 3, 2, 2)])
+@pytest.mark.parametrize("callsign", ["NKS108", "N12345"])
+def test_uses_sfdps_addresses_without_callsign_or_registration_matching(
+    monkeypatch, landing, callsign,
+):
     source = pl.DataFrame(
         {
-            "gufi": ["gufi-1"],
-            "timestamp": [datetime(2026, 3, 1, 2, 0)],
-            "callsign": ["NKS108"],
-            "flightStatus": ["COMPLETED"],
-            "takeoff_time": [datetime(2026, 3, 1, 1, 0)],
-            "takeoff_airport_icao": ["KJFK"],
-            "landing_time": [datetime(2026, 3, 1, 2, 0)],
-            "landing_airport_icao": ["KBOS"],
-            "estimated_landing_time": [None],
-            "estimated_takeoff_time": [None],
+            "gufi": [f"gufi-{index}" for index in range(4)],
+            "sup_msg_seq_no": list(range(4)),
+            "timestamp": [landing] * 4,
+            "aircraft_identification": [callsign] * 4,
+            "aircraft_address": ["A91349", "012ABC", None, ""],
+            "aircraft_registration": [None] * 4,
+            "aircraft_type": [None] * 4,
+            "flightStatus": ["COMPLETED"] * 4,
+            "takeoff_time": [datetime(2026, 3, 1, 1, 0)] * 4,
+            "takeoff_airport_icao": ["ALM"] * 4,
+            "landing_time": [landing] * 4,
+            "landing_airport_icao": ["IA8"] * 4,
+            "estimated_landing_time": [None] * 4,
+            "estimated_takeoff_time": [None] * 4,
         },
         schema_overrides={
+            "aircraft_registration": pl.String,
+            "aircraft_type": pl.String,
             "estimated_landing_time": pl.Datetime("us"),
             "estimated_takeoff_time": pl.Datetime("us"),
         },
     )
-    monkeypatch.setattr(sfdps, "_read_sfdps_for_day", lambda _current_day: source)
-    monkeypatch.setattr(
-        sfdps,
-        "_adsb_registration_map",
-        lambda _current_day, _registrations: pl.DataFrame(
-            schema={
-                "icao": pl.String,
-                "registration": pl.String,
-                "pia": pl.Boolean,
-                "ladd": pl.Boolean,
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        sfdps,
-        "_adsb_callsign_segments",
-        lambda _current_day, _callsigns: pl.DataFrame(
-            {
-                "icao": ["a91349"],
-                "callsign": ["NKS108"],
-                "start_time": [datetime(2026, 3, 1, 0, 55)],
-                "end_time": [datetime(2026, 3, 1, 2, 5)],
-                "pia": [False],
-                "ladd": [False],
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        sfdps,
-        "add_adsb_icao_info",
-        lambda flights, _current_day: flights,
-    )
+    monkeypatch.setattr(sfdps, "read_sfdps", lambda _current_day: source)
+    scans = []
 
-    flights = sfdps.sfdps_to_flights(datetime(2026, 3, 1))
-    result = sfdps.sfdps_flights_derive_icao(flights, datetime(2026, 3, 1))
+    def scan_metadata(current_day, *, columns, icaos):
+        scans.append(current_day)
+        assert sorted(icaos) == ["012abc", "a91349"]
+        assert "callsign" not in columns
+        metadata = sfdps.with_flight_schema_columns(pl.DataFrame({
+            "icao": ["a91349"],
+            "registration": ["N684NK"],
+            "aircraft_type": ["A321"],
+        })).with_columns(pl.lit(datetime(2026, 3, 1, 2)).alias("time"))
+        return metadata.select(columns).lazy()
 
-    assert result.select("icao", "callsign").to_dicts() == [
-        {"icao": "a91349", "callsign": "NKS108"}
+    monkeypatch.setattr(sfdps, "scan_adsb", scan_metadata)
+    result = sfdps.create_sfdps_flights_day(date(2026, 3, 1), FakeAirportCatalog())
+
+    assert scans == [date(2026, 3, 1)]
+    assert result.select("icao", "callsign", "registration", "aircraft_type").to_dicts() == [
+        {"icao": "012abc", "callsign": callsign, "registration": "", "aircraft_type": ""},
+        {"icao": "a91349", "callsign": callsign, "registration": "N684NK", "aircraft_type": "A321"},
     ]
+
+
+def test_sfdps_registration_and_aircraft_type_take_precedence_over_adsb(monkeypatch):
+    day = datetime(2026, 3, 1)
+    flights = sfdps.with_flight_schema_columns(
+        pl.DataFrame(
+            {
+                "icao": ["abc123", "def456", "789abc"],
+                "registration": ["N-SFDPS", "", None],
+                "aircraft_type": ["SFDPS-TYPE", "   ", None],
+            },
+            schema_overrides={
+                "registration": pl.String,
+                "aircraft_type": pl.String,
+            },
+        )
+    )
+    adsb_info = sfdps.with_flight_schema_columns(
+        pl.DataFrame(
+            {
+                "icao": ["abc123", "def456"],
+                "registration": ["N-ADSB", "N-FALLBACK"],
+                "aircraft_type": ["ADSB-TYPE", "FALLBACK-TYPE"],
+                "owner": ["Owner 1", "Owner 2"],
+            }
+        )
+    ).with_columns(pl.lit(day).alias("time"))
+
+    monkeypatch.setattr(
+        sfdps,
+        "scan_adsb",
+        lambda *_args, columns, **_kwargs: adsb_info.select(columns).lazy(),
+    )
+
+    result = sfdps.add_adsb_icao_info(flights, day)
+
+    assert result.select(
+        "icao", "registration", "aircraft_type", "owner"
+    ).to_dicts() == [
+        {
+            "icao": "abc123",
+            "registration": "N-SFDPS",
+            "aircraft_type": "SFDPS-TYPE",
+            "owner": "Owner 1",
+        },
+        {
+            "icao": "def456",
+            "registration": "N-FALLBACK",
+            "aircraft_type": "FALLBACK-TYPE",
+            "owner": "Owner 2",
+        },
+        {
+            "icao": "789abc",
+            "registration": "",
+            "aircraft_type": "",
+            "owner": "",
+        },
+    ]
+
+
+@pytest.mark.parametrize("day", [datetime(2026, 3, 1), datetime(2026, 12, 31)])
+def test_reconstructs_overnight_flights_from_both_days(monkeypatch, day):
+    next_day = day + timedelta(days=1)
+
+    def message(gufi, timestamp, takeoff, landing):
+        return {
+            "gufi": gufi,
+            "sup_msg_seq_no": 1,
+            "timestamp": timestamp,
+            "aircraft_identification": "UAL123",
+            "aircraft_address": "A123BC" if takeoff is not None else None,
+            "aircraft_registration": "N12345",
+            "aircraft_type": "B738",
+            "flightStatus": "ACTIVE" if landing is None else "COMPLETED",
+            "takeoff_time": takeoff,
+            "takeoff_airport_icao": "KJFK" if takeoff is not None else None,
+            "landing_time": landing,
+            "landing_airport_icao": "KLAX",
+            "estimated_takeoff_time": None,
+            "estimated_landing_time": None,
+        }
+
+    same_day = message("same-day", day + timedelta(hours=12),
+                       day + timedelta(hours=10), day + timedelta(hours=12))
+    messages = pl.DataFrame([
+        same_day,
+        message("midnight-departure", day + timedelta(hours=1),
+                day, day + timedelta(hours=1)),
+        message("overnight", day + timedelta(hours=22),
+                day + timedelta(hours=22), None),
+        # The arrival update omits departure state: it must be carried over
+        # from the previous day's message with the same GUFI.
+        message("overnight", next_day + timedelta(hours=1),
+                None, next_day + timedelta(hours=1)),
+        {**same_day, "timestamp": next_day + timedelta(minutes=5)},
+        message("next-day-departure", next_day + timedelta(hours=3),
+                next_day + timedelta(hours=2), next_day + timedelta(hours=3)),
+        message("previous-day-departure", day + timedelta(hours=1),
+                day - timedelta(hours=2), day + timedelta(hours=1)),
+    ], schema_overrides={
+        "estimated_takeoff_time": pl.Datetime("us"),
+        "estimated_landing_time": pl.Datetime("us"),
+    })
+    read_days = []
+
+    def read_day(current_day):
+        read_days.append(current_day)
+        # Deliberately unsorted: reconstruction must order the merged history.
+        return messages.filter(pl.col("timestamp").dt.date() == current_day.date()).reverse()
+
+    monkeypatch.setattr(sfdps, "read_sfdps", read_day)
+    flights = sfdps.sfdps_to_flights(day)
+    result = sfdps.filter_sfdps_flights(flights, day)
+
+    assert read_days == [day, next_day]
+    assert result.height == 3
+    assert result["icao"].to_list() == ["a123bc"] * 3
+    assert result.sort("takeoff_time").select(
+        "takeoff_time", "landing_time", "takeoff_airport_ident"
+    ).to_dicts() == [
+        {"takeoff_time": day,
+         "landing_time": day + timedelta(hours=1), "takeoff_airport_ident": "KJFK"},
+        {"takeoff_time": day + timedelta(hours=10),
+         "landing_time": day + timedelta(hours=12), "takeoff_airport_ident": "KJFK"},
+        {"takeoff_time": day + timedelta(hours=22),
+         "landing_time": next_day + timedelta(hours=1), "takeoff_airport_ident": "KJFK"},
+    ]
+
+
+def test_sfdps_requires_following_day_logs(monkeypatch):
+    monkeypatch.setattr(sfdps, "_missing_sfdps_days", lambda: {date(2026, 3, 2)})
+    with pytest.raises(AssertionError, match="following day's logs"):
+        sfdps.create_sfdps_flights_day(date(2026, 3, 1), FakeAirportCatalog())
+
+
+def test_verified_cache_versions():
+    assert VerifiedFlightSource(sfdps.SFDPSFlightSource()).version == 8
+    assert VerifiedFlightSource(BTSFlightSource()).version == 2
+
+
+def test_reader_preserves_aircraft_address_changes(monkeypatch, tmp_path):
+    parquet_path = tmp_path / "sfdps.parquet"
+    pl.DataFrame({
+        "gufi": ["gufi-1"] * 3,
+        "sup_msg_seq_no": [1, 2, 3],
+        "timestamp": [datetime(2026, 3, 1, hour) for hour in (1, 2, 3)],
+        "aircraft_identification": ["UAL123"] * 3,
+        "aircraft_address": ["ABC123", "DEF456", None],
+        "aircraft_registration": ["N12345"] * 3,
+        "aircraft_type": ["B738"] * 3,
+        "flight_status": ["COMPLETED"] * 3,
+        "departure_point": ["KJFK"] * 3,
+        "departure_actual_time": [datetime(2026, 3, 1, 0)] * 3,
+        "departure_estimated_time": [datetime(2026, 3, 1, 0)] * 3,
+        "arrival_point": ["KLAX"] * 3,
+        "arrival_actual_time": [datetime(2026, 3, 1, 1)] * 3,
+        "arrival_estimated_time": [datetime(2026, 3, 1, 1)] * 3,
+    }).write_parquet(parquet_path)
+    monkeypatch.setattr(sfdps_reader, "_parquet_path", lambda _day: parquet_path)
+
+    result = sfdps_reader.read_sfdps(datetime(2026, 3, 1))
+
+    assert "callsign" not in result.columns
+    assert result["aircraft_address"].to_list() == ["ABC123", "DEF456", None]
+    assert result.select(
+        "aircraft_identification",
+        "aircraft_registration",
+        "aircraft_type",
+    ).to_dicts() == [
+        {
+            "aircraft_identification": "UAL123",
+            "aircraft_registration": "N12345",
+            "aircraft_type": "B738",
+        }
+    ] * 3
+
+
+@pytest.mark.parametrize("sequences, expected_index", [
+    (["30212946", "30212947"], 0),  # EJA137's conflicting arrival updates.
+    (["10", "9"], 1),  # Numeric sequence, not lexical or earliest-arrival order.
+    ([None, "9"], 1),
+    (["9", "9"], 0),  # Duplicate sequence: fall back to contents.
+    ([None, None], 0),
+])
+def test_timestamp_ties_are_deterministic_through_reconstruction(
+    monkeypatch, tmp_path, sequences, expected_index,
+):
+    day = datetime(2026, 3, 1)
+    landings = [datetime(2026, 3, 1, 22, 22), datetime(2026, 3, 2, 22, 4)]
+    rows = [{
+        "gufi": "1f5310df-fe92-49a5-a841-2af1f50897d6",
+        "timestamp": datetime(2026, 3, 1, 22, 22, 56, 564000),
+        "aircraft_identification": "EJA137",
+        "aircraft_address": "A096A1",
+        "aircraft_registration": "N137QS",
+        "aircraft_type": "C680",
+        "flight_status": "COMPLETED",
+        "departure_point": "KBCT",
+        "departure_actual_time": day + timedelta(hours=19, minutes=47),
+        "departure_estimated_time": None,
+        "arrival_point": "KFRG",
+        "arrival_actual_time": landing,
+        "arrival_estimated_time": None,
+    } for landing in landings]
+    for row, sequence in zip(rows, sequences):
+        row["sup_msg_seq_no"] = sequence
+    raw = pl.DataFrame(rows, schema_overrides={
+        "departure_estimated_time": pl.Datetime("us"),
+        "arrival_estimated_time": pl.Datetime("us"),
+    })
+    parquet_path = tmp_path / "sfdps.parquet"
+    monkeypatch.setattr(sfdps_reader, "_parquet_path", lambda _day: parquet_path)
+
+    for input_rows in (raw, raw.reverse()):
+        input_rows.write_parquet(parquet_path)
+        messages = sfdps_reader.read_sfdps(day)
+        assert messages["sup_msg_seq_no"].dtype == pl.UInt64
+        assert messages["landing_time"][0] == landings[expected_index]
+
+        # Put the tied records on opposite sides of the daily merge in both
+        # orders: reconstruction must preserve the same tie-break policy.
+        for merged_rows in (messages, messages.reverse()):
+            monkeypatch.setattr(
+                sfdps, "read_sfdps",
+                lambda current_day: (
+                    merged_rows.head(1) if current_day == day else merged_rows.tail(1)
+                ),
+            )
+            result = sfdps.sfdps_to_flights(day)
+            assert result.height == 1
+            # Even if the next-day arrival sorts first, it is implausible at
+            # this message timestamp and must not complete the flight.
+            assert result["landing_time"][0] == landings[0]
+            assert result["icao"][0] == "a096a1"
+
+
+def _landing_update(timestamp, landing_time, **overrides):
+    return {
+        "gufi": "gufi-1",
+        "timestamp": timestamp,
+        "aircraft_identification": "EJA137",
+        "aircraft_address": "A096A1",
+        "aircraft_registration": "N137QS",
+        "aircraft_type": "C680",
+        "flightStatus": "COMPLETED",
+        "takeoff_time": datetime(2026, 3, 1, 19, 47),
+        "takeoff_airport_icao": "KBCT",
+        "landing_time": landing_time,
+        "landing_airport_icao": "KFRG",
+        "estimated_takeoff_time": None,
+        "estimated_landing_time": None,
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("offset, accepted", [
+    (timedelta(minutes=-1), True),
+    (timedelta(0), True),
+    (timedelta(minutes=2), True),
+    (timedelta(minutes=2, microseconds=1), False),
+    (timedelta(days=1), False),
+])
+def test_actual_landing_clock_skew_boundary(offset, accepted):
+    timestamp = datetime(2026, 3, 1, 22, 22)
+    landing = timestamp + offset
+    result = sfdps.gufi_state_machine(pl.DataFrame([
+        _landing_update(timestamp, landing),
+    ]))
+
+    assert result.height == int(accepted)
+    if accepted:
+        assert result["landing_time"][0] == landing
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+def test_future_actual_arrival_is_not_carried_into_later_updates(corrected):
+    timestamp = datetime(2026, 3, 1, 22, 22, 56, 564000)
+    implausible = datetime(2026, 3, 2, 22, 4)
+    valid = datetime(2026, 3, 1, 22, 22)
+    estimate = datetime(2026, 3, 3)
+    rows = [
+        _landing_update(timestamp, implausible, estimated_landing_time=estimate),
+        _landing_update(
+            # The later message cannot make the rejected earlier value valid.
+            implausible + timedelta(hours=1), valid if corrected else None,
+            takeoff_time=None,
+        ),
+    ]
+
+    result = sfdps.gufi_state_machine(pl.DataFrame(rows))
+
+    assert result.height == int(corrected)
+    if corrected:
+        assert result["landing_time"][0] == valid
+        assert result["takeoff_time"][0] == rows[0]["takeoff_time"]
+        assert result["estimated_landing_time"][0] == estimate
+
+
+@pytest.mark.parametrize("addresses, expected", [
+    (["ABC123", None], "abc123"),
+    ([None, "DEF456"], "def456"),
+    (["ABC123", "DEF456"], "def456"),
+    ([None, None], None),
+])
+def test_reconstruction_carries_aircraft_address_state(monkeypatch, addresses, expected):
+    day = datetime(2026, 3, 1)
+    source = pl.DataFrame({
+        "gufi": ["gufi-1"] * 2,
+        "sup_msg_seq_no": [1, 2],
+        "timestamp": [day + timedelta(hours=1), day + timedelta(hours=2)],
+        "aircraft_identification": ["UAL123"] * 2,
+        "aircraft_address": addresses,
+        "aircraft_registration": ["N12345"] * 2,
+        "aircraft_type": ["B738"] * 2,
+        "flightStatus": ["ACTIVE", "COMPLETED"],
+        "takeoff_time": [day, None],
+        "takeoff_airport_icao": ["KJFK", None],
+        "landing_time": [None, day + timedelta(hours=2)],
+        "landing_airport_icao": ["KLAX"] * 2,
+        "estimated_landing_time": [None] * 2,
+        "estimated_takeoff_time": [None] * 2,
+    }, schema_overrides={
+        "aircraft_address": pl.String,
+        "estimated_landing_time": pl.Datetime("us"),
+        "estimated_takeoff_time": pl.Datetime("us"),
+    })
+    monkeypatch.setattr(
+        sfdps, "read_sfdps",
+        lambda current_day: source if current_day == day else source.clear(),
+    )
+
+    result = sfdps.sfdps_to_flights(day)
+
+    assert result["icao"].to_list() == [expected]

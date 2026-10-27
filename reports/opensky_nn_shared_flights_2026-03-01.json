@@ -1,0 +1,195 @@
+{
+  "date": "2026-03-01",
+  "reference": "bts",
+  "reference_version": 13,
+  "definition": "Intersection of gold flights with match_status=both in each time-only evaluation; same ICAO and both endpoint errors <=60 min.",
+  "null_policy": "Null airports are incorrect; two null predictions count as agreement.",
+  "algorithm_segmentation_matches": 17449,
+  "opensky_segmentation_matches": 17311,
+  "algorithm_only_matches": 398,
+  "opensky_only_matches": 260,
+  "standard_cohort": {
+    "flights": 17051,
+    "metrics": {
+      "takeoff": {
+        "algorithm_correct": 16979,
+        "opensky_correct": 16725,
+        "different_predictions": 323,
+        "only_algorithm_correct": 276,
+        "only_opensky_correct": 22,
+        "both_correct": 16703,
+        "neither_correct": 50,
+        "algorithm_correct_pct": 99.57773737610697,
+        "opensky_correct_pct": 98.08808867515101,
+        "different_predictions_pct": 1.8943170488534398,
+        "only_algorithm_correct_pct": 1.618673391589936,
+        "only_opensky_correct_pct": 0.12902469063398042,
+        "both_correct_pct": 97.95906398451703,
+        "neither_correct_pct": 0.2932379332590464,
+        "opensky_minus_algorithm_accuracy_pp": -1.4896487009559556
+      },
+      "landing": {
+        "algorithm_correct": 16959,
+        "opensky_correct": 16666,
+        "different_predictions": 364,
+        "only_algorithm_correct": 321,
+        "only_opensky_correct": 28,
+        "both_correct": 16638,
+        "neither_correct": 64,
+        "algorithm_correct_pct": 99.46044220280335,
+        "opensky_correct_pct": 97.74206791390534,
+        "different_predictions_pct": 2.1347721541258577,
+        "only_algorithm_correct_pct": 1.8825875315230778,
+        "only_opensky_correct_pct": 0.16421324262506598,
+        "both_correct_pct": 97.57785467128028,
+        "neither_correct_pct": 0.3753445545715794,
+        "opensky_minus_algorithm_accuracy_pp": -1.7183742888980118
+      },
+      "both": {
+        "algorithm_correct": 16887,
+        "opensky_correct": 16345,
+        "different_predictions": 680,
+        "only_algorithm_correct": 590,
+        "only_opensky_correct": 48,
+        "both_correct": 16297,
+        "neither_correct": 116,
+        "algorithm_correct_pct": 99.03817957891033,
+        "opensky_correct_pct": 95.85948038238226,
+        "different_predictions_pct": 3.988035892323031,
+        "only_algorithm_correct_pct": 3.4602076124567476,
+        "only_opensky_correct_pct": 0.28150841592868453,
+        "both_correct_pct": 95.57797196645357,
+        "neither_correct_pct": 0.6803120051609877,
+        "opensky_minus_algorithm_accuracy_pp": -3.1786991965280627
+      }
+    }
+  },
+  "stricter_time_error_sensitivity": {
+    "30": {
+      "flights": 16897,
+      "metrics": {
+        "takeoff": {
+          "algorithm_correct": 16842,
+          "opensky_correct": 16655,
+          "different_predictions": 238,
+          "only_algorithm_correct": 206,
+          "only_opensky_correct": 19,
+          "both_correct": 16636,
+          "neither_correct": 36,
+          "algorithm_correct_pct": 99.67449843167427,
+          "opensky_correct_pct": 98.56779309936675,
+          "different_predictions_pct": 1.4085340593004676,
+          "only_algorithm_correct_pct": 1.2191513286382198,
+          "only_opensky_correct_pct": 0.11244599633070959,
+          "both_correct_pct": 98.45534710303605,
+          "neither_correct_pct": 0.2130555719950287,
+          "opensky_minus_algorithm_accuracy_pp": -1.1067053323075102
+        },
+        "landing": {
+          "algorithm_correct": 16823,
+          "opensky_correct": 16574,
+          "different_predictions": 305,
+          "only_algorithm_correct": 273,
+          "only_opensky_correct": 24,
+          "both_correct": 16550,
+          "neither_correct": 50,
+          "algorithm_correct_pct": 99.56205243534355,
+          "opensky_correct_pct": 98.08841806237794,
+          "different_predictions_pct": 1.8050541516245486,
+          "only_algorithm_correct_pct": 1.615671420962301,
+          "only_opensky_correct_pct": 0.1420370479966858,
+          "both_correct_pct": 97.94638101438125,
+          "neither_correct_pct": 0.2959105166597621,
+          "opensky_minus_algorithm_accuracy_pp": -1.4736343729656152
+        },
+        "both": {
+          "algorithm_correct": 16768,
+          "opensky_correct": 16337,
+          "different_predictions": 537,
+          "only_algorithm_correct": 473,
+          "only_opensky_correct": 42,
+          "both_correct": 16295,
+          "neither_correct": 87,
+          "algorithm_correct_pct": 99.23655086701781,
+          "opensky_correct_pct": 96.68580221341067,
+          "different_predictions_pct": 3.1780789489258447,
+          "only_algorithm_correct_pct": 2.7993134876013492,
+          "only_opensky_correct_pct": 0.24856483399420015,
+          "both_correct_pct": 96.43723737941646,
+          "neither_correct_pct": 0.514884298987986,
+          "opensky_minus_algorithm_accuracy_pp": -2.5507486536071493
+        }
+      }
+    },
+    "15": {
+      "flights": 16206,
+      "metrics": {
+        "takeoff": {
+          "algorithm_correct": 16170,
+          "opensky_correct": 16100,
+          "different_predictions": 108,
+          "only_algorithm_correct": 87,
+          "only_opensky_correct": 17,
+          "both_correct": 16083,
+          "neither_correct": 19,
+          "algorithm_correct_pct": 99.77786005183266,
+          "opensky_correct_pct": 99.34592126372948,
+          "different_predictions_pct": 0.6664198445020363,
+          "only_algorithm_correct_pct": 0.5368382080710847,
+          "only_opensky_correct_pct": 0.10489941996791312,
+          "both_correct_pct": 99.24102184376157,
+          "neither_correct_pct": 0.11724052819943231,
+          "opensky_minus_algorithm_accuracy_pp": -0.43193878810317166
+        },
+        "landing": {
+          "algorithm_correct": 16162,
+          "opensky_correct": 16057,
+          "different_predictions": 142,
+          "only_algorithm_correct": 123,
+          "only_opensky_correct": 18,
+          "both_correct": 16039,
+          "neither_correct": 26,
+          "algorithm_correct_pct": 99.72849561890658,
+          "opensky_correct_pct": 99.08058743675183,
+          "different_predictions_pct": 0.8762186844378625,
+          "only_algorithm_correct_pct": 0.7589781562384302,
+          "only_opensky_correct_pct": 0.11106997408367271,
+          "both_correct_pct": 98.96951746266815,
+          "neither_correct_pct": 0.16043440700974948,
+          "opensky_minus_algorithm_accuracy_pp": -0.6479081821547575
+        },
+        "both": {
+          "algorithm_correct": 16126,
+          "opensky_correct": 15952,
+          "different_predictions": 248,
+          "only_algorithm_correct": 208,
+          "only_opensky_correct": 34,
+          "both_correct": 15918,
+          "neither_correct": 46,
+          "algorithm_correct_pct": 99.50635567073924,
+          "opensky_correct_pct": 98.43267925459706,
+          "different_predictions_pct": 1.5302974207083797,
+          "only_algorithm_correct_pct": 1.2834752560779958,
+          "only_opensky_correct_pct": 0.20979883993582624,
+          "both_correct_pct": 98.22288041466123,
+          "neither_correct_pct": 0.28384548932494136,
+          "opensky_minus_algorithm_accuracy_pp": -1.0736764161421695
+        }
+      }
+    }
+  },
+  "boundary_times_differ_pct": {
+    "takeoff": 99.89443434402673,
+    "landing": 99.98240572400445
+  },
+  "null_airports": {
+    "takeoff_algorithm": 0,
+    "takeoff_opensky": 0,
+    "landing_algorithm": 0,
+    "landing_opensky": 0
+  },
+  "inputs": {
+    "algorithm": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=algorithm-nn/test_source_version=6/test_source_config_fingerprint=4114c72d9c02794f087526dafdcb2ea4974b3b687637b2d866a3885914751459/gold_source=bts/gold_source_version=13/gold_source_config_fingerprint=d55edb03f8425c705ac1a3bb1ed0e831b0ac53ecbef4f64301257c3dbb5d6d90/adsb_source=opensky/adsb_parquet_version=4/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json",
+    "opensky": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=opensky-nn/test_source_version=1/test_source_config_fingerprint=12e48d99a1e1d76eb59557e1c47c67995e55c61b5249a0b6cedc68b81cd59502/gold_source=bts/gold_source_version=13/gold_source_config_fingerprint=d55edb03f8425c705ac1a3bb1ed0e831b0ac53ecbef4f64301257c3dbb5d6d90/adsb_source=none/adsb_parquet_version=none/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json"
+  }
+}

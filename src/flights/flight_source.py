@@ -4,9 +4,10 @@ import multiprocessing
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, replace
-from datetime import date, datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import polars as pl
 
@@ -23,17 +24,47 @@ from flights.flight_manifest import (
     FlightManifest,
     flight_manifest_path,
 )
+from planequery_data.utils import date_range
 
 
 @dataclass(frozen=True)
 class FlightSource(ABC):
     name: str
     version: int = 1
+    target_day_adsb: ClassVar[bool] = False
     # TODO: Can have missing days range
+
+    def enrichment_adsb_source(self) -> ADSBSource | None:
+        """Optional ADS-B enrichment dependency for cache paths and manifests."""
+        return None
+
+    def flight_manifest(
+        self,
+        provenance: AirportCatalogProvenance,
+        adsb_src: ADSBSource | None,
+    ) -> FlightManifest:
+        return replace(
+            FlightManifest.from_provenance(
+                provenance,
+                adsb_source=adsb_src or self.enrichment_adsb_source(),
+            ),
+            target_day_adsb=self.target_day_adsb,
+        )
 
 
 @dataclass(frozen=True)
 class ADSBFlightSource(FlightSource):
+    target_day_adsb: bool = field(default=False, kw_only=True)
+
+    def read_adsb(
+        self,
+        start: date | datetime,
+        end: datetime | None = None,
+        **kwargs,
+    ) -> pl.DataFrame | pl.LazyFrame:
+        """Read source input; override when canonical ADS-B loses required data."""
+        return read_adsb(start, end, **kwargs)
+
     def adsb_icao_batch_size(self) -> int | None:
         """Maximum number of complete aircraft traces to load at once."""
         return None
@@ -54,11 +85,35 @@ class ADSBFlightSource(FlightSource):
     ) -> tuple[date | datetime, datetime | None]:
         return dt, None
 
+    def adsb_read_interval_for_source(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[date | datetime, datetime | None]:
+        """Return the provider-specific interval needed to build one flight day."""
+        reusable_source = self.reusable_flight_source()
+        if reusable_source is not None:
+            return reusable_source.adsb_read_interval_for_source(dt, adsb_src)
+        return self.adsb_read_interval(dt)
+
+    def adsb_input_interval(
+        self,
+        dt: date,
+        adsb_src: ADSBSource,
+    ) -> tuple[date | datetime, datetime | None]:
+        """Use the provider's input window unless target-day-only is enabled."""
+        default_interval = self.adsb_read_interval_for_source(dt, adsb_src)
+        if not self.target_day_adsb:
+            return default_interval
+        start = datetime.combine(dt, datetime.min.time())
+        return start, start + timedelta(days=1)
+
     def reusable_flight_source(self) -> ADSBFlightSource | None:
         """Flights from the same ADS-B provider that can replace segmentation."""
         return None
 
     def adsb_columns_for_reused_flights(self) -> Sequence[str] | None:
+        """Columns needed in addition to cached flights; empty skips ADS-B reads."""
         return self.adsb_columns()
 
     def adsb_icao_batch_size_for_reused_flights(self) -> int | None:
@@ -148,14 +203,17 @@ def _create_adsb_batch(
         if reused
         else source.adsb_columns()
     )
-    start, end = source.adsb_read_interval(dt)
+    start, end = source.adsb_input_interval(dt, adsb_src)
     kwargs = {
         "source": adsb_src,
         "icaos": list(task.icaos),
     }
     if columns is not None:
         kwargs["columns"] = columns
-    df_adsb = read_adsb(start, end, **kwargs)
+    if reused and columns is not None and len(columns) == 0:
+        df_adsb = pl.DataFrame()
+    else:
+        df_adsb = source.read_adsb(start, end, **kwargs)
     if reused:
         assert task.reused_flights is not None
         flights = source.create_flights_from_reused_flights(
@@ -231,11 +289,15 @@ def flight_path(
     adsb_src: ADSBSource | None = None,
 ) -> Path:
     assert isinstance(source, ADSBFlightSource) == (adsb_src is not None)
+    adsb_src = adsb_src or source.enrichment_adsb_source()
 
     path = OUTPUT_DIR / "data" / "flights" / f"source={source.name}"
 
     if adsb_src is not None:
         path /= f"adsb_source={adsb_src.value}"
+
+    if source.target_day_adsb:
+        path /= "target_day_adsb=true"
 
     return (
         path
@@ -258,10 +320,7 @@ def _read_cached_flights_for_catalog(
     if not path.is_file() or not manifest_path.is_file():
         return None
 
-    current_manifest = FlightManifest.from_provenance(
-        airport_catalog.provenance,
-        adsb_source=adsb_src,
-    )
+    current_manifest = source.flight_manifest(airport_catalog.provenance, adsb_src)
     cached_manifest = FlightManifest.read(manifest_path)
     if cached_manifest.flight_cache_key != current_manifest.flight_cache_key:
         return None
@@ -277,6 +336,8 @@ def _reusable_flights_for_source(
     reusable_source = source.reusable_flight_source()
     if reusable_source is None:
         return None
+    if source.target_day_adsb:
+        reusable_source = replace(reusable_source, target_day_adsb=True)
 
     flights = _read_cached_flights_for_catalog(
         reusable_source,
@@ -368,7 +429,7 @@ def _create_flights_for_catalog(
                 adsb_src,
                 batch_workers,
             )
-        start, end = source.adsb_read_interval(dt)
+        start, end = source.adsb_input_interval(dt, adsb_src)
         columns = source.adsb_columns()
         batch_size = source.adsb_icao_batch_size()
         source_icaos = source.adsb_icaos(dt, airport_catalog)
@@ -378,13 +439,13 @@ def _create_flights_for_catalog(
                 kwargs["columns"] = columns
             if source_icaos is not None:
                 kwargs["icaos"] = source_icaos
-            df_adsb = read_adsb(start, end, **kwargs)
+            df_adsb = source.read_adsb(start, end, **kwargs)
             return source.create_flights_for_day(dt, df_adsb, airport_catalog)
         if batch_size <= 0:
             raise ValueError("adsb_icao_batch_size must be positive")
 
         if source_icaos is None:
-            icao_scan = read_adsb(
+            icao_scan = source.read_adsb(
                 start,
                 end,
                 source=adsb_src,
@@ -485,6 +546,27 @@ def get_flights(
     )
 
 
+def get_flights_range(
+    source: FlightSource,
+    start_date: date,
+    end_date: date,
+    adsb_src: ADSBSource | None = None,
+    use_cache: bool = True,
+    batch_workers: int = 1,
+) -> pl.DataFrame:
+    """Get flights for each day in ``[start_date, end_date)``."""
+    return pl.concat([
+        get_flights(
+            source,
+            target_date,
+            adsb_src,
+            use_cache,
+            batch_workers,
+        )
+        for target_date in date_range(start_date, end_date)
+    ])
+
+
 def write_flights(
     source: FlightSource,
     dt: date,
@@ -519,8 +601,7 @@ def write_flights_for_catalog(
         batch_workers,
     )
     df_flights.write_parquet(path)
-    FlightManifest.from_provenance(
-        airport_catalog.provenance,
-        adsb_source=adsb_src,
-    ).write(flight_manifest_path(path))
+    source.flight_manifest(airport_catalog.provenance, adsb_src).write(
+        flight_manifest_path(path)
+    )
     return df_flights

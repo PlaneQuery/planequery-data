@@ -19,6 +19,9 @@ class FlightManifest:
     policy_version: str
     adsb_source: str | None = None
     adsb_parquet_version: int | None = None
+    adsb_input_format: str | None = None
+    adsb_input_version: int | None = None
+    target_day_adsb: bool = False
 
     @property
     def catalog_cache_key(self) -> tuple[date, str, str, str]:
@@ -33,12 +36,18 @@ class FlightManifest:
     @property
     def flight_cache_key(
         self,
-    ) -> tuple[date, str, str, str, str | None, int | None]:
+    ) -> tuple[
+        date, str, str, str, str | None, int | None, str | None, int | None,
+        bool,
+    ]:
         """Input state that can change the generated flights for a day."""
         return (
             *self.catalog_cache_key,
             self.adsb_source,
             self.adsb_parquet_version,
+            self.adsb_input_format,
+            self.adsb_input_version,
+            self.target_day_adsb,
         )
 
     @classmethod

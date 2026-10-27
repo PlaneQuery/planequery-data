@@ -6,6 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
+from aircraft.callsign import CALLSIGN_PATTERN
 from aircraft.registration import is_valid_n_number_expr
 from data_engineering.adsb.canonical import ADSBSource, adsb_parquet_root
 from data_engineering.openairframes.read import scan_latest_icao_info_for_join
@@ -23,7 +24,6 @@ PIA_CALLSIGN_SWITCH_CACHE_PATH = Path(
 # ADS-B flight identification is at most eight alphanumeric characters. For
 # this non-registration search, require an alphabetic first character so that
 # placeholders and malformed numeric values such as 00000000 are discarded.
-VALID_CALLSIGN_PATTERN = r"^[A-Z][A-Z0-9]{0,7}$"
 
 MATCH_COLUMNS = [
     "pia_icao",
@@ -79,7 +79,7 @@ def find_pia_ladd_callsign_matches(
             & pl.col("icao").is_not_null()
             & pl.col("callsign").is_not_null()
             & (pl.col("callsign") != "")
-            & pl.col("callsign").str.contains(VALID_CALLSIGN_PATTERN)
+            & pl.col("callsign").str.contains(CALLSIGN_PATTERN)
             & ~is_valid_n_number_expr("callsign")
         )
     )

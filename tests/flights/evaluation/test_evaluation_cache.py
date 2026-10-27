@@ -1,3 +1,5 @@
+import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +10,11 @@ import pytest
 from airports.models import AirportCatalogProvenance
 from data_engineering.adsb.read_adsb import ADSBSource
 from flights.airport_nn.source import AlgorithmNNFlightSource
-from flights.evaluation import evaluation
+from flights.evaluation import airport_exposure, evaluation
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
 from flights.evaluation.cache import (
     CachedEvaluationStats,
     EvaluationCache,
@@ -17,7 +23,13 @@ from flights.evaluation.cache import (
     default_evaluation_cache_dir,
 )
 from flights.flight_type import Flight, flights_to_flights_df
-from flights.sources import ALGORITHM_NEAREST_SOURCE, BTS_SOURCE
+from flights.sources import (
+    ALGORITHM_NEAREST_SOURCE,
+    BTS_SOURCE,
+    BTS_VERIFIED_SOURCE,
+    EUROCONTROL_VERIFIED_SOURCE,
+    SFDPS_VERIFIED_SOURCE,
+)
 
 
 TARGET_DATE = date(2026, 3, 1)
@@ -113,6 +125,59 @@ def test_default_cache_directory_is_under_output_dir(monkeypatch, tmp_path):
     )
 
 
+@pytest.mark.parametrize("verified_source", [
+    BTS_VERIFIED_SOURCE, SFDPS_VERIFIED_SOURCE, EUROCONTROL_VERIFIED_SOURCE,
+])
+def test_verified_source_cache_key_is_independent_of_selected_adsb_provider(tmp_path, verified_source):
+    cache = EvaluationCache(tmp_path / "cache")
+    catalog = _airport_catalog()
+
+    opensky = cache.make_key(
+        TARGET_DATE,
+        BTS_SOURCE,
+        verified_source,
+        ADSBSource.OPENSKY,
+        catalog,
+    )
+    adsblol = cache.make_key(
+        TARGET_DATE,
+        BTS_SOURCE,
+        verified_source,
+        ADSBSource.ADSBLOL,
+        catalog,
+    )
+
+    assert opensky.adsb_source is None
+    assert opensky.adsb_parquet_version is None
+    assert opensky == adsblol
+    assert cache.path_for(opensky) == cache.path_for(adsblol)
+
+
+def test_airport_exposure_reuses_cached_comparison(monkeypatch, tmp_path):
+    monkeypatch.setattr(airport_exposure, "OUTPUT_DIR", tmp_path)
+    source = _algorithm_nn_source(tmp_path)
+    _patch_inputs(monkeypatch, source, lambda _: flights_to_flights_df([_flight()]))
+    cache = EvaluationCache(tmp_path / "cache")
+    fresh = _evaluate(source, cache)
+
+    part = tmp_path / "data/processed/flights_airport_nn/february-2026/2026-02-01/part-0000.parquet"
+    part.parent.mkdir(parents=True)
+    pl.DataFrame({"truth_id": [1], "eligible": [True], "target": [0]}).write_parquet(part)
+    manifest = tmp_path / "training.json"
+    manifest.write_text(json.dumps({"inputs": {"train": [[str(part.relative_to(tmp_path)), 0, 0]]}}))
+    training = load_training_airports(manifest)
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Exposure reporting must reuse cached flights")
+
+    monkeypatch.setattr(evaluation, "source_flights_reader", unexpected_read)
+    cached = _evaluate(source, cache)
+    assert airport_exposure_report(cached, training).equals(
+        airport_exposure_report(fresh, training)
+    )
+    assert cached.stats == fresh.stats
+
+
 def test_identical_evaluation_uses_cached_comparison_and_stats(
     monkeypatch,
     tmp_path,
@@ -134,6 +199,79 @@ def test_identical_evaluation_uses_cached_comparison_and_stats(
     )
     assert first_results.stats == second_results.stats
     assert first_results.stats[0].precision == 1.0
+
+
+@pytest.mark.parametrize("verified", [False, True])
+def test_target_day_adsb_isolates_evaluation_cache_and_labels_output(
+    monkeypatch, tmp_path, verified,
+):
+    source = EUROCONTROL_VERIFIED_SOURCE if verified else _algorithm_nn_source(tmp_path)
+    cache = EvaluationCache(tmp_path / "cache")
+    frame = flights_to_flights_df([_flight()])
+    configured_sources = []
+
+    def frame_for_source(resolved):
+        configured_sources.append(resolved)
+        return frame
+
+    reads = _patch_inputs(monkeypatch, source, frame_for_source)
+    ordinary = _evaluate(source, cache)
+    single_day = _evaluate(source, cache, target_day_adsb=True)
+    repeated = _evaluate(evaluation._with_target_day_adsb([source], True)[0], cache)
+
+    assert len(reads) == 4
+    assert configured_sources[0].target_day_adsb is False
+    assert configured_sources[2].target_day_adsb is True
+    if not verified:
+        assert configured_sources[2].model_path == source.model_path
+    assert ordinary.stats[0].target_day_adsb is False
+    assert single_day.stats[0].target_day_adsb is True
+    assert repeated.stats == single_day.stats
+    assert cache.list_entries().height == 2
+    listed = evaluation.list_cached_evaluations(
+        target_day_adsb=True, evaluation_cache=cache,
+    )
+    assert listed.height == 1
+    assert listed["target_day_adsb"].to_list() == [True]
+
+
+@pytest.mark.parametrize("gold_source", [
+    ALGORITHM_NEAREST_SOURCE, EUROCONTROL_VERIFIED_SOURCE,
+    BTS_VERIFIED_SOURCE, SFDPS_VERIFIED_SOURCE,
+])
+def test_target_day_adsb_applies_to_adsb_gold_source(monkeypatch, tmp_path, gold_source):
+    source = _algorithm_nn_source(tmp_path)
+    cache = EvaluationCache(tmp_path / "cache")
+    frame = flights_to_flights_df([_flight()])
+    sources = []
+    _patch_inputs(monkeypatch, source, lambda resolved: sources.append(resolved) or frame)
+    results = evaluation.evaluate(
+        test_source=source, gold_source=gold_source,
+        test_dates=TARGET_DATE, adsb_source=list(ADSBSource),
+        target_day_adsb=True, evaluation_cache=cache,
+    )
+    if gold_source is ALGORITHM_NEAREST_SOURCE:
+        assert len(sources) == 6
+    else:
+        # Read the fixed verified cohort once, alongside three test providers.
+        assert len(sources) == 4
+        gold_reads = [resolved for resolved in sources if resolved.name == gold_source.name]
+        assert len(gold_reads) == 1
+        assert gold_reads[0].adsb_source is ADSBSource.ADSBLOL
+    assert all(resolved.target_day_adsb for resolved in sources)
+    assert {stats.adsb_source for stats in results.stats} == set(ADSBSource)
+    assert all(stats.target_day_adsb for stats in results.stats)
+
+
+def test_target_day_adsb_is_an_optional_flag():
+    assert evaluation.parse_args([]).target_day_adsb is False
+    assert evaluation.parse_args(["--target-day-adsb"]).target_day_adsb is True
+
+
+@pytest.mark.parametrize("value", ["0", "1", "true"])
+def test_target_day_adsb_rejects_values(value):
+    with pytest.raises(SystemExit):
+        evaluation.parse_args(["--target-day-adsb", value])
 
 
 @pytest.mark.parametrize("unreadable_file", [RESULT_FILENAME, STATS_FILENAME])
@@ -423,6 +561,7 @@ def test_cli_writes_csv(monkeypatch, tmp_path):
 
     evaluation.main(
         [
+            "--target-day-adsb",
             "--test-dates",
             TARGET_DATE.isoformat(),
             "--columns",
@@ -431,6 +570,7 @@ def test_cli_writes_csv(monkeypatch, tmp_path):
     )
 
     assert "write_csv" not in evaluate_kwargs
+    assert evaluate_kwargs["target_day_adsb"] is True
     assert pl.read_csv(output_csv).to_dict(as_series=False) == {
         "precision": [1.0]
     }
@@ -456,6 +596,7 @@ def test_evaluate_rejects_empty_input_sequences(empty_parameter):
 @pytest.mark.parametrize(
     ("option", "value"),
     [
+        ("--adsb-context-days", "0"),
         ("--test_src", "algorithm-nn"),
         ("--test-src", "algorithm-nn"),
         ("--gold_src", "bts"),

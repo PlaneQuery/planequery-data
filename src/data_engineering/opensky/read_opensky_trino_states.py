@@ -45,7 +45,7 @@ def opensky_state_vector_files(
     return sorted(state_vectors_dir.glob("hour=*/data.parquet"))
 
 
-def _complete_opensky_state_vector_files(
+def complete_opensky_state_vector_files(
     current_day: date | datetime | str,
 ) -> list[Path]:
     parquet_files = opensky_state_vector_files(current_day)
@@ -81,7 +81,7 @@ def scan_opensky_state_vectors_for_day(
     require_complete: bool = True,
 ) -> pl.LazyFrame:
     parquet_files = (
-        _complete_opensky_state_vector_files(current_day)
+        complete_opensky_state_vector_files(current_day)
         if require_complete
         else opensky_state_vector_files(current_day)
     )
@@ -260,7 +260,7 @@ def write_opensky_state_vectors_cache_for_day(
     if success_path.exists() and not overwrite:
         return output_dir
 
-    parquet_files = _complete_opensky_state_vector_files(current_day)
+    parquet_files = complete_opensky_state_vector_files(current_day)
     target_day = coerce_date(current_day)
     day_start = datetime(
         target_day.year,
@@ -370,7 +370,9 @@ def write_opensky_state_vectors_cache_for_day(
                 )
             )
             enriched = join_lf_with_openairframes(cleaned, openairframes)
-            canonical = canonicalize_adsb_frame(enriched, include_missing=True)
+            canonical = canonicalize_adsb_frame(enriched, include_missing=True).sort(
+                ["icao", "time"]
+            )
 
             icao_bucket = min(
                 processing_shard

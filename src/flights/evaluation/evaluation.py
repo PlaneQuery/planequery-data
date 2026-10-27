@@ -14,7 +14,11 @@ from airports.catalog import AirportCatalogView
 from airports.runtime import airport_catalog_for_date
 from data_engineering.adsb.read_adsb import ADSBSource
 from data_engineering.utils import OUTPUT_DIR
-from flights.airport_nn.source import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
 from flights.evaluation.cache import EvaluationCache
 from flights.evaluation.models import (
     EVALUATION_METADATA_COLUMNS,
@@ -23,12 +27,13 @@ from flights.evaluation.models import (
     EvaluationStats,
 )
 from flights.flight_source import ADSBFlightSource, FlightSource, get_flights
-from flights.flights_comparison import df_flights_comparison
+from flights.flights_comparison import MAX_FLIGHT_MATCH_TIME_DELTA, df_flights_comparison
 from flights.sources import (
     ALGORITHM_NEAREST_SOURCE,
     BTS_SOURCE,
     FLIGHT_SOURCES_BY_NAME,
 )
+from flights.verified.source import VerifiedFlightSource
 from planequery_data.utils import current_commit_hash
 
 
@@ -36,6 +41,10 @@ DEFAULT_TARGET_DATE = date(2026, 3, 1)
 DEFAULT_ADSB_SOURCE = ADSBSource.ADSBLOL
 
 SourceInput = FlightSource | str
+
+
+def _uses_selected_adsb_source(source: FlightSource) -> bool:
+    return isinstance(source, ADSBFlightSource)
 
 
 def default_stats_path() -> Path:
@@ -100,7 +109,7 @@ def source_flights_reader(
     adsb_source: ADSBSource | None = DEFAULT_ADSB_SOURCE,
 ) -> Callable[[date], pl.DataFrame]:
     source = resolve_source(source)
-    if isinstance(source, ADSBFlightSource):
+    if _uses_selected_adsb_source(source):
         if adsb_source is None:
             raise ValueError(f"{source.name} requires an ADS-B source")
         source_adsb = ADSBSource(adsb_source)
@@ -109,7 +118,7 @@ def source_flights_reader(
 
     def read_source(target_date: date) -> pl.DataFrame:
         if (
-            isinstance(source, AlgorithmNNFlightSource)
+            isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
             and not source.model_path.is_file()
         ):
             raise FileNotFoundError(
@@ -127,8 +136,10 @@ def adsb_sources_for_evaluation(
     adsb_sources: Sequence[ADSBSource],
 ) -> list[ADSBSource | None]:
     """Return provider variants that can affect this source pair."""
-    if isinstance(resolve_source(test_source), ADSBFlightSource) or isinstance(
-        resolve_source(gold_source), ADSBFlightSource
+    if _uses_selected_adsb_source(
+        resolve_source(test_source)
+    ) or _uses_selected_adsb_source(
+        resolve_source(gold_source)
     ):
         return list(adsb_sources)
     return [None]
@@ -162,7 +173,25 @@ def _with_airport_nn_model(
         return list(sources)
     return [
         replace(source, model_path=model_path)
-        if isinstance(source, AlgorithmNNFlightSource)
+        if isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
+        else source
+        for source in sources
+    ]
+
+
+def _with_target_day_adsb(
+    sources: Sequence[FlightSource],
+    enabled: bool,
+) -> list[FlightSource]:
+    if not enabled:
+        return list(sources)
+    return [
+        VerifiedFlightSource(
+            source.source, target_day_adsb=True
+        )
+        if isinstance(source, VerifiedFlightSource)
+        else replace(source, target_day_adsb=True)
+        if isinstance(source, ADSBFlightSource)
         else source
         for source in sources
     ]
@@ -171,7 +200,6 @@ def _with_airport_nn_model(
 def _flights_on_date(flights: pl.DataFrame, target_date: date) -> pl.DataFrame:
     return flights.filter(
         (pl.col("takeoff_time").dt.date() == target_date)
-        & (pl.col("landing_time").dt.date() == target_date)
     )
 
 
@@ -180,6 +208,10 @@ def _assert_no_null_icaos(flights: pl.DataFrame, source_role: str) -> None:
     assert null_count == 0, (
         f"{source_role} contains {null_count} null icao value(s)"
     )
+
+
+def _format_minutes(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f} min"
 
 
 def _gold_icao_cohort(
@@ -196,45 +228,54 @@ def _gold_icao_cohort(
     )
 
 
-def _empty_comparison() -> pl.DataFrame:
-    """Return the columns needed to calculate zero-valued comparison stats."""
-    return pl.DataFrame(
-        schema={
-            "match_status": pl.String,
-            "same_takeoff_airport_id": pl.Boolean,
-            "same_landing_airport_id": pl.Boolean,
-            "same_airport_id": pl.Boolean,
-        }
-    )
-
-
 def _compare_day(
     test_flights: pl.DataFrame,
     gold_flights: pl.DataFrame,
-    target_date: date,
+    start_dt: datetime,
+    end_dt: datetime,
     airport_catalog: AirportCatalogView,
 ) -> pl.DataFrame:
     _assert_no_null_icaos(test_flights, "test_source")
     _assert_no_null_icaos(gold_flights, "gold_source")
-    test_flights = _flights_on_date(test_flights, target_date)
-    gold_flights = _flights_on_date(gold_flights, target_date)
+    assert test_flights.select(
+    (pl.col("takeoff_time").dt.date() == start_dt.date())
+    .fill_null(False)
+    .all()
+    ).item(), f"Not all test flights take off on {start_dt.date()}"
+
+
     test_flights, gold_flights = _gold_icao_cohort(
         test_flights,
         gold_flights,
     )
-    if test_flights.is_empty() and gold_flights.is_empty():
-        return _empty_comparison()
+    assert not gold_flights.is_empty()
+    assert not test_flights.is_empty()
 
-    start = datetime(target_date.year, target_date.month, target_date.day)
-    return df_flights_comparison(
+    assert gold_flights.select(
+      (pl.col("takeoff_time").dt.date() == start_dt.date())
+      .fill_null(False)
+      .all()
+    ).item(), f"Expected all flights to take off on {start_dt.date()}"
+
+    comparison = df_flights_comparison(
         test_flights,
         gold_flights,
-        start,
-        start + timedelta(days=1),
+        start_dt,
+        end_dt,
         airport_catalog,
-        compare_airports=False,
+    )
+    # Keep full-day gold as matching context, then score by gold departure
+    # when present, or test departure for an unmatched test flight.
+    return comparison.filter(
+        pl.coalesce("takeoff_time_df1", "takeoff_time").is_between(
+            start_dt, end_dt, closed="both"
+        )
     )
 
+def get_start_dt_end_dt_for_gold(target_date: date) -> tuple[datetime, datetime]:
+    start_dt = datetime.combine(target_date, datetime.min.time()) + MAX_FLIGHT_MATCH_TIME_DELTA
+    end_dt = datetime.combine(target_date + timedelta(days=1), datetime.min.time()) - MAX_FLIGHT_MATCH_TIME_DELTA
+    return start_dt, end_dt
 
 def evaluate(
     test_source: SourceInput | Sequence[SourceInput],
@@ -245,6 +286,7 @@ def evaluate(
     ) = DEFAULT_ADSB_SOURCE,
     *,
     airport_nn_model_path: Path | None = None,
+    target_day_adsb: bool = False,
     refresh_cache: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> EvaluationResults:
@@ -254,6 +296,10 @@ def evaluate(
     ICAOs present in gold. Detailed comparisons and their daily stats are
     cached together. Set
     ``refresh_cache=True`` to recompute and replace matching entries.
+
+    ``target_day_adsb=True`` limits ADS-B inputs to each target UTC day before
+    segmentation and inference. False preserves provider-specific windows.
+    Target-day-only inputs use separate flight and evaluation cache entries.
     """
     test_sources = _with_airport_nn_model(
         _as_source_list(test_source),
@@ -263,6 +309,8 @@ def evaluate(
         _as_source_list(gold_source),
         airport_nn_model_path,
     )
+    test_sources = _with_target_day_adsb(test_sources, target_day_adsb)
+    gold_sources = _with_target_day_adsb(gold_sources, target_day_adsb)
     dates = _as_date_list(test_dates)
     adsb_sources = _as_adsb_source_list(adsb_source)
     for parameter, values in (
@@ -296,6 +344,17 @@ def evaluate(
 
     for resolved_test_source in test_sources:
         for resolved_gold_source in gold_sources:
+            input_settings = {
+                source.target_day_adsb
+                for source in (resolved_test_source, resolved_gold_source)
+                if isinstance(source, (ADSBFlightSource, VerifiedFlightSource))
+            }
+            if len(input_settings) > 1:
+                raise ValueError(
+                    "ADS-B test and gold sources must use the same "
+                    "target_day_adsb setting; pass target_day_adsb=True to override both"
+                )
+            pair_target_day_adsb = next(iter(input_settings), False)
             pair_adsb_sources = adsb_sources_for_evaluation(
                 resolved_test_source,
                 resolved_gold_source,
@@ -304,12 +363,12 @@ def evaluate(
             for selected_adsb_source in pair_adsb_sources:
                 test_adsb_source = (
                     selected_adsb_source
-                    if isinstance(resolved_test_source, ADSBFlightSource)
+                    if _uses_selected_adsb_source(resolved_test_source)
                     else None
                 )
                 gold_adsb_source = (
                     selected_adsb_source
-                    if isinstance(resolved_gold_source, ADSBFlightSource)
+                    if _uses_selected_adsb_source(resolved_gold_source)
                     else None
                 )
                 for target_date in dates:
@@ -339,19 +398,27 @@ def evaluate(
                             f"({selected_adsb_source or 'no ADS-B source'})"
                         )
                     else:
+                        test_flights = read_flights(
+                            resolved_test_source, test_adsb_source, target_date
+                        )
+                        gold_flights = read_flights(
+                            resolved_gold_source, gold_adsb_source, target_date
+                        )
+                        start_dt, end_dt = get_start_dt_end_dt_for_gold(target_date)
                         comparison = _compare_day(
-                            read_flights(
-                                resolved_test_source,
-                                test_adsb_source,
-                                target_date,
-                            ),
-                            read_flights(
-                                resolved_gold_source,
-                                gold_adsb_source,
-                                target_date,
-                            ),
-                            target_date,
+                            test_flights,
+                            gold_flights,
+                            start_dt,
+                            end_dt,
                             airport_catalog,
+                        )
+                        # Measure aircraft presence in the full-day inputs,
+                        # before applying the evaluation window.
+                        test_icaos = set(
+                            test_flights.get_column("icao").unique().to_list()
+                        )
+                        gold_icaos = set(
+                            gold_flights.get_column("icao").unique().to_list()
                         )
                         stats = EvaluationStats.from_comparison(
                             comparison,
@@ -359,6 +426,11 @@ def evaluate(
                             adsb_source=selected_adsb_source,
                             test_source=resolved_test_source.name,
                             gold_source=resolved_gold_source.name,
+                            target_day_adsb=pair_target_day_adsb,
+                            gold_icao_count=len(gold_icaos),
+                            gold_icao_missing_from_test_count=len(
+                                gold_icaos - test_icaos
+                            ),
                         )
                         cache_path = cache.store(
                             cache_key,
@@ -382,6 +454,40 @@ def evaluate(
                         f"Stats for {resolved_test_source.name}:"
                         f"{resolved_gold_source.name} on {target_date}: {metrics}"
                     )
+                    print(
+                        "Gold ICAOs absent from test: "
+                        f"{stats.gold_icao_missing_from_test_count}/"
+                        f"{stats.gold_icao_count} "
+                        f"({stats.gold_icao_missing_from_test_pct:.2%})"
+                    )
+                    test_flight_count = stats.true_positive + stats.false_positive
+                    print(
+                        f"Null airports in {resolved_test_source.name} "
+                        f"({test_flight_count} retained test flights): "
+                        f"takeoff {stats.takeoff_airport_id_null_count} "
+                        f"({stats.takeoff_airport_id_null_pct:.2%}), "
+                        f"landing {stats.landing_airport_id_null_count} "
+                        f"({stats.landing_airport_id_null_pct:.2%})"
+                    )
+                    print(
+                        "Timing against gold: "
+                        "max endpoint error "
+                        f"median {_format_minutes(stats.median_max_endpoint_time_error_minutes)}, "
+                        f"p90 {_format_minutes(stats.p90_max_endpoint_time_error_minutes)}; "
+                        "both endpoints within "
+                        f"5m {stats.both_endpoints_within_5m_recall:.2%}, "
+                        f"15m {stats.both_endpoints_within_15m_recall:.2%}, "
+                        f"30m {stats.both_endpoints_within_30m_recall:.2%}; "
+                        "bias "
+                        f"takeoff {_format_minutes(stats.takeoff_time_bias_minutes)}, "
+                        f"landing {_format_minutes(stats.landing_time_bias_minutes)}"
+                    )
+                    if resolved_test_source.name == "opensky":
+                        print(
+                            "Non-null airport accuracy in opensky (matched flights): "
+                            f"takeoff {stats.takeoff_airport_id_non_null_match_pct:.2%}, "
+                            f"landing {stats.landing_airport_id_non_null_match_pct:.2%}"
+                        )
 
     return EvaluationResults(entries=tuple(daily_results))
 
@@ -392,16 +498,20 @@ def list_cached_evaluations(
     gold_source: str | Sequence[str] | None = None,
     adsb_source: ADSBSource | str | Sequence[ADSBSource | str] | None = None,
     test_dates: date | Sequence[date] | None = None,
+    target_day_adsb: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> pl.DataFrame:
     """List cached daily stats matching the supplied source/date filters."""
     cache = evaluation_cache or default_evaluation_cache()
-    return cache.list_entries(
+    frame = cache.list_entries(
         test_source=test_source,
         gold_source=gold_source,
         adsb_source=adsb_source,
         test_dates=test_dates,
     )
+    if target_day_adsb:
+        frame = frame.filter(pl.col("target_day_adsb"))
+    return frame
 
 
 def export_cached_evaluations(
@@ -412,6 +522,7 @@ def export_cached_evaluations(
     gold_source: str | Sequence[str] | None = None,
     adsb_source: ADSBSource | str | Sequence[ADSBSource | str] | None = None,
     test_dates: date | Sequence[date] | None = None,
+    target_day_adsb: bool = False,
     evaluation_cache: EvaluationCache | None = None,
 ) -> tuple[pl.DataFrame, Path]:
     """Filter cached daily results and export selected columns to CSV."""
@@ -420,6 +531,7 @@ def export_cached_evaluations(
         gold_source=gold_source,
         adsb_source=adsb_source,
         test_dates=test_dates,
+        target_day_adsb=target_day_adsb,
         evaluation_cache=evaluation_cache,
     )
     selected = select_output_columns(cached, columns)
@@ -462,7 +574,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--airport-nn-model",
         type=Path,
-        help="Checkpoint to use for an algorithm-nn source.",
+        help="Checkpoint to use for algorithm-nn or opensky-nn sources.",
+    )
+    parser.add_argument(
+        "--airport-nn-training",
+        type=Path,
+        help=(
+            "Optional training.json manifest (relative paths use OUTPUT_DIR). "
+            "Write separate airport-exposure and training-airport CSVs "
+            "alongside the normal stats CSV."
+        ),
+    )
+    parser.add_argument(
+        "--target-day-adsb",
+        action="store_true",
+        help=(
+            "Use only each target UTC day's ADS-B data for every provider "
+            "([00:00, next 00:00)), before segmentation and inference. "
+            "Default: provider-specific windows. With --list-cache, filter "
+            "by this setting."
+        ),
     )
     parser.add_argument(
         "--refresh-cache",
@@ -479,17 +610,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         nargs="+",
         help="CSV columns in output order (default: every applicable column).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.list_cache and args.airport_nn_training is not None:
+        parser.error(
+            "--airport-nn-training requires detailed comparisons; omit --list-cache "
+            "to evaluate the requested dates using cached results when available."
+        )
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
+    training = (
+        load_training_airports(args.airport_nn_training)
+        if args.airport_nn_training is not None
+        else None
+    )
     if args.list_cache:
         cached = list_cached_evaluations(
             test_source=args.test_source,
             gold_source=args.gold_source,
             adsb_source=args.adsb_source,
             test_dates=args.test_dates,
+            target_day_adsb=args.target_day_adsb,
         )
         cached = select_output_columns(cached, args.columns)
         if cached.is_empty():
@@ -504,6 +647,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         test_dates=args.test_dates or [DEFAULT_TARGET_DATE],
         adsb_source=args.adsb_source or [DEFAULT_ADSB_SOURCE],
         airport_nn_model_path=args.airport_nn_model,
+        target_day_adsb=args.target_day_adsb,
         refresh_cache=args.refresh_cache,
     )
     stats_output = write_evaluation_csv(
@@ -512,7 +656,24 @@ def main(argv: Sequence[str] | None = None) -> None:
         columns=args.columns,
     )
     print(f"Stats CSV saved to {stats_output}")
+    if training is not None:
+        exposure_output = write_evaluation_csv(
+            airport_exposure_report(results, training),
+            stats_output.with_name(f"{stats_output.stem}_airport_exposure.csv"),
+        )
+        training_output = write_evaluation_csv(
+            training.airport_counts,
+            stats_output.with_name(f"{stats_output.stem}_training_airports.csv"),
+        )
+        print(f"Airport exposure CSV saved to {exposure_output}")
+        print(
+            f"Training airport IDs and endpoint counts saved to {training_output} "
+            f"({training.airport_counts.height} airports)"
+        )
 
 
 if __name__ == "__main__":
     main()
+'''
+COLUMNS = ["icao", "takeoff_time", "landing_time", "takeoff_airport_ident", "landing_airport_ident", "takeoff_time_df1", "landing_time_df1", "takeoff_airport_ident_df1", "landing_airport_ident_df1", "match_status"]
+'''

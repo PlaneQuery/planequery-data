@@ -25,6 +25,7 @@ from data_engineering.adsblol.check_for_new_release import (
     prepare_releases_for_run,
 )
 from data_engineering.adsb.trace_files_to_parquet import process_trace_files
+from data_engineering.adsb.known_bad_days import ADSBLOL_SKIP_DAYS as SKIP_DAYS
 from data_engineering.adsb.canonical import (
     ADSBSource,
     SUCCESS_MARKER,
@@ -389,7 +390,6 @@ def extract_split_archive(file_paths: list[str | Path], extract_dir: str | Path)
 
 OS_CPU_COUNT = os.cpu_count() or 1
 MAX_WORKERS = min(OS_CPU_COUNT, 8)
-SKIP_DAYS = {date(2026, 5, 5), date(2026, 5, 6)}
 
 
 def _day_date(day: date | datetime) -> date:

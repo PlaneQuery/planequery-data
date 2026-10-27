@@ -1,13 +1,14 @@
 from datetime import date, datetime, timezone
 
 import pyarrow.parquet as pq
+import pyarrow as pa
 import pytest
 
 from data_engineering.opensky import download_trino_state_vectors as downloader
 
 
 class FakeCursor:
-    description = [("icao24",), ("hour",)]
+    description = [("icao24", "varchar"), ("hour", "bigint")]
 
     def __init__(self, batches=None, error=None):
         self.batches = iter(batches or [])
@@ -90,6 +91,50 @@ def test_download_hour_writes_partitioned_parquet(tmp_path):
     ]
     assert all(cursor.closed for cursor in cursors)
     assert not output_path.with_suffix(".parquet.tmp").exists()
+
+
+@pytest.mark.parametrize("nulls_first", [True, False])
+def test_download_hour_preserves_nullable_types_across_windows(tmp_path, nulls_first):
+    populated = (1234.5, "ABC123", True, [42])
+    missing = (None, None, None, [])
+    rows = [missing, populated] if nulls_first else [populated, missing]
+    cursors = [FakeCursor(batches=[[row]]) for row in rows]
+    for cursor in cursors:
+        cursor.description = [
+            ("baroaltitude", "double"),
+            ("callsign", "varchar(8)"),
+            ("onground", "boolean"),
+            ("serials", "array(integer)"),
+        ]
+
+    output_path = downloader.download_hour(
+        FakeConnection(cursors),
+        datetime(2026, 2, 28, 7, tzinfo=timezone.utc),
+        output_dir=tmp_path,
+        query_window_minutes=30,
+    )
+
+    table = pq.ParquetFile(output_path).read()
+    assert table.schema == pa.schema([
+        ("baroaltitude", pa.float64()),
+        ("callsign", pa.string()),
+        ("onground", pa.bool_()),
+        ("serials", pa.list_(pa.int64())),
+    ])
+    assert table.to_pydict() == dict(zip(table.column_names, map(list, zip(*rows))))
+
+
+def test_download_empty_hour_preserves_declared_types(tmp_path):
+    output_path = downloader.download_hour(
+        FakeConnection([FakeCursor()]),
+        datetime(2026, 2, 28, tzinfo=timezone.utc),
+        output_dir=tmp_path,
+        query_window_minutes=60,
+    )
+
+    table = pq.ParquetFile(output_path).read()
+    assert table.num_rows == 0
+    assert table.schema == pa.schema([("icao24", pa.string()), ("hour", pa.int64())])
 
 
 def test_download_hour_skips_existing_output(tmp_path):

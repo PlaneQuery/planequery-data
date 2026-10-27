@@ -16,12 +16,16 @@ def _stats(gold_source: str, adsb_source: ADSBSource) -> EvaluationStats:
         adsb_source=adsb_source,
         test_source="algorithm-nn",
         gold_source=gold_source,
+        gold_icao_count=10,
+        gold_icao_missing_from_test_count=0,
         true_positive=true_positive,
         false_positive=10 - true_positive,
         false_negative=10 - true_positive,
         takeoff_airport_id_match_count=true_positive,
         landing_airport_id_match_count=true_positive,
         airport_id_match_count=true_positive,
+        takeoff_airport_id_non_null_count=true_positive,
+        landing_airport_id_non_null_count=true_positive,
     )
 
 

@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
@@ -136,6 +137,49 @@ def test_features_ignore_labels_and_neighboring_flights(observation):
         assert a.nearest_id == b.nearest_id == 1
     assert original[0].values.shape[1] == 3
     assert original[1].values.shape[1] == 2
+
+
+def test_features_and_candidates_ignore_airport_metadata(observation):
+    _, messages, airport_catalog = observation
+    airport = airport_catalog.matcher.airport
+    points = (
+        messages.select(
+            pl.col("time").dt.epoch("ms"),
+            *[
+                pl.col(column).cast(pl.Float64)
+                for column in features.COLUMNS[2:]
+            ],
+        )
+        .to_numpy()
+    )
+    boundary = points[0, 0]
+    small = features.relative_features(points, [airport], boundary, False)
+    large = features.relative_features(
+        points,
+        [replace(airport, type=AirportType.LARGE_AIRPORT)],
+        boundary,
+        False,
+    )
+    np.testing.assert_array_equal(small, large)
+    scheduled = features.relative_features(
+        points,
+        [replace(airport, scheduled_service="yes")],
+        boundary,
+        False,
+    )
+    np.testing.assert_array_equal(small, scheduled)
+    assert small.shape[-1] == features.INPUT_SIZE == 20
+
+    airports = [SimpleNamespace(id=i, ident=f"A{i:02d}") for i in range(40)]
+    matcher = SimpleNamespace(
+        airports_within_radius=lambda lat, lon, radius: [
+            (candidate, float(candidate.id)) for candidate in airports
+        ]
+    )
+    selected = features._candidate_airports(matcher, 0, 0)
+    assert [candidate.id for candidate in selected] == list(
+        range(features.CANDIDATES)
+    )
 
 
 def test_missing_observations_clear_labels_and_preserve_schema(observation):
@@ -382,7 +426,6 @@ def test_retrieval_failures_stay_in_accuracy_denominator():
             "eligible": [True, True, False],
             "label_conflict": [False] * 3,
             "source": ["BTS"] * 3,
-            "airport_type": ["small_airport"] * 3,
             "nn_correct": [True, False, True],
             "nearest_correct": [False, False, True],
         }
@@ -391,6 +434,7 @@ def test_retrieval_failures_stay_in_accuracy_denominator():
     assert result["primary"]["endpoints"] == 2
     assert result["primary"]["nn_accuracy"] == 0.5
     assert result["primary"]["candidate_recall"] == 0.5
+    assert set(result) == {"primary"}
 
 
 def test_score_and_report_use_ids_for_correctness(tmp_path):
@@ -415,7 +459,6 @@ def test_score_and_report_use_ids_for_correctness(tmp_path):
             "candidate_idents": [["SAME"], ["NEW"]],
             "target": [0, 0],
             "eligible": [True, True],
-            "airport_type": ["small_airport", "small_airport"],
             "icao": ["a", "b"],
         }
     ).write_parquet(part.with_suffix(".parquet"))
@@ -446,7 +489,8 @@ def test_train_accepts_one_day_without_validation(tmp_path):
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(
         '{"date": "2026-03-01", "network": "adsblol", '
-        '"airport_identity": "ourairports_id", "parts": 1}'
+        f'"airport_identity": "ourairports_id", '
+        f'"feature_version": {features.VERSION}, "parts": 1}}'
     )
     x = np.zeros((2, features.CANDIDATES, features.POINTS, features.INPUT_SIZE))
     mask = np.zeros(x.shape[:3], dtype=bool)
@@ -461,7 +505,6 @@ def test_train_accepts_one_day_without_validation(tmp_path):
     pl.DataFrame(
         {
             "date": [str(day), str(day)],
-            "airport_type": ["large_airport", "small_airport"],
         }
     ).write_parquet(folder / "part-0000.parquet")
 
@@ -476,3 +519,5 @@ def test_train_accepts_one_day_without_validation(tmp_path):
 
     assert model_path == tmp_path / "model/model.pt"
     assert model_path.exists()
+    training = json.loads((model_path.parent / "training.json").read_text())
+    assert "class_weights" not in training

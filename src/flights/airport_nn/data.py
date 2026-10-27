@@ -15,7 +15,13 @@ from airports.runtime import airport_catalog_for_date, ensure_airport_history
 from data_engineering.adsb.canonical import adsb_day_dir
 from data_engineering.adsb.read_adsb import ADSBSource, read_adsb
 from data_engineering.utils import OUTPUT_DIR
-from flights.airport_nn.features import COLUMNS, clean_messages, pack, trajectories
+from flights.airport_nn.features import (
+    COLUMNS,
+    VERSION,
+    clean_messages,
+    pack,
+    trajectories,
+)
 from flights.flight_source import (
     flight_path,
     get_flights_for_catalog,
@@ -26,8 +32,7 @@ from flights.providers.sfdps import SFDPSFlightSource
 from flights.segmentation.algorithm import _segment_adsb_df
 from flights.workers import default_worker_count
 
-CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026"
-TYPES = ("large_airport", "medium_airport", "small_airport")
+CACHE = OUTPUT_DIR / "data/processed/flights_airport_nn/february-2026-10-21"
 METADATA_SCHEMA = {
     "date": pl.String,
     "icao": pl.String,
@@ -37,9 +42,7 @@ METADATA_SCHEMA = {
     "landing_time": pl.Datetime("ms"),
     "truth_id": pl.Int64,
     "truth_ident": pl.String,
-    "airport_type": pl.String,
     "source": pl.String,
-    "ground_supported": pl.Boolean,
     "label_conflict": pl.Boolean,
     "eligible": pl.Boolean,
     "nearest_id": pl.Int64,
@@ -64,6 +67,7 @@ def fingerprint(path):
 def references(day):
     """Read canonical BTS/SFDPS labels and flag metadata conflicts."""
     airport_catalog = airport_catalog_for_date(day)
+    # This defines the label domain; airport type is not stored as a model feature.
     valid_airport_ids = {
         airport.id
         for airport in airport_catalog.airports
@@ -171,38 +175,6 @@ def match_references(segments, refs):
     )
 
 
-def ground_support(messages, airport, boundary):
-    """Physical corroboration only; predictions never enter label selection."""
-    points = messages.filter(
-        (pl.col("time") - boundary).dt.total_seconds().abs() <= 900
-    )
-    if points.height < 3:
-        return False
-    lat, lon = (
-        np.radians(points["lat"].to_numpy()),
-        np.radians(points["lon"].to_numpy()),
-    )
-    alat, alon = np.radians([airport.lat, airport.lon])
-    distance = 12742 * np.arcsin(
-        np.sqrt(
-            np.clip(
-                np.sin((lat - alat) / 2) ** 2
-                + np.cos(lat) * np.cos(alat) * np.sin((lon - alon) / 2) ** 2,
-                0,
-                1,
-            )
-        )
-    )
-    elevation = float(airport.elevation_ft) if airport.elevation_ft else np.nan
-    low = (
-        np.abs(points["baro_altitude_ft"].cast(pl.Float64).to_numpy() - elevation)
-        <= 300
-    ) & (points["ground_speed_kt"].to_numpy() <= 100)
-    grounded = points["on_ground"].fill_null(False).to_numpy() | low
-    times = points["time"].dt.epoch("ms").to_numpy()[(distance <= 2) & grounded]
-    return bool(len(times) >= 3 and times[-1] - times[0] >= 10_000)
-
-
 def prepare_part(day, refs, path, parquet_root=None):
     start = datetime.combine(day, time())
     columns = COLUMNS + ["geom_altitude_ft", "callsign"]
@@ -248,7 +220,6 @@ def prepare_part(day, refs, path, parquet_root=None):
     matches = match_references(segments, refs)
     selected = segments.filter(pl.col("segment").is_in(matches["segment"].implode()))
     chosen = {k[0]: g for k, g in matches.partition_by("segment", as_dict=True).items()}
-    tracks = messages.partition_by("icao", as_dict=True)
     airport_catalog = airport_catalog_for_date(day)
     endpoints = list(trajectories(selected, messages, airport_catalog))
     rows = []
@@ -265,22 +236,6 @@ def prepare_part(day, refs, path, parquet_root=None):
             if truth_id is not None
             else None
         )
-        bts = truth_id is not None and (
-            labels.filter(
-                (pl.col("source") == "BTS")
-                & (pl.col(f"{endpoint.endpoint}_truth_id") == truth_id)
-            ).height
-            > 0
-        )
-        grounded = (
-            ground_support(
-                tracks[(flight["icao"],)],
-                truth_airport,
-                flight[f"{endpoint.endpoint}_time"],
-            )
-            if truth_id is not None
-            else False
-        )
         rows.append(
             {
                 "date": str(day),
@@ -291,12 +246,10 @@ def prepare_part(day, refs, path, parquet_root=None):
                 "landing_time": flight["landing_time"],
                 "truth_id": truth_id,
                 "truth_ident": truth_airport.ident if truth_airport else "",
-                "airport_type": truth_airport.type if truth_airport else "",
                 "source": "+".join(sorted(set(labels["source"]))),
-                "ground_supported": grounded,
                 "label_conflict": conflict,
                 "eligible": bool(
-                    truth_id is not None and (bts or grounded) and not conflict
+                    truth_id is not None and not conflict
                 ),
                 "nearest_id": endpoint.nearest_id,
                 "nearest_ident": endpoint.nearest_ident,
@@ -374,7 +327,8 @@ def prepare(days, output=CACHE, workers=None, batch_aircraft=256, parquet_root=N
             "parts": (len(aircraft) + batch_aircraft - 1) // batch_aircraft,
             "inputs": [fingerprint(p) for p in files],
             "airport_identity": "ourairports_id",
-            "labels": "Stable OurAirports IDs from BTS or ground-supported SFDPS; conflicts excluded",
+            "feature_version": VERSION,
+            "labels": "Stable OurAirports IDs from BTS or SFDPS; conflicts excluded",
             "segmentation": "Fresh native segments from this UTC day only; no cached airport guesses",
         }
         dest = folder / "manifest.json"

@@ -1,8 +1,9 @@
 # Airport neural network
 
-A 38,082-parameter GRU ranks nearby airports from each end of a segmented ADS-B
-flight. Inputs are airport-relative position, altitude, motion and airport
-characteristics. Aircraft/airport identities and reference labels are not inputs.
+A 37,314-parameter GRU ranks nearby airports from each end of a segmented ADS-B
+flight. Inputs are airport-relative position, altitude, motion and endpoint state.
+Airport size/type, scheduled-service status, aircraft/airport identities, and
+reference labels are not inputs.
 Training, evaluation and inference automatically prefer CUDA, then Apple MPS,
 and fall back to the CPU.
 
@@ -34,18 +35,34 @@ python -m flights.airport_nn.train \
 
 Training starts from random weights and refuses to overwrite a model directory.
 It saves `model.pt`, input provenance, epoch history and validation predictions.
-Checkpoint selection averages daily weighted cross entropy. Large/medium/small
-airports have loss weights 1/2/4.
+Checkpoint selection averages daily cross entropy. Every eligible endpoint has equal
+loss weight, regardless of airport size.
 Early stopping follows three epochs without improvement.
+
+To sweep **1, 2, 5, 10, 15, 20 and 24 training days**, run from the repository
+root with a fresh output directory:
+
+```bash
+python scripts/train_sweep.py --output outputs/airport-nn-sweep-24
+```
+
+The sweep uses the configured February cache (override with `--cache`). Each
+model trains on February 1 through N and validates on **February 25–27** so all
+seven sizes share the same held-out dates. This differs from the standalone
+trainer's split above; rerun smaller sizes with this split for a comparable curve.
+Each `days-NN/` directory contains `history.json`, `model.pt`, `training.json`
+and per-day validation reports in `validation/YYYY-MM-DD/metrics.json`.
 
 Preparation independently segments observations before matching references by
 aircraft and time, allowing 15 minutes at each end. Ambiguous matches, overlapping
-references and cross-UTC-day flights are excluded. BTS labels are accepted
-directly; SFDPS-only labels require three ground/low observations within 2 km over
-at least ten seconds. This supervision is imperfect and favors some traffic and
-reception conditions; measured agreement is not accuracy on all flights.
+references and cross-UTC-day flights are excluded. BTS and SFDPS labels are accepted
+without requiring ground/low-altitude observations near the labeled airport.
+Conflicting airport labels are excluded. This supervision is imperfect; measured
+agreement is not accuracy on all flights.
 
-Caches contain feature arrays, endpoint labels and a source manifest. Labels,
+Caches contain 20-column feature arrays, endpoint labels and a source manifest.
+Caches produced by earlier feature versions are incompatible and must be rebuilt.
+Labels,
 candidate membership, conflicts, targets and evaluation correctness all use the
 persistent OurAirports `id`; airport identifiers are retained only for display.
 Changed preparation inputs require a new cache directory. Candidate misses remain
@@ -90,10 +107,42 @@ Inference supports `adsblol`, `adsbx`, and `opensky`. It preserves the standard 
 and all fields except the two airport references (stable IDs and identifiers).
 Missing observations produce null airport references. Daily results use the
 canonical FlightSource layout under
-`data/flights/source=algorithm-nn/adsb_source=…/version=4/`. The model is not yet
-part of the source version, so regenerate a day when changing checkpoints. The
-default checkpoint remains
-`data/models/flights_airport_nn/algorithm-airport-refactored/model.pt`.
+`data/flights/source=algorithm-nn/adsb_source=…/version=9/`. This version and
+`opensky-nn` version 4 use the February 2026 20-day checkpoint by default.
+Custom checkpoints still require regenerating the corresponding flight cache.
+The default checkpoint is
+`outputs/airport-nn-february-2026-10-21-days-20/model.pt`.
+
+For a provider comparison with the same ADS-B observation window, use:
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn --gold-source bts \
+  --adsb-source adsblol adsbx opensky --test-dates 2026-03-01 \
+  --target-day-adsb
+```
+
+This reads exactly `[2026-03-01 00:00, 2026-03-02 00:00)` UTC for every
+provider, before segmentation and airport inference. The flag applies to
+ADS-B flight sources on either side of the comparison. It changes the input
+window, not the flight-scoring rules. Omitting it preserves provider-specific
+windows. The flag takes no value. Each date in `--test-dates` gets its own window.
+
+Target-day-only runs have separate flight and evaluation caches, including
+reused `algorithm-nearest` segments. CSV output includes the boolean
+`target_day_adsb`. Use `--list-cache --target-day-adsb` to list only evaluations
+using the target day's observations.
+
+To generate flight files with the same target-day-only inputs, use:
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 algorithm-nn \
+  --adsb-source adsblol --target-day-adsb
+```
+
+The flag applies separately to each day in the `[start, end)` range and requires
+an ADS-B flight source. Bad-day checks, release preparation, and
+`--no-save-adsb-downloads` cleanup use only the target days in this mode.
 
 The canonical `flights.cli` command automatically reuses a matching cached
 `algorithm-nearest` day and reads only the trajectory columns needed by the NN.
@@ -122,6 +171,63 @@ python -m flights.airport_nn.train --cache /tmp/airport-nn-cache \
   --output /tmp/airport-nn-model --epochs 1 --train-dates 2026-03-01 \
   --validation-dates
 ```
+
+### OpenSky segments with NN airports
+
+The `opensky-nn` source keeps the published `opensky` flights (including their
+`firstseen`/`lastseen` boundaries, row order, and metadata) and replaces their
+departure/arrival airport IDs and identifiers with the same NN used by
+`algorithm-nn`. It always uses canonical OpenSky ADS-B observations. The
+`--adsb-source` option does not change this source's observation provider.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-nn
+python -m flights.evaluation.evaluation \
+  --test-source opensky-nn --gold-source bts \
+  --test-dates 2026-03-01
+```
+
+Both commands accept `--airport-nn-model /path/to/model.pt`; the default is the
+same checkpoint as `algorithm-nn`. Published flights are read through the
+catalog-aware `opensky` cache. Building that cache requires the departure day's
+and following day's downloaded `flights_data4` partitions. OpenSky observation
+data must cover the flights through their latest arrivals, including overnight
+arrivals.
+
+Inference reads observations in batches of at most 2,048 published flights.
+For each flight, it selects the same aircraft's first and last ten minutes,
+clipped to the supplied boundaries, and samples at most 32 observations per
+endpoint. Original OpenSky airport labels are not model inputs. Flights without
+usable endpoint observations remain in the output with null airport references.
+
+Output is cached under
+`data/flights/source=opensky-nn/adsb_source=opensky/version=4/` with OpenSky
+observation provenance. As with `algorithm-nn`, regenerate flight files with
+`flights.cli` when changing checkpoints, then use evaluation's `--refresh-cache`.
+`--workers` parallelizes days for this source; each day's flight batches run
+sequentially. `--target-day-adsb` is not supported for `opensky-nn`.
+
+### OpenSky segments with nearest airports
+
+`opensky-nearest` preserves the same published OpenSky segments and metadata as
+`opensky-nn`, replacing only the airport IDs and identifiers. It chooses the
+geographically nearest airport to the first/last valid OpenSky position within
+one-minute endpoint windows, clipped to the flight boundaries. There
+is no distance or altitude cutoff. Missing endpoint observations leave null
+airport references. No model checkpoint is needed.
+
+```bash
+python -m flights.cli 2026-03-01 2026-03-02 opensky-nearest
+python -m flights.evaluation.evaluation \
+  --test-source opensky-nearest --gold-source bts \
+  --test-dates 2026-03-01
+```
+
+It uses the same published-flight cache, OpenSky observation provider, batching,
+and overnight read coverage as `opensky-nn`. Its independent output cache is
+`data/flights/source=opensky-nearest/adsb_source=opensky/version=2/`.
+`--adsb-source` does not change its observation provider, and `--target-day-adsb`
+is not supported.
 
 ## Code
 

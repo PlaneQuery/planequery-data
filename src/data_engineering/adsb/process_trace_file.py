@@ -1,12 +1,14 @@
 """Process one adsb.lol trace file into ADS-B message parquet columns."""
 
 import gzip
-import math
 import zlib
 from pathlib import Path
 
 import orjson
 
+from data_engineering.adsb.deduplication import (
+    dedupe_cols_by_time_icao as _dedupe_cols_by_time_icao,
+)
 from data_engineering.adsb.parquet_schema import COLUMNS
 
 def _str_or_none(v):
@@ -26,115 +28,6 @@ def _to_int(v):
         return int(v)
     except (TypeError, ValueError):
         return None
-
-
-DEDUPE_KEY_COLUMNS = ("time", "icao")
-DEDUPE_SCORE_EXCLUDE_COLUMNS = set(DEDUPE_KEY_COLUMNS)
-DEDUPE_PRIORITY_WEIGHTS = {
-    # Prefer rows with real aircraft state over rows that only have metadata.
-    "lat": 8,
-    "lon": 8,
-    "baro_altitude_ft": 8,
-    "geom_altitude_ft": 8,
-    "baro_rate_fpm": 10,
-    "geom_rate_fpm": 10,
-    "ground_speed_kt": 8,
-    "indicated_airspeed_kt": 6,
-    "true_airspeed_kt": 6,
-    "mach": 6,
-    "track_deg": 8,
-    "track_rate_deg_s": 6,
-    "roll_deg": 6,
-    "magnetic_heading_deg": 6,
-    "true_heading_deg": 6,
-    "flags": 4,
-    "type": 4,
-}
-
-
-def _has_information(v) -> bool:
-    """Return True when a field contains useful information for dedupe scoring."""
-    if v is None:
-        return False
-    if isinstance(v, float) and math.isnan(v):
-        return False
-    if isinstance(v, str):
-        return bool(v.strip())
-    if isinstance(v, (list, tuple, set, dict)):
-        return bool(v)
-    return True
-
-
-def _row_information_score(cols: dict[str, list], row_idx: int) -> int:
-    """Score a row by populated fields, prioritizing aircraft state over metadata."""
-    return sum(
-        DEDUPE_PRIORITY_WEIGHTS.get(col, 1)
-        for col in COLUMNS
-        if col not in DEDUPE_SCORE_EXCLUDE_COLUMNS
-        and _has_information(cols[col][row_idx])
-    )
-
-
-def _merge_duplicate_rows(cols: dict[str, list], row_indices: list[int]) -> dict:
-    """Build one row by combining non-empty values from all duplicate rows.
-
-    The highest-scoring aircraft-state row wins when multiple duplicates have
-    different non-empty values for the same column. Missing values in that row
-    are backfilled from the other duplicates, so metadata-only rows and
-    measurement-rich rows are collapsed into one combined output row.
-    """
-    ranked_indices = sorted(
-        row_indices,
-        key=lambda row_idx: _row_information_score(cols, row_idx),
-        reverse=True,
-    )
-    merged = {}
-
-    for col in COLUMNS:
-        if col in DEDUPE_KEY_COLUMNS:
-            merged[col] = cols[col][ranked_indices[0]]
-            continue
-
-        # Pick the first informative value in priority order. If every
-        # duplicate is empty for this column, preserve the top-ranked row value.
-        merged[col] = cols[col][ranked_indices[0]]
-        for row_idx in ranked_indices:
-            value = cols[col][row_idx]
-            if _has_information(value):
-                merged[col] = value
-                break
-
-    return merged
-
-
-def _dedupe_cols_by_time_icao(cols: dict[str, list]) -> tuple[dict[str, list], int]:
-    """Merge duplicate (time, icao) rows, keeping the most informative values."""
-    row_count = len(cols["time"])
-    if row_count < 2:
-        return cols, 0
-
-    rows_by_key: dict[tuple, list[int]] = {}
-    for row_idx in range(row_count):
-        key = tuple(cols[col][row_idx] for col in DEDUPE_KEY_COLUMNS)
-        rows_by_key.setdefault(key, []).append(row_idx)
-
-    duplicate_count = sum(len(row_indices) - 1 for row_indices in rows_by_key.values())
-
-    if duplicate_count == 0:
-        return cols, 0
-
-    deduped_cols = {col: [] for col in COLUMNS}
-    for row_indices in rows_by_key.values():
-        if len(row_indices) == 1:
-            for col in COLUMNS:
-                deduped_cols[col].append(cols[col][row_indices[0]])
-            continue
-
-        merged = _merge_duplicate_rows(cols, row_indices)
-        for col in COLUMNS:
-            deduped_cols[col].append(merged[col])
-
-    return deduped_cols, duplicate_count
 
 
 def process_file(

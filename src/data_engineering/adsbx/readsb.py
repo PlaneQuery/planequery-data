@@ -18,6 +18,7 @@ from data_engineering.adsb.canonical import (
     adsb_parquet_root,
     mark_adsb_day_complete,
 )
+from data_engineering.adsb.deduplication import merge_duplicate_rows
 from data_engineering.adsb.parquet_schema import COLUMNS, PARQUET_SCHEMA
 from data_engineering.adsb.partitions import ICAO_BUCKET_COUNT, icao_bucket
 from data_engineering.adsbx.download_readsb_day import download_complete_path
@@ -129,7 +130,12 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
         return False
     if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 0 <= seen_pos <= now):
         return False
-    position_time = now - seen_pos
+    # ``now`` and ``seen_pos`` are decimal-second values from JSON. Subtracting
+    # their binary floats before truncating can make one unchanged position
+    # alternate between adjacent milliseconds across snapshots (for example,
+    # 1772324227597 and 1772324227598). Quantize each source value first so a
+    # repeated readsb position has one stable canonical timestamp.
+    position_time_ms = round(now * 1000) - round(seen_pos * 1000)
 
     altitude = aircraft.get("alt_baro")
     on_ground = altitude == "ground"
@@ -139,7 +145,7 @@ def _append_aircraft(cols: dict[str, list], aircraft: dict, now: float) -> bool:
     no_reg_data = bool(no_reg_data_raw) if no_reg_data_raw is not None else None
     military, interesting, pia, ladd = _db_flags(aircraft.get("dbFlags"))
 
-    cols["time"].append(int(position_time * 1000))
+    cols["time"].append(position_time_ms)
     cols["icao"].append(icao)
     cols["callsign"].append(_str_or_none(aircraft.get("flight")))
     cols["registration"].append(_str_or_none(aircraft.get("r")))
@@ -255,13 +261,60 @@ def _bucketed_output_paths(input_path: Path, output_root: Path) -> dict[int, Pat
 def _extend_bucket_cols(
     batch_cols_by_bucket: dict[int, dict[str, list]],
     snapshot_cols: dict[str, list],
+    pending_rows_by_icao: dict[str, list[tuple]],
+) -> tuple[dict[int, int], int]:
+    """Merge repeated positions and emit aircraft only when their time advances."""
+    row_counts_by_bucket = {bucket: 0 for bucket in range(ICAO_BUCKET_COUNT)}
+    duplicate_count = 0
+    for row_idx, icao in enumerate(snapshot_cols["icao"]):
+        row = tuple(snapshot_cols[column][row_idx] for column in COLUMNS)
+        pending_rows = pending_rows_by_icao.get(icao)
+        if pending_rows is None:
+            pending_rows_by_icao[icao] = [row]
+            continue
+
+        pending_time = pending_rows[0][0]
+        row_time = row[0]
+        if row_time < pending_time:
+            raise ValueError(
+                "ADSBX position time moved backwards for "
+                f"{icao}: {row_time} follows {pending_time}"
+            )
+        if row_time == pending_time:
+            pending_rows.append(row)
+            duplicate_count += 1
+            continue
+
+        bucket = _append_merged_rows(
+            batch_cols_by_bucket,
+            pending_rows,
+        )
+        row_counts_by_bucket[bucket] += 1
+        pending_rows_by_icao[icao] = [row]
+
+    return row_counts_by_bucket, duplicate_count
+
+
+def _append_merged_rows(
+    batch_cols_by_bucket: dict[int, dict[str, list]],
+    rows: list[tuple],
+) -> int:
+    merged = merge_duplicate_rows(rows)
+    bucket = icao_bucket(merged[1])
+    for column, value in zip(COLUMNS, merged):
+        batch_cols_by_bucket[bucket][column].append(value)
+    return bucket
+
+
+def _flush_pending_rows(
+    batch_cols_by_bucket: dict[int, dict[str, list]],
+    pending_rows_by_icao: dict[str, list[tuple]],
 ) -> dict[int, int]:
     row_counts_by_bucket = {bucket: 0 for bucket in range(ICAO_BUCKET_COUNT)}
-    for row_idx, icao in enumerate(snapshot_cols["icao"]):
-        bucket = icao_bucket(icao)
-        for col in COLUMNS:
-            batch_cols_by_bucket[bucket][col].append(snapshot_cols[col][row_idx])
+    for rows in pending_rows_by_icao.values():
+        bucket = _append_merged_rows(batch_cols_by_bucket, rows)
         row_counts_by_bucket[bucket] += 1
+    pending_rows_by_icao.clear()
     return row_counts_by_bucket
 
 
@@ -318,6 +371,8 @@ def write_readsb_day_to_bucketed_parquet(
         bucket: None
         for bucket in range(ICAO_BUCKET_COUNT)
     }
+    pending_rows_by_icao: dict[str, list[tuple]] = {}
+    duplicate_rows_seen = 0
     skipped_files = []
 
     try:
@@ -329,7 +384,12 @@ def write_readsb_day_to_bucketed_parquet(
                 print(f"skipping {path.name}: {type(exc).__name__}: {exc}")
                 continue
 
-            row_counts = _extend_bucket_cols(batch_cols_by_bucket, snapshot_cols)
+            row_counts, duplicate_count = _extend_bucket_cols(
+                batch_cols_by_bucket,
+                snapshot_cols,
+                pending_rows_by_icao,
+            )
+            duplicate_rows_seen += duplicate_count
             for bucket, row_count in row_counts.items():
                 batch_count_by_bucket[bucket] += row_count
                 total_rows_by_bucket[bucket] += row_count
@@ -348,6 +408,14 @@ def write_readsb_day_to_bucketed_parquet(
 
             if index % 500 == 0:
                 print(f"processed {index:,}/{len(files):,} files")
+
+        row_counts = _flush_pending_rows(
+            batch_cols_by_bucket,
+            pending_rows_by_icao,
+        )
+        for bucket, row_count in row_counts.items():
+            batch_count_by_bucket[bucket] += row_count
+            total_rows_by_bucket[bucket] += row_count
 
         for bucket in range(ICAO_BUCKET_COUNT):
             if batch_count_by_bucket[bucket]:
@@ -375,6 +443,7 @@ def write_readsb_day_to_bucketed_parquet(
     mark_adsb_day_complete(day_dir)
     print(f"wrote bucketed parquet under: {output_root}")
     print(f"total rows written: {total_rows:,}")
+    print(f"duplicate (icao, time) rows merged: {duplicate_rows_seen:,}")
     return parquet_paths
 
 
