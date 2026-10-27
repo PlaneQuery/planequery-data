@@ -359,8 +359,10 @@ provider. Both endpoint counts must match exactly; differing or unavailable
 counts stay in separate cells. Accuracy and drop cells remain method-specific.
 The final **Drop (pp)** column gives training minus nontraining accuracy for
 each method, separately for takeoff and landing. Positive means lower accuracy
-on nontraining airports; negative means higher accuracy. Differences use the
-unrounded rates and are undefined if either group has no matched endpoints.
+on nontraining airports; negative means higher accuracy. Displayed differences
+subtract the displayed accuracies after rounding to `--decimals`, so the table's
+arithmetic agrees. CSV differences retain the unrounded rates. Differences are
+undefined if either group has no matched endpoints.
 The CSV includes `accuracy_drop_pp` on both group rows for each method/endpoint;
 it is the same paired difference, not a value to sum across groups.
 Accuracy is the existing `airport_accuracy`: correct airport IDs divided by

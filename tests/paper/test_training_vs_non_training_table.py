@@ -128,6 +128,32 @@ def test_drop_is_paired_by_method_endpoint_and_provider(tmp_path):
     assert "50.00 / 0.00" in latex
 
 
+@pytest.mark.parametrize("decimals, displayed_drop", [(0, "11"), (1, "11.0"),
+                                                     (2, "10.95"), (3, "10.956")])
+def test_displayed_drop_matches_rounded_accuracies_and_csv_keeps_precision(
+    tmp_path, decimals, displayed_drop,
+):
+    rows = exposure_rows()
+    for row in rows:
+        training = row["airport_group"] == "training"
+        if row["endpoint"] == "landing":
+            training = not training
+        correct, count = (1082, 1108) if training else (18600, 21454)
+        row.update(correct_count=correct, matched_endpoint_count=count,
+                   airport_accuracy=correct / count)
+    result = run_export(tmp_path, rows, "--decimals", str(decimals))
+    assert result.returncode == 0, result.stderr
+    folder = tmp_path / "tables/test"
+    latex = (folder / "test_training_vs_non_training.tex").read_text()
+    assert f" & {displayed_drop} / -{displayed_drop}" in latex
+    with (folder / "test_training_vs_non_training.csv").open() as stream:
+        exported = list(csv.DictReader(stream))
+    unrounded_drop = 100 * (1082 / 1108 - 18600 / 21454)
+    for row in exported:
+        sign = 1 if row["endpoint"] == "takeoff" else -1
+        assert float(row["accuracy_drop_pp"]) == pytest.approx(sign * unrounded_drop)
+
+
 @pytest.mark.parametrize("change, message", [
     ("missing_method", "Incomplete selection"),
     ("mixed_training", "one training manifest"),
