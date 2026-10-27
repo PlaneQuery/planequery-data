@@ -34,7 +34,27 @@ def run_export(tmp_path, rows, *options):
         writer.writerows(rows)
     return subprocess.run([sys.executable, str(SCRIPT), str(source),
                            "--output-dir", str(tmp_path / "tables"), "--prefix", "test",
-                           "--require-complete", *options], capture_output=True, text=True)
+                          "--require-complete", *options], capture_output=True, text=True)
+
+
+def test_default_stem_and_label_match_paper(tmp_path):
+    source = tmp_path / "exposure.csv"
+    rows = exposure_rows()
+    with source.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(source), "--output-dir", str(tmp_path / "tables"),
+         "--require-complete"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    latex_path = (tmp_path / "tables/feb_mar_june_2026/"
+                  "feb_mar_june_2026_training_vs_non_training.tex")
+    latex = latex_path.read_text()
+    assert r"\caption{Eurocontrol algorithm airport accuracy" in latex
+    assert r"\label{tab:feb-mar-june-2026-training-vs-non-training}" in latex
 
 
 def test_export_percentages_and_zero_denominators(tmp_path):
@@ -55,12 +75,12 @@ def test_export_percentages_and_zero_denominators(tmp_path):
     latex = (folder / "test_training_vs_non_training.tex").read_text()
     assert "75.00 / 75.00" in latex
     assert "--- / ---" in latex
-    assert "OpenSky ADS-B" in latex
+    assert "Some airports in Eurocontrol are also present in the training data" in latex
     assert "NN / OpenSky" not in latex
     assert latex.count(r"\multirow{2}{*}{4 / 4}") == 1
     assert latex.count(r"\multirow{2}{*}{0 / 0}") == 1
     assert "NN &  & 75.00 / 75.00 &  & --- / ---" in latex
-    assert r"\caption{Eurocontrol airport accuracy" in latex
+    assert r"\caption{Eurocontrol algorithm airport accuracy" in latex
     assert "2024-06-01" in latex
     assert r"\textbf{Eurocontrol" not in latex
     assert "Continued on next page" not in latex

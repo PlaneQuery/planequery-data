@@ -56,8 +56,9 @@ def test_complete_export_and_filtering(tmp_path, nn_only):
     assert {row["gold_src"] for row in exported} == {"bts", "sfdps", "eurocontrol"}
     assert {row["gold_icao_missing_from_test_percent"] for row in exported} == {"20.0"}
     latex = (folder / "table_1_adsb_sources.tex").read_text()
+    assert r"\caption{Flight segmentation and airport accuracy by ADS-B source}" in latex
     assert r"\label{tab:table-1-adsb-sources}" in latex
-    assert "Target-day-only ADS-B input: true" in latex
+    assert r"\noindent\begin{minipage}" not in latex
     assert "75.00 / 62.50" in latex
     assert "Time bias" not in latex
     assert r"\shortstack{Zero flights\\ICAOs (\%)}" in latex

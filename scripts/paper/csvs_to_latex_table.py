@@ -398,6 +398,7 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
                   prefix: str, decimals: int, *,
                   caption: str = "Flight evaluation by reference dataset",
                   note: str | None = None,
+                  include_note: bool = False,
                   label_suffix: str = "-reference-summary",
                   method_labels: dict[str, str] | None = None) -> str:
     """One compact table: reference datasets as groups, methods/providers as rows."""
@@ -507,8 +508,11 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         note += " Method suffixes identify the ADS-B provider."
     if len(windows) == 1:
         note += f" Target-day-only ADS-B input: {next(iter(windows))}."
-    lines.extend([r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
-                  latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""])
+    lines.append(r"\end{longtable}")
+    if include_note:
+        lines.append(r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
+                     latex_escape(note) + r"\end{minipage}\par")
+    lines.extend([r"\endgroup", ""])
     return "\n".join(lines)
 
 
@@ -618,9 +622,11 @@ def prepare_rows(rows: list[dict[str, Any]], selected: dict[str, tuple[Metric, .
 
 
 def export_tables(rows: list[dict[str, Any]], output_dir: Path, prefix: str,
-                  selected: dict[str, tuple[Metric, ...]], decimals: int) -> list[Path]:
+                  selected: dict[str, tuple[Metric, ...]], decimals: int,
+                  include_note: bool = False) -> list[Path]:
     # Validate all shared counts before replacing any existing export files.
-    rendered = {name: (summary_latex(rows, metrics, prefix, decimals)
+    rendered = {name: (summary_latex(rows, metrics, prefix, decimals,
+                                     include_note=include_note)
                        if name == "reference_summary" else
                        latex_table(rows, name, TABLES[name], metrics, prefix, decimals))
                 for name, metrics in selected.items()}
@@ -680,6 +686,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-complete", action="store_true", default=True,
                         help="Require all requested comparisons and selected metrics (now always enabled; retained for compatibility).")
     parser.add_argument("--decimals", type=int, default=2, help="LaTeX decimals (CSV retains numeric precision).")
+    parser.add_argument("--include-note", action="store_true",
+                        help="Include the commented explanatory note after summary tables.")
     args = parser.parse_args(argv)
     if any(source.endswith("-verified") for source in
            [*(args.test_source or []), *(args.gold_source or [])]):
@@ -742,7 +750,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("No metrics selected for the requested tables.")
         warnings = prepare_rows(rows, selected, args.require_complete)
         output_dir = args.output_dir.expanduser() / prefix
-        outputs = export_tables(rows, output_dir, prefix, selected, args.decimals)
+        outputs = export_tables(rows, output_dir, prefix, selected, args.decimals,
+                                args.include_note)
         manifest = output_dir / f"{prefix}_manifest.json"
         manifest.write_text(json.dumps({
             "input_mode": "csv" if args.csvs else "evaluation_cache",
@@ -757,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
             ],
             "daily_rows": len(rows), "average_rows": "excluded; no cross-day aggregation",
             "csv_percent_scale": "0-100", "latex_decimals": args.decimals,
+            "latex_include_note": args.include_note,
             "filters": {key: getattr(args, key) for key in (
                 "test_source", "gold_source", "adsb_source", "date", "target_day_adsb",
             )},
