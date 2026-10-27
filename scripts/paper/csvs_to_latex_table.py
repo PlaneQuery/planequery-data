@@ -483,7 +483,8 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         for index, row in enumerate(group_rows):
             method = {"algorithm-nearest": "Nearest", "algorithm-nn": "NN",
                       "opensky": "OpenSky", "opensky-nn": "OpenSky-NN",
-                      "opensky-nearest": "OpenSky-Nearest"}.get(row["test_src"], row["test_src"])
+                      "opensky-nearest": "OpenSky-Nearest",
+                      "adsbx": "ADS-B Exchange"}.get(row["test_src"], row["test_src"])
             method = (method_labels or {}).get(row["test_src"], method)
             if show_provider and row["adsb_src"]:
                 provider = provider_labels.get(row["adsb_src"], row["adsb_src"])
