@@ -20,6 +20,19 @@ def _parquet_path(d: date) -> Path:
     )
 
 
+def sort_sfdps_messages(df: pl.DataFrame) -> pl.DataFrame:
+    """Order timestamp ties by numeric sequence, then by message contents.
+
+    Null sequences sort last. Content ordering makes null or duplicate
+    sequences deterministic too; identical rows are interchangeable.
+    """
+    sequence = "sup_msg_seq_no"
+    df = df.with_columns(pl.col(sequence).cast(pl.UInt64))
+    primary = ["gufi", "timestamp", sequence]
+    fallback = sorted(column for column in df.columns if column not in primary)
+    return df.sort([*primary, *fallback], nulls_last=True)
+
+
 def read_sfdps(current_day: datetime) -> pl.DataFrame:
     d = current_day.date()
     if not _parquet_path(d).exists():
@@ -27,7 +40,11 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
     columns_needed = [
         "gufi",
         "timestamp",
+        "sup_msg_seq_no",
         "aircraft_identification",
+        "aircraft_address",
+        "aircraft_registration",
+        "aircraft_type",
         "flight_status",
         "departure_point",
         "departure_actual_time",
@@ -38,7 +55,6 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
     ]
     df = pl.read_parquet(_parquet_path(d), columns=columns_needed)
     df = df.rename({
-        "aircraft_identification": "callsign",
         "flight_status": "flightStatus",
         "departure_point": "takeoff_airport_icao",
         "departure_actual_time": "takeoff_time",
@@ -55,17 +71,25 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
         for c in time_cols
     ])
 
-    df = df.filter(pl.col("timestamp").dt.date() == d)
     df = df.filter(pl.col("flightStatus").is_not_null())
-    df = df.sort("timestamp")
+    df = sort_sfdps_messages(df)
 
-    state_keys = ["flightStatus", "landing_time", "takeoff_time", "takeoff_airport_icao", "landing_airport_icao"]
+    state_keys = [
+        "flightStatus",
+        "landing_time",
+        "takeoff_time",
+        "takeoff_airport_icao",
+        "landing_airport_icao",
+        "aircraft_address",
+        "aircraft_registration",
+        "aircraft_type",
+        "aircraft_identification",
+    ]
 
     def compress_gufi(group: pl.DataFrame) -> pl.DataFrame:
         """Keep only rows where state_keys change within a single gufi group."""
         return (
-            group
-            .sort("timestamp")
+            sort_sfdps_messages(group)
             .with_columns([
                 pl.any_horizontal([
                     (pl.col(col) != pl.col(col).shift(1)).fill_null(True) |
@@ -77,16 +101,31 @@ def read_sfdps(current_day: datetime) -> pl.DataFrame:
             .group_by("_run_id")
             .last()
             .drop("_changed", "_run_id")
-            .sort("timestamp")
+            .pipe(sort_sfdps_messages)
         )
 
     df = (
         df
         .group_by("gufi")
         .map_groups(compress_gufi)
-        .sort(["gufi", "timestamp"])
+        .pipe(sort_sfdps_messages)
     )
-    df = df.select(["gufi", "timestamp", "callsign", "flightStatus", "takeoff_time", "takeoff_airport_icao", "landing_time", "landing_airport_icao", "estimated_landing_time", "estimated_takeoff_time"])
+    df = df.select([
+        "gufi",
+        "timestamp",
+        "sup_msg_seq_no",
+        "aircraft_identification",
+        "aircraft_address",
+        "aircraft_registration",
+        "aircraft_type",
+        "flightStatus",
+        "takeoff_time",
+        "takeoff_airport_icao",
+        "landing_time",
+        "landing_airport_icao",
+        "estimated_landing_time",
+        "estimated_takeoff_time",
+    ])
     return df
 
 

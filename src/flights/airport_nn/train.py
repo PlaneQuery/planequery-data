@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from flights.airport_nn.data import CACHE, TYPES, fingerprint
+from flights.airport_nn.data import CACHE, fingerprint
 from flights.airport_nn.evaluate import (
     files_for,
     iter_parts,
@@ -17,7 +17,13 @@ from flights.airport_nn.evaluate import (
     score,
     write_report,
 )
-from flights.airport_nn.features import ALTITUDE, ELAPSED, GAP, VERSION
+from flights.airport_nn.features import (
+    ALTITUDE,
+    ELAPSED,
+    GAP,
+    MISSING_ALTITUDE,
+    VERSION,
+)
 from flights.airport_nn.model import AirportRanker, default_device, load_model
 from flights.airport_nn.source import DEFAULT_MODEL_PATH
 
@@ -78,13 +84,12 @@ def train(
         "validation_label_sources": ["SFDPS", "BTS"],
         "buffer_dates": list(map(str, buffer_days)),
         "test_dates": list(map(str, test_days)),
-        "selection": "mean daily weighted CE; weights large=1 medium=2 small=4; retrieval misses retained in accuracy, excluded from CE",
+        "selection": "mean daily cross entropy; retrieval misses retained in accuracy, excluded from CE",
         "test_exposure": "Both final benchmark dates were evaluated in earlier experiments; fixed benchmarks, not untouched tests",
         "seed": seed,
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": 0.001,
-        "class_weights": dict(zip(TYPES, (1, 2, 4))),
         "inputs": {
             key: [
                 fingerprint(p)
@@ -123,14 +128,10 @@ def train(
         for part_index, (_, x, mask, target, eligible, metadata) in enumerate(
             iter_parts(shuffled), 1
         ):
-            types = metadata["airport_type"].to_list()
             if not set(metadata["date"].to_list()) <= set(spec["train_dates"]):
                 raise ValueError(
                     "Optimizer input contains a date outside the training split"
                 )
-            weights = np.array(
-                [spec["class_weights"].get(t, 1) for t in types], np.float32
-            )
             order = np.flatnonzero(eligible & (target >= 0))
             rng.shuffle(order)
             for start in range(0, len(order), batch_size):
@@ -146,14 +147,13 @@ def train(
                     values[:, :, :, GAP] += elapsed
                     values[:, :, 0, 2:4] = 0  # no preceding sample after a prefix cut
                 noise = torch.randn(len(ix), 1, 1, device=device) * 0.0075
-                values[..., ALTITUDE] += noise * (values[..., 18] == 0)
+                values[..., ALTITUDE] += noise * (
+                    values[..., MISSING_ALTITUDE] == 0
+                )
                 y = torch.as_tensor(target[ix], device=device, dtype=torch.long)
-                w = torch.as_tensor(weights[ix], device=device)
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(values, valid)
-                loss = (
-                    torch.nn.functional.cross_entropy(logits, y, reduction="none") * w
-                ).sum() / w.sum()
+                loss = torch.nn.functional.cross_entropy(logits, y)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()

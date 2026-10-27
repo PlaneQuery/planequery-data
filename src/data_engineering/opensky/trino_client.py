@@ -176,11 +176,57 @@ def opensky_credentials_from_environment() -> tuple[str, str]:
     return username.lower(), password
 
 
+def arrow_schema_from_description(description: list) -> pa.Schema:
+    """Build nullable Arrow fields from Trino state-vector column metadata.
+
+    Never infer types from row values: entire batches (including the first)
+    can contain only nulls or empty arrays.
+    """
+    def arrow_type(type_name: str) -> pa.DataType:
+        normalized = type_name.strip().lower()
+        scalar_types = {
+            "boolean": pa.bool_(),
+            "tinyint": pa.int64(),
+            "smallint": pa.int64(),
+            "integer": pa.int64(),
+            "bigint": pa.int64(),
+            "real": pa.float64(),
+            "double": pa.float64(),
+            "varchar": pa.string(),
+            "char": pa.string(),
+        }
+        if normalized in scalar_types:
+            return scalar_types[normalized]
+        if normalized.startswith(("varchar(", "char(")):
+            return pa.string()
+        if normalized.startswith("array(") and normalized.endswith(")"):
+            return pa.list_(arrow_type(normalized[6:-1]))
+        raise ValueError(f"Unsupported Trino type: {type_name}")
+
+    return pa.schema([
+        pa.field(column[0], arrow_type(column[1]), nullable=True)
+        for column in description
+    ])
+
+
 def rows_to_arrow(
     rows: list[tuple[Any, ...]],
     columns: list[str],
+    *,
+    schema: pa.Schema | None = None,
 ) -> pa.Table:
     """Convert one batch of Trino DB-API rows into an Arrow table."""
+    if schema is not None:
+        if schema.names != columns:
+            raise ValueError("Arrow schema names do not match Trino columns")
+        values_by_column = zip(*rows) if rows else [[] for _ in schema]
+        return pa.Table.from_arrays(
+            [
+                pa.array(values, type=field.type)
+                for values, field in zip(values_by_column, schema)
+            ],
+            schema=schema,
+        )
     if not rows:
         return pa.table({column: [] for column in columns})
 

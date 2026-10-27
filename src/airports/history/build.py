@@ -121,15 +121,20 @@ def _commits_from_baseline(
     baseline_date: date,
 ) -> list[CommitRecord]:
     commits = _airports_commits(repository)
+    if not commits:
+        raise ValueError("Airport repository contains no airports.csv history")
     baseline_start = datetime.combine(
         baseline_date,
         time.min,
         tzinfo=timezone.utc,
     )
     seed_index = max(
-        index
-        for index, (_, committed_at) in enumerate(commits)
-        if committed_at < baseline_start
+        (
+            index
+            for index, (_, committed_at) in enumerate(commits)
+            if committed_at < baseline_start
+        ),
+        default=0,
     )
     return commits[seed_index:]
 

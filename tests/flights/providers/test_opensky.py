@@ -61,7 +61,7 @@ def test_opensky_source_reads_and_normalizes_trino_download(monkeypatch):
         "landing_airport_id",
         "landing_airport_ident",
     ).row(0) == (101, "KAAA", 202, "KBBB")
-    assert OPENSKY_SOURCE.version == 3
+    assert OPENSKY_SOURCE.version == 4
 
 
 def test_opensky_source_keeps_flights_with_unresolved_airports(monkeypatch):

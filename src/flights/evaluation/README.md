@@ -7,12 +7,80 @@ negatives while test-only aircraft are outside the evaluation cohort. Daily
 comparison details and metric rows are cached under
 `OUTPUT_DIR/data/cache/evaluation`.
 
+Matching uses the full UTC departure day as context. After matching, only rows
+whose gold departure falls within 01:00–23:00 UTC (inclusive) are scored;
+unmatched test flights use their own departure time for this check. A test
+flight matched to gold outside the window is excluded along with that gold
+flight, rather than counted as a false positive. Landing after midnight does
+not exclude a flight. The margins equal the one-hour matching tolerance.
+Aircraft-presence metrics use the full-day inputs before this window filter.
+
+BTS excludes an aircraft's entire UTC takeoff day when a non-cancelled,
+non-diverted report is missing `air_time`, `wheels_on`, or `arr_delay`. The
+exclusion uses the mapped ICAO and also removes that aircraft's diversion legs
+on the affected day, while retaining its other days. Departure timing determines
+the UTC day; when the departure day is uncertain, the exclusion covers the
+reported local day and a possible overnight departure (including their UTC date
+boundaries). Diversion reports use their separate timing fields and do not
+trigger this missing-field rule. BTS cache version 16 and BTS-verified version 2
+apply this policy.
+
 ## Get or create evaluation data
 
 A normal run checks the cache first and calculates only missing combinations of
 date, test source, gold source, and, where applicable, ADS-B source. Multiple
 values form the full combination set. The CSV contains every metric column by
 default.
+
+`takeoff_airport_id_null_count` and `landing_airport_id_null_count` count
+missing resolved airport IDs in retained **test-source** flights, including
+unmatched test flights. Their corresponding `_null_pct` columns divide by
+`true_positive + false_positive` (stored as fractions from 0 to 1; zero when
+there are no retained test flights). Gold-only rows are excluded, as are
+test-only aircraft and flights discarded by the comparison's boundary grace
+period. This includes OpenSky flights with missing or unresolved airports.
+Existing airport match metrics still use matched flights only, and null
+airports remain incorrect matches. Console output also displays null counts
+and formatted percentages. These metrics are included in CSVs, cached stats,
+and daily averages.
+
+`takeoff_airport_id_non_null_match_pct` and
+`landing_airport_id_non_null_match_pct` report accuracy among matched flights
+whose corresponding **test-source** airport ID is non-null. Each divides the
+airport match count by its `_non_null_count` column. Unmatched flights are
+excluded; a non-null test airport with a null gold airport still counts as
+incorrect. Values are fractions from 0 to 1, or zero if no eligible airports
+exist. These columns are available for all sources and are also displayed as
+formatted percentages for OpenSky. They are included in CSVs, cached stats,
+and daily averages.
+
+Timing quality is reported with the following columns:
+
+The existing `recall` column is segmentation recall: matched flights divided
+by matched plus unmatched retained gold flights.
+
+| Column | Meaning |
+| --- | --- |
+| `median_max_endpoint_time_error_minutes` | Median, among matched flights, of the larger absolute takeoff/landing error |
+| `p90_max_endpoint_time_error_minutes` | 90th percentile of that matched-flight maximum endpoint error |
+| `both_endpoints_within_5m_recall` | Retained gold flights matched with both endpoint errors at most 5 minutes, divided by all retained gold flights |
+| `both_endpoints_within_15m_recall` | The same recall at 15 minutes |
+| `both_endpoints_within_30m_recall` | The same recall at 30 minutes |
+| `takeoff_time_bias_minutes` | Mean signed matched-flight takeoff difference, test minus gold |
+| `landing_time_bias_minutes` | Mean signed matched-flight landing difference, test minus gold |
+
+The median, P90, and bias columns use only `match_status == "both"`; they are
+null when no flights match. Threshold recall includes unmatched gold flights
+in its denominator, so a source cannot improve by matching only easy flights.
+Negative bias means the test source is early and positive bias means it is
+late. For multi-date output, timing metrics in the `average` row are recomputed
+from all underlying flight comparisons instead of averaging daily medians,
+percentiles, or rates. Existing non-timing columns retain their daily-average
+behavior. The matcher itself requires both endpoint differences to be at most
+one hour, so the matched-only error distribution is bounded by that rule.
+
+Cache version 9 adds these timing metrics and recalculates older evaluations
+on demand.
 
 ```bash
 python -m flights.evaluation.evaluation \
@@ -38,6 +106,132 @@ python -m flights.evaluation.evaluation \
 ```
 
 Use `--refresh-cache` to recalculate and replace matching entries.
+
+## Additional segmentation baselines
+
+`sun`, [`openap`](../openap/README.md),
+[`plane-notify`](../plane_notify/README.md), and
+[`traffic`](../traffic/README.md) are available through the same
+evaluation interface as `algorithm-nearest`:
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nearest sun openap plane-notify traffic \
+  --gold-source bts sfdps bts-verified sfdps-verified \
+  --adsb-source adsblol --test-dates 2026-03-01
+```
+
+Traffic requires `pip install -e '.[traffic]'` and uses upstream default
+aircraft/callsign grouping and ten-minute gap splitting. Its endpoints are
+observation bounds, including ground reports, rather than detected takeoff/landing.
+
+OpenAP requires the optional `pip install -e '.[openap]'` dependency. Its
+additional diagnostic report can be generated with
+`PYTHONPATH=src python scripts/paper/evaluate_openap.py`; it uses the current
+standard evaluator and includes source versions and matched endpoint errors.
+Historical reports from the source worktrees are not current-policy benchmarks
+and are not imported here.
+
+## Compare training and nontraining airports
+
+Add `--airport-nn-training /path/to/training.json` to optionally report airport
+accuracy by exposure to positive training labels:
+
+```bash
+python -m flights.evaluation.evaluation \
+  --test-source algorithm-nn \
+  --gold-source sfdps bts-verified \
+  --adsb-source adsblol \
+  --test-dates 2026-03-01 \
+  --airport-nn-training "$PWD/outputs/airport-nn-february-2026-10-21-days-20/training.json"
+```
+
+Verified test and gold sources (`eurocontrol-verified`, `sfdps-verified`, and
+`bts-verified`) always use ADSB.lol for verification, including EUROCONTROL
+callsign enrichment. `--adsb-source` selects the provider for ADS-B-derived
+comparison sources only, so provider comparisons share the same verified
+reference cohort. Verified flight caches use the `adsb_source=adsblol` partition;
+evaluation caches remain separate when the comparison source varies by provider.
+
+`--target-day-adsb` also limits EUROCONTROL verification to the target UTC day
+([00:00, next 00:00)), with separate flight and evaluation caches. Without the
+flag, verification extends through each aircraft's overnight arrivals. With
+the flag, overnight flights must have sufficient callsign observations before
+midnight to pass verification. BTS and SFDPS verification already read only
+the target day.
+
+Use the manifest belonging to the evaluated checkpoint (selected separately
+with `--airport-nn-model` when needed). Only Parquet metadata files explicitly
+listed in `inputs["train"]` are read. A relative manifest argument resolves under
+`OUTPUT_DIR`. Each metadata file is located by its dataset/date/filename suffix
+under `OUTPUT_DIR/data/processed/flights_airport_nn`, for example
+`OUTPUT_DIR/data/processed/flights_airport_nn/february-2026/2026-02-01/part-0000.parquet`.
+The recorded machine prefix does not affect local lookup, and the raw manifest
+is never modified. The files must exist under the configured output directory.
+Membership uses rows with `eligible == True` and `target >= 0`, combining
+takeoff and landing labels. Numeric `truth_id` labels are used directly; airport
+codes in `truth` are resolved to IDs through the catalog for each training date.
+Unresolved codes raise an error. Validation files and NPZ feature arrays are
+not required.
+
+Two additional CSVs are written alongside the normal stats CSV, using the same
+filename stem:
+
+- `*_airport_exposure.csv`: six rows per daily comparison—takeoff and landing,
+  each split into `training`, `nontraining`, and `unknown` gold-airport groups.
+- `*_training_airports.csv`: the training airport IDs and their contributing
+  endpoint counts, preserving the membership used for that report.
+
+Each endpoint is grouped by its **gold** airport ID, independently of the
+other endpoint or the prediction. The summary preserves date, test/gold
+source, ADS-B provider, and input-window settings, and records the manifest
+path and SHA-256. Counts and rates have these definitions:
+
+| Column | Meaning |
+| --- | --- |
+| `gold_endpoint_count` | Retained matched and unmatched gold endpoints in the group |
+| `gold_airport_count` | Distinct known gold airport IDs across those endpoints |
+| `matched_endpoint_count` | Endpoints on matched flights |
+| `matched_airport_count` | Distinct known gold airport IDs on matched flights |
+| `correct_count` | Matched endpoints whose predicted airport ID equals gold |
+| `incorrect_count` | Matched endpoints with an incorrect or null prediction |
+| `null_prediction_count` | Matched endpoints with no predicted airport ID |
+| `airport_accuracy` | Correct / matched endpoints (flight weighted) |
+| `airport_macro_accuracy` | Mean of each airport's matched-endpoint accuracy (equal airport weight) |
+| `flight_match_coverage` | Matched / all retained gold endpoints |
+| `correct_endpoint_recall` | Correct / all retained gold endpoints |
+
+Unknown gold airport IDs have counts and flight-match coverage but null
+correct/incorrect counts and accuracy/recall metrics. Rates with an empty
+denominator are null, rather than zero. Rates are fractions from 0 to 1.
+Test-only rows and flights previously discarded by the boundary grace period
+are excluded. Results remain daily; the report does not average daily rates.
+
+`nontraining` means absent from positive training labels. It can include airports
+seen during validation or as negative candidates, so it is not a claim of no
+model exposure. Use evaluation dates outside the training dates when measuring
+generalization; comparing airport types within each group can help distinguish
+airport composition from training effects.
+
+The report is derived after matching and reuses cached comparisons. It does not
+change cache keys or cached stats. Without the option, training files are never
+read and no additional CSVs are written. `--columns` still controls only the
+normal stats CSV. `--list-cache` lists stats only and cannot be combined with
+this option; run the normal evaluation command to reuse detailed cache entries.
+
+The same report can be created from an existing Python result without running
+another evaluation:
+
+```python
+from pathlib import Path
+from flights.evaluation.airport_exposure import (
+    airport_exposure_report,
+    load_training_airports,
+)
+
+training = load_training_airports(Path("/path/to/training.json"))
+report = airport_exposure_report(results, training)
+```
 
 ## Inspect existing cache entries
 

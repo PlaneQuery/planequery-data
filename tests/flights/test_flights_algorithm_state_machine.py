@@ -1,14 +1,18 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import polars as pl
+import pytest
 
+from flights.flight_type import FLIGHT_POLARS_SCHEMA
 from airports.models import (
     Airport,
     AirportMatch,
     AirportMatchProvenance,
     AirportType,
 )
+from airports.matcher import AirportMatcher
 from flights.segmentation import algorithm
 from flights.segmentation.algorithm import (
     AdsbPositionMessage,
@@ -194,6 +198,74 @@ def test_complete_aircraft_batches_match_one_shot_segmentation():
     assert actual.equals(expected)
 
 
+def test_algorithm_source_stitches_a_flight_across_utc_midnight(monkeypatch):
+    from data_engineering.adsb.read_adsb import ADSBSource
+    from flights import flight_source
+    from flights.algorithm import AlgorithmNearestFlightSource
+
+    target_date = START.date()
+    flight_start = START + timedelta(hours=23, minutes=55)
+    messages = [
+        replace(
+            message(index, altitude, on_ground=False),
+            time=flight_start + timedelta(minutes=index),
+        )
+        for index, altitude in enumerate(
+            [
+                1_000,
+                5_000,
+                10_000,
+                20_000,
+                30_000,
+                30_000,
+                25_000,
+                18_000,
+                10_000,
+                5_000,
+                1_000,
+                500,
+            ]
+        )
+    ]
+    frame = pl.from_dicts([item.__dict__ for item in messages])
+    reads = []
+
+    def read_adsb(
+        start,
+        end,
+        *,
+        source,
+        columns=None,
+        lazy=False,
+        icaos=None,
+    ):
+        reads.append((start, end, source, lazy, icaos))
+        return frame.lazy() if lazy else frame
+
+    monkeypatch.setattr(flight_source, "read_adsb", read_adsb)
+
+    flights = flight_source.get_flights_for_catalog(
+        AlgorithmNearestFlightSource(),
+        target_date,
+        fake_airport_catalog(),
+        ADSBSource.ADSBLOL,
+        use_cache=False,
+    )
+
+    assert flights.height == 1
+    assert flights.select("takeoff_time", "landing_time").row(0) == (
+        flight_start,
+        flight_start + timedelta(minutes=11),
+    )
+    assert len(reads) == 2
+    assert all(
+        start == START - timedelta(days=1)
+        and end == START + timedelta(days=2)
+        and source is ADSBSource.ADSBLOL
+        for start, end, source, _, _ in reads
+    )
+
+
 def test_combined_segment_counts_match_individual_collectors():
     messages = [
         replace(
@@ -264,6 +336,43 @@ def test_airport_assignment_does_not_decide_if_a_flight_exists(monkeypatch):
         "takeoff_airport_id",
         "landing_airport_id",
     ).row(0) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    "nearby_type",
+    [AirportType.SMALL_AIRPORT, AirportType.MEDIUM_AIRPORT, AirportType.LARGE_AIRPORT],
+)
+def test_airport_assignment_uses_closest_endpoint_independently(nearby_type):
+    closest = fake_airport_catalog().airport
+    nearby = replace(closest, id=102, ident="NEARBY", type=nearby_type, lon=0.04)
+    airports = (closest, nearby)
+    catalog = SimpleNamespace(
+        matcher=AirportMatcher(
+            airports,
+            {a.id: AirportMatchProvenance.KNOWN_ON_FLIGHT_DATE for a in airports},
+            {a.id: "test-commit" for a in airports},
+        ),
+        id_index={a.id: a for a in airports},
+    )
+    segments = [
+        algorithm.FlightSegment(
+            icao=ICAO,
+            takeoff_time=START + timedelta(minutes=start),
+            landing_time=START + timedelta(minutes=start + 10),
+            takeoff_message=message(start, 1000, lon=lon),
+            landing_message=message(start + 10, 0, on_ground=True, lon=lon),
+        )
+        for start, lon in [(0, 0.0), (20, 0.04)]
+    ]
+
+    flights = _segments_to_flights_df(segments, catalog)
+
+    # A larger nearby airport and the next departure must not override
+    # the airport closest to the first flight's own endpoint positions.
+    assert flights.select("takeoff_airport_id", "landing_airport_id").rows() == [
+        (101, 101),
+        (102, 102),
+    ]
 
 
 def test_marks_new_leg_during_ground_interval_between_descent_and_climb():
@@ -395,3 +504,34 @@ def test_default_worker_count_is_capped_at_eight(monkeypatch):
     monkeypatch.setattr(algorithm, "default_worker_count", lambda: 32)
 
     assert algorithm._number_of_workers_default() == 8
+
+
+@pytest.mark.parametrize("endpoint", ["first", "last"])
+@pytest.mark.parametrize("altitude_kind", ["baro", "geom"])
+def test_flight_altitude_can_first_appear_after_schema_inference_window(
+    endpoint, altitude_kind
+):
+    takeoff = message(0, None)
+    landing = message(10, None)
+    segment = algorithm.FlightSegment(
+        icao=ICAO,
+        takeoff_time=takeoff.time,
+        landing_time=landing.time,
+        takeoff_message=takeoff,
+        landing_message=landing,
+    )
+    message_field = "takeoff_message" if endpoint == "first" else "landing_message"
+    populated_message = replace(
+        getattr(segment, message_field),
+        **{f"{altitude_kind}_altitude_ft": 150},
+    )
+    segments = [segment] * 100 + [
+        replace(segment, **{message_field: populated_message})
+    ]
+
+    flights = _segments_to_flights_df(segments, fake_airport_catalog())
+
+    assert flights.schema == FLIGHT_POLARS_SCHEMA
+    assert flights[f"{endpoint}_{altitude_kind}_altitude_ft"].to_list() == (
+        [None] * 100 + [150]
+    )

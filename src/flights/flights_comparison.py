@@ -51,84 +51,42 @@ def _haversine_expr(
     )
 
 
-MAX_TIME_DIFF = timedelta(hours=1)
+MAX_FLIGHT_MATCH_TIME_DELTA = timedelta(hours=1)
 
 
 def compare_flight(
     f0: Flight,
     f1: Flight,
-    compare_airports: bool = True,
+    max_flight_match_time_delta: timedelta = MAX_FLIGHT_MATCH_TIME_DELTA,
 ) -> bool:
     if (
-        abs(f0.takeoff_time - f1.takeoff_time) > MAX_TIME_DIFF
-        or abs(f0.landing_time - f1.landing_time) > MAX_TIME_DIFF
+        abs(f0.takeoff_time - f1.takeoff_time) > max_flight_match_time_delta
+        or abs(f0.landing_time - f1.landing_time) > max_flight_match_time_delta
     ):
         return False
-    if compare_airports:
-        if (
-            f0.takeoff_airport_id is None
-            or f0.landing_airport_id is None
-            or f0.takeoff_airport_id != f1.takeoff_airport_id
-            or f0.landing_airport_id != f1.landing_airport_id
-        ):
-            return False
     return True
 
 
 def flights_comparison(
     flights_0: list[Flight],
     flights_1: list[Flight],
-    start_dt,
-    end_dt,
-    grace_period=timedelta(minutes=30),
-    compare_airports=True,
 ):
     """Compare flight lists assigned to the same UTC takeoff day."""
-    f0_series: list[int | str | None] = [None] * len(flights_0)
-    f1_series: list[int | str | None] = [None] * len(flights_1)
+    f0_series: list[int | None] = [None] * len(flights_0)
 
-    i1_start = 0
-
-    for i0, f0 in enumerate(flights_0):
-        for j in range(i1_start, len(flights_1)):
-            if f1_series[j] is not None:
-                continue
-
-            if compare_flight(f0, flights_1[j], compare_airports):
-                f0_series[i0] = j
-                f1_series[j] = i0
-                i1_start = j + 1
+    j1_start = 0
+    
+    for i in range(len(flights_0)):
+        f0 = flights_0[i]
+        for j in range(j1_start, len(flights_1)):
+            f1 = flights_1[j]
+            does_match = compare_flight(f0, f1)
+            if does_match:
+                f0_series[i] = j
+                j1_start = j + 1
                 break
 
-    if (
-        f0_series
-        and f0_series[0] is None
-        and flights_0[0].takeoff_time - start_dt <= grace_period
-    ):
-        f0_series[0] = "DISCARD"
-
-    if (
-        f1_series
-        and f1_series[0] is None
-        and flights_1[0].takeoff_time - start_dt <= grace_period
-    ):
-        f1_series[0] = "DISCARD"
-
-    if (
-        f0_series
-        and f0_series[-1] is None
-        and end_dt - flights_0[-1].takeoff_time <= grace_period
-    ):
-        f0_series[-1] = "DISCARD"
-
-    if (
-        f1_series
-        and f1_series[-1] is None
-        and end_dt - flights_1[-1].takeoff_time <= grace_period
-    ):
-        f1_series[-1] = "DISCARD"
-
-    return f0_series, f1_series
+    return f0_series
 
 
 def df_flights_comparison(
@@ -137,8 +95,6 @@ def df_flights_comparison(
     start_dt,
     end_dt,
     airport_catalog: AirportCatalogView,
-    grace_period=timedelta(minutes=30),
-    compare_airports=True,
 ):
     df_0 = _with_comparison_endpoint_columns(df_0)
     df_1 = add_lat_lon_to_airport_columns(
@@ -164,33 +120,18 @@ def df_flights_comparison(
         df1 = df_1_by_icao.get(key, df_1.clear())
         flights_0 = flights_df_to_flights(df0)
         flights_1 = flights_df_to_flights(df1)
-        match_0, match_1 = flights_comparison(
+        match_0 = flights_comparison(
             flights_0,
             flights_1,
-            start_dt,
-            end_dt,
-            grace_period,
-            compare_airports,
         )
-        discard_0 = [x == "DISCARD" for x in match_0]
+        df0 = df0.with_row_index("idx")
 
-        df0 = (
-            df0.with_row_index("idx")
-            .with_columns(
-                pl.Series("discard", discard_0, dtype=pl.Boolean),
-            )
-            .filter(~pl.col("discard"))
-        )
-
-        row_map_1 = [None if x == "DISCARD" else x for x in match_1]
-        discard_1 = [x == "DISCARD" for x in match_1]
-        df1 = (
-            df1
-            .with_columns(
-                pl.Series("row_map", row_map_1, dtype=pl.UInt32),
-                pl.Series("discard", discard_1, dtype=pl.Boolean),
-            )
-            .filter(~pl.col("discard"))
+        row_map_1: list[int | None] = [None] * len(flights_1)
+        for df0_index, df1_index in enumerate(match_0):
+            if isinstance(df1_index, int):
+                row_map_1[df1_index] = df0_index
+        df1 = df1.with_columns(
+            pl.Series("row_map", row_map_1, dtype=pl.UInt32),
         )
         df = df0.join(
             df1,
@@ -215,7 +156,7 @@ def df_flights_comparison(
             .otherwise(pl.lit("df1_only"))
             .alias("match_status")
         )
-        df = df.drop(["idx", "row_map", "discard"])
+        df = df.drop(["idx", "row_map"])
         df = df.with_columns(pl.lit(icao).alias("icao"))
 
         dfs.append(df)

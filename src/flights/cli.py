@@ -3,20 +3,26 @@ import multiprocessing
 import shutil
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Sequence
 
 from data_engineering.adsb.read_adsb import ADSBSource
+from data_engineering.adsb.known_bad_days import ADSBLOL_SKIP_DAYS
 from flights.algorithm import AlgorithmNearestFlightSource
-from flights.airport_nn import AlgorithmNNFlightSource
+from flights.airport_nn import AlgorithmNNFlightSource, OpenSkyNNFlightSource
 from flights.flight_source import (
     ADSBFlightSource,
     FlightSource,
     flight_path,
     write_flights,
 )
-from flights.providers.mike import MikeFlightSource
+from flights.sun import SunFlightSource
+from flights.openap import OpenAPFlightSource
+from flights.opensky_reverse_eng import OpenSkyReverseEngFlightSource
+from flights.plane_notify import PlaneNotifyFlightSource
+from flights.traffic import TrafficFlightSource
+from flights.providers.eurocontrol import EurocontrolFlightSource
 from flights.sources import (
     ALGORITHM_NN_SOURCE,
     FLIGHT_SOURCES,
@@ -29,6 +35,11 @@ from planequery_data.utils import date_range
 PARALLEL_ALGORITHM_SOURCES = (
     AlgorithmNearestFlightSource,
     AlgorithmNNFlightSource,
+    SunFlightSource,
+    OpenAPFlightSource,
+    OpenSkyReverseEngFlightSource,
+    PlaneNotifyFlightSource,
+    TrafficFlightSource,
 )
 _RANGE_WORKER_SOURCE: FlightSource | None = None
 _RANGE_WORKER_ADSB_SOURCE: ADSBSource | None = None
@@ -38,6 +49,31 @@ def default_workers_for_source(source: FlightSource) -> int:
     if isinstance(source, PARALLEL_ALGORITHM_SOURCES):
         return default_worker_count()
     return 1
+
+
+def adsb_dates_for_run(
+    source: ADSBFlightSource,
+    target_dates: Sequence[date],
+    adsb_source: ADSBSource = ADSBSource.ADSBLOL,
+) -> list[date]:
+    """Return every ADS-B partition needed by the source read windows."""
+    input_dates = set()
+    for target_date in target_dates:
+        start, end = source.adsb_input_interval(
+            target_date,
+            adsb_source,
+        )
+        if not isinstance(start, datetime):
+            start = datetime.combine(start, datetime.min.time())
+        end = end if end is not None else start + timedelta(days=1)
+        if end <= start:
+            continue
+        final_date = (end - timedelta(microseconds=1)).date()
+        input_dates.update(
+            start.date() + timedelta(days=offset)
+            for offset in range((final_date - start.date()).days + 1)
+        )
+    return sorted(input_dates)
 
 
 def _downloaded_adsb_paths(
@@ -138,6 +174,25 @@ def write_flights_range(
         raise ValueError("workers must be positive")
 
     target_dates = list(date_range(start_date, end_date))
+    if isinstance(source, ADSBFlightSource) and source_adsb is ADSBSource.ADSBLOL:
+        valid_dates = []
+        for target_date in target_dates:
+            bad_days = ADSBLOL_SKIP_DAYS.intersection(
+                adsb_dates_for_run(source, [target_date], source_adsb)
+            )
+            if bad_days:
+                print(
+                    f"[SKIP] {source.name} flights for {target_date}: "
+                    f"requires known bad adsblol day(s): "
+                    f"{', '.join(map(str, sorted(bad_days)))}",
+                    flush=True,
+                )
+            else:
+                valid_dates.append(target_date)
+        target_dates = valid_dates
+    if not target_dates:
+        return
+
     within_day_parallel = (
         len(target_dates) == 1
         and isinstance(source, PARALLEL_ALGORITHM_SOURCES)
@@ -192,17 +247,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=ADSBSource,
         choices=tuple(ADSBSource),
         default=ADSBSource.ADSBLOL,
-        help="ADS-B provider used by ADS-B flight sources (default: adsblol).",
+        help=(
+            "ADS-B provider for flight sources, verified sources, or "
+            "EUROCONTROL callsigns (default: adsblol)."
+        ),
+    )
+    parser.add_argument(
+        "--target-day-adsb",
+        action="store_true",
+        help=(
+            "Use only each target UTC day's ADS-B data ([00:00, next 00:00)), "
+            "before segmentation and inference. Requires an ADS-B flight "
+            "source. Default: provider-specific windows."
+        ),
     )
     parser.add_argument(
         "--airport-nn-model",
         type=Path,
-        help=f"Checkpoint used by {ALGORITHM_NN_SOURCE.name}.",
-    )
-    parser.add_argument(
-        "--mike-input",
-        type=Path,
-        help="Input CSV used by the mike source.",
+        help="Checkpoint used by algorithm-nn or opensky-nn.",
     )
     parser.add_argument(
         "--workers",
@@ -217,8 +279,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-save-adsb-downloads",
         action="store_true",
         help=(
-            "After the run, remove ADS-B release archives, extracted traces, "
-            "and canonical ADS-B Parquet created by this invocation. Existing "
+            "Process at most --workers days per batch and remove ADS-B release "
+            "archives, extracted traces, and canonical ADS-B Parquet created "
+            "by this invocation after their last required batch. Existing "
             "cached data and the generated flight Parquet are preserved."
         ),
     )
@@ -230,20 +293,28 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.workers is not None and args.workers < 1:
         raise SystemExit("--workers must be positive")
     source = FLIGHT_SOURCES_BY_NAME[args.source]
-    if args.mike_input is not None:
-        assert isinstance(source, MikeFlightSource)
-        source = replace(source, input_csv=args.mike_input)
+    if isinstance(source, EurocontrolFlightSource):
+        source = replace(source, callsign_source=args.adsb_source)
     if args.airport_nn_model is not None:
-        assert isinstance(source, AlgorithmNNFlightSource)
+        assert isinstance(source, (AlgorithmNNFlightSource, OpenSkyNNFlightSource))
         source = replace(source, model_path=args.airport_nn_model)
+    if args.target_day_adsb:
+        if not isinstance(source, ADSBFlightSource):
+            raise SystemExit("--target-day-adsb requires an ADS-B flight source")
+        source = replace(source, target_day_adsb=True)
     if args.no_save_adsb_downloads and not isinstance(source, ADSBFlightSource):
         raise SystemExit("--no-save-adsb-downloads requires an ADS-B flight source")
 
     target_dates = list(date_range(args.start_date, args.end_date))
+    input_dates = (
+        adsb_dates_for_run(source, target_dates, args.adsb_source)
+        if isinstance(source, ADSBFlightSource)
+        else target_dates
+    )
     downloaded_paths: tuple[Path, ...] = ()
     preexisting_paths: set[Path] = set()
     if args.no_save_adsb_downloads:
-        downloaded_paths = _downloaded_adsb_paths(args.adsb_source, target_dates)
+        downloaded_paths = _downloaded_adsb_paths(args.adsb_source, input_dates)
         preexisting_paths = {path for path in downloaded_paths if path.exists()}
 
     try:
@@ -255,18 +326,43 @@ def main(argv: Sequence[str] | None = None) -> None:
                 prepare_releases_for_run,
             )
 
-            prepare_releases_for_run({day.year for day in target_dates})
+            prepare_releases_for_run({day.year for day in input_dates})
         kwargs = {
             "adsb_source": args.adsb_source,
         }
         if args.workers is not None:
             kwargs["workers"] = args.workers
-        write_flights_range(
-            args.start_date,
-            args.end_date,
-            source,
-            **kwargs,
-        )
+        if args.no_save_adsb_downloads:
+            # Do not enqueue the whole range: fast workers could otherwise
+            # download months of data before the parent gets to cleanup.
+            batch_size = args.workers or default_workers_for_source(source)
+            last_use = {}
+            for target_date in target_dates:
+                for input_date in adsb_dates_for_run(
+                    source, [target_date], args.adsb_source
+                ):
+                    last_use[input_date] = target_date
+            for offset in range(0, len(target_dates), batch_size):
+                batch = target_dates[offset : offset + batch_size]
+                write_flights_range(
+                    batch[0], batch[-1] + timedelta(days=1), source, **kwargs
+                )
+                # Adjacent flight days share input partitions. Wait until all
+                # readers have finished, including readers in later batches.
+                expired = [day for day, last in last_use.items() if last <= batch[-1]]
+                _remove_new_downloaded_adsb_paths(
+                    _downloaded_adsb_paths(args.adsb_source, expired),
+                    preexisting_paths,
+                )
+                for day in expired:
+                    del last_use[day]
+        else:
+            write_flights_range(
+                args.start_date,
+                args.end_date,
+                source,
+                **kwargs,
+            )
     finally:
         if args.no_save_adsb_downloads:
             _remove_new_downloaded_adsb_paths(

@@ -36,10 +36,10 @@ def create_opensky_flights(
 
 @dataclass(frozen=True)
 class OpenSkyTrinoFlightSource(NonADSBFlightSource):
-    """Flights read directly from a downloaded OpenSky Trino partition."""
+    """Flights grouped by takeoff day from downloaded OpenSky Trino partitions."""
 
     name: str = "opensky"
-    version: int = 3
+    version: int = 4
 
     def create_flights_for_day(
         self,

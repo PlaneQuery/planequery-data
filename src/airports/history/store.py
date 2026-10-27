@@ -150,7 +150,7 @@ class AirportHistory:
         return str(self.metadata["latest_commit_sha"])
 
     def airports_as_of(self, day: date) -> pl.DataFrame:
-        boundary = _next_midnight(day)
+        boundary = self._snapshot_boundary(day)
         return (
             pl.scan_parquet(self.paths.airport_versions)
             .filter(
@@ -168,7 +168,7 @@ class AirportHistory:
         return self.airports_as_of(day)
 
     def aliases_as_of(self, day: date) -> pl.DataFrame:
-        boundary = _next_midnight(day)
+        boundary = self._snapshot_boundary(day)
         return (
             pl.scan_parquet(self.paths.alias_versions)
             .filter(
@@ -187,7 +187,7 @@ class AirportHistory:
         cutoff_date: date,
     ) -> pl.DataFrame:
         start = _midnight(start_date)
-        end = _next_midnight(cutoff_date)
+        end = self._snapshot_boundary(cutoff_date)
         return (
             pl.scan_parquet(self.paths.alias_versions)
             .filter(
@@ -200,8 +200,13 @@ class AirportHistory:
             .collect()
         )
 
+    def _snapshot_boundary(self, day: date) -> datetime:
+        """Use the earliest stored snapshot for dates before history begins."""
+        first = datetime.fromisoformat(str(self.metadata["first_committed_at"]))
+        return max(_next_midnight(day), first + timedelta(microseconds=1))
+
     def commit_as_of(self, day: date) -> Commit:
-        boundary = _next_midnight(day)
+        boundary = self._snapshot_boundary(day)
         row = (
             pl.scan_parquet(self.paths.commits)
             .filter(

@@ -24,7 +24,7 @@ from flights.evaluation.models import (
 from flights.flight_source import ADSBFlightSource, FlightSource
 
 
-EVALUATION_CACHE_VERSION = 3
+EVALUATION_CACHE_VERSION = 12
 RESULT_FILENAME = "result.parquet"
 STATS_FILENAME = "stats.parquet"
 MANIFEST_FILENAME = "manifest.json"
@@ -192,15 +192,24 @@ class EvaluationCacheKey:
             test_date,
         )
 
+        adsb_source_types = (ADSBFlightSource,)
         source_uses_adsb = isinstance(
             test_source,
-            ADSBFlightSource,
-        ) or isinstance(gold_source, ADSBFlightSource)
+            adsb_source_types,
+        ) or isinstance(gold_source, adsb_source_types)
         normalized_adsb_source: str | None = None
         adsb_parquet_version: int | None = None
         if source_uses_adsb and adsb_source is not None:
             normalized_adsb_source = adsb_source.value
-            adsb_parquet_version = ADSB_PARQUET_VERSIONS[adsb_source]
+            uses_canonical = any(
+                isinstance(source, adsb_source_types)
+                and source.flight_manifest(
+                    airport_catalog.provenance, adsb_source
+                ).adsb_parquet_version is not None
+                for source in (test_source, gold_source)
+            )
+            if uses_canonical:
+                adsb_parquet_version = ADSB_PARQUET_VERSIONS[adsb_source]
 
         return cls(
             test_date=test_date,

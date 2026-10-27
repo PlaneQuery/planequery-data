@@ -1,0 +1,399 @@
+{
+  "date": "2026-03-01",
+  "method": "Within each reference, join time-only matches to the same reference flight by ICAO, reference departure time, and reference arrival time. Both sources use OpenSky observations.",
+  "matching_tolerance_seconds": 3600,
+  "sign_convention": "predicted time minus reference time: positive means late, negative means early",
+  "references": {
+    "bts": {
+      "version": 13,
+      "reference_flights": 18036,
+      "algorithm_matched_flights": 17449,
+      "opensky_matched_flights": 17311,
+      "standard_cohort": {
+        "flights": 17051,
+        "endpoints": {
+          "takeoff": {
+            "algorithm": {
+              "median_absolute_seconds": 36.706,
+              "mean_absolute_seconds": 58.65557926221336,
+              "p90_absolute_seconds": 102.528,
+              "p95_absolute_seconds": 170.23000000000002,
+              "median_signed_seconds": 36.612,
+              "mean_signed_seconds": 55.906130314937535,
+              "earlier_pct": 10.17535628408891,
+              "later_pct": 89.8246437159111,
+              "within_60_seconds_pct": 73.81385255996716,
+              "within_300_seconds_pct": 97.74206791390534,
+              "over_600_seconds_pct": 0.6861767638261685
+            },
+            "opensky": {
+              "median_absolute_seconds": 51.0,
+              "mean_absolute_seconds": 112.13952260864465,
+              "p90_absolute_seconds": 240.0,
+              "p95_absolute_seconds": 426.0,
+              "median_signed_seconds": 51.0,
+              "mean_signed_seconds": 110.99296228960178,
+              "earlier_pct": 3.47780188845229,
+              "later_pct": 95.59556624244912,
+              "within_60_seconds_pct": 56.75326960295584,
+              "within_300_seconds_pct": 92.27611283795672,
+              "over_600_seconds_pct": 3.002756436572635
+            },
+            "algorithm_closer_count": 12240,
+            "algorithm_closer_pct": 71.78464606181456,
+            "opensky_closer_count": 4793,
+            "opensky_closer_pct": 28.10978828221219,
+            "equal_error_count": 18,
+            "equal_error_pct": 0.1055656559732567,
+            "algorithm_closer_by_over_60s_pct": 15.060700252184622,
+            "opensky_closer_by_over_60s_pct": 0.2111313119465134,
+            "errors_within_60s_of_each_other_pct": 84.72816843586887,
+            "median_paired_absolute_error_difference_seconds": 7.683,
+            "mean_paired_absolute_error_difference_seconds": 53.483943346431296
+          },
+          "landing": {
+            "algorithm": {
+              "median_absolute_seconds": 52.392,
+              "mean_absolute_seconds": 111.76102645006158,
+              "p90_absolute_seconds": 270.041,
+              "p95_absolute_seconds": 498.362,
+              "median_signed_seconds": 40.793,
+              "mean_signed_seconds": 39.76378781303149,
+              "earlier_pct": 21.382910093249663,
+              "later_pct": 78.61708990675034,
+              "within_60_seconds_pct": 56.6418391883174,
+              "within_300_seconds_pct": 91.16767345023752,
+              "over_600_seconds_pct": 3.442613336461205
+            },
+            "opensky": {
+              "median_absolute_seconds": 32.0,
+              "mean_absolute_seconds": 123.58219459269252,
+              "p90_absolute_seconds": 373.0,
+              "p95_absolute_seconds": 667.0,
+              "median_signed_seconds": -8.0,
+              "mean_signed_seconds": -86.59492111899596,
+              "earlier_pct": 61.72658495102926,
+              "later_pct": 38.15025511700193,
+              "within_60_seconds_pct": 70.5119934314703,
+              "within_300_seconds_pct": 88.48161398158466,
+              "over_600_seconds_pct": 5.870623423846109
+            },
+            "algorithm_closer_count": 6089,
+            "algorithm_closer_pct": 35.71051551228667,
+            "opensky_closer_count": 10959,
+            "opensky_closer_pct": 64.27189021171779,
+            "equal_error_count": 3,
+            "equal_error_pct": 0.017594275995542783,
+            "algorithm_closer_by_over_60s_pct": 14.110609348425312,
+            "opensky_closer_by_over_60s_pct": 20.080933669579494,
+            "errors_within_60s_of_each_other_pct": 65.80845698199519,
+            "median_paired_absolute_error_difference_seconds": -6.82,
+            "mean_paired_absolute_error_difference_seconds": 11.82116814263093
+          }
+        },
+        "combined_endpoints": {
+          "algorithm_mean_absolute_seconds": 85.20830285613746,
+          "opensky_mean_absolute_seconds": 117.86085860066859
+        }
+      },
+      "both_sources_within_15_minutes": {
+        "flights": 16206,
+        "endpoints": {
+          "takeoff": {
+            "algorithm": {
+              "median_absolute_seconds": 35.997,
+              "mean_absolute_seconds": 52.66515691719117,
+              "p90_absolute_seconds": 97.4425,
+              "p95_absolute_seconds": 152.0445,
+              "median_signed_seconds": 35.941,
+              "mean_signed_seconds": 50.11503745526348,
+              "earlier_pct": 10.36653091447612,
+              "later_pct": 89.63346908552387,
+              "within_60_seconds_pct": 74.73775145008021,
+              "within_300_seconds_pct": 98.383314821671,
+              "over_600_seconds_pct": 0.2406516105146242
+            },
+            "opensky": {
+              "median_absolute_seconds": 49.0,
+              "mean_absolute_seconds": 86.91891891891892,
+              "p90_absolute_seconds": 208.0,
+              "p95_absolute_seconds": 339.75,
+              "median_signed_seconds": 49.0,
+              "mean_signed_seconds": 85.81327903245712,
+              "earlier_pct": 3.560409724793286,
+              "later_pct": 95.48932494137973,
+              "within_60_seconds_pct": 58.02789090460323,
+              "within_300_seconds_pct": 93.7862520054301,
+              "over_600_seconds_pct": 1.3328396890040726
+            },
+            "algorithm_closer_count": 11545,
+            "algorithm_closer_pct": 71.23904726644452,
+            "opensky_closer_count": 4643,
+            "opensky_closer_pct": 28.6498827594718,
+            "equal_error_count": 18,
+            "equal_error_pct": 0.11106997408367272,
+            "algorithm_closer_by_over_60s_pct": 13.636924595828706,
+            "opensky_closer_by_over_60s_pct": 0.17277551524126866,
+            "errors_within_60s_of_each_other_pct": 86.19029988893003,
+            "median_paired_absolute_error_difference_seconds": 7.160999999999998,
+            "mean_paired_absolute_error_difference_seconds": 34.25376200172775
+          },
+          "landing": {
+            "algorithm": {
+              "median_absolute_seconds": 51.105000000000004,
+              "mean_absolute_seconds": 95.27803214858695,
+              "p90_absolute_seconds": 233.9915,
+              "p95_absolute_seconds": 398.67525,
+              "median_signed_seconds": 41.3565,
+              "mean_signed_seconds": 48.90411014439097,
+              "earlier_pct": 20.13451807972356,
+              "later_pct": 79.86548192027644,
+              "within_60_seconds_pct": 57.94767370109836,
+              "within_300_seconds_pct": 92.84832777983463,
+              "over_600_seconds_pct": 1.9869184252745895
+            },
+            "opensky": {
+              "median_absolute_seconds": 30.0,
+              "mean_absolute_seconds": 87.51480932987782,
+              "p90_absolute_seconds": 247.5,
+              "p95_absolute_seconds": 490.75,
+              "median_signed_seconds": -7.0,
+              "mean_signed_seconds": -52.0344933975071,
+              "earlier_pct": 60.693570282611375,
+              "later_pct": 39.17684808095767,
+              "within_60_seconds_pct": 72.80019745773171,
+              "within_300_seconds_pct": 91.14525484388498,
+              "over_600_seconds_pct": 3.153153153153153
+            },
+            "algorithm_closer_count": 5535,
+            "algorithm_closer_pct": 34.154017030729364,
+            "opensky_closer_count": 10668,
+            "opensky_closer_pct": 65.82747130692336,
+            "equal_error_count": 3,
+            "equal_error_pct": 0.018511662347278787,
+            "algorithm_closer_by_over_60s_pct": 12.05109218807849,
+            "opensky_closer_by_over_60s_pct": 19.97408367271381,
+            "errors_within_60s_of_each_other_pct": 67.9748241392077,
+            "median_paired_absolute_error_difference_seconds": -7.568500000000002,
+            "mean_paired_absolute_error_difference_seconds": -7.763222818709123
+          }
+        },
+        "combined_endpoints": {
+          "algorithm_mean_absolute_seconds": 73.97159453288906,
+          "opensky_mean_absolute_seconds": 87.21686412439837
+        }
+      },
+      "inputs": {
+        "algorithm_evaluation": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=algorithm-nn/test_source_version=6/test_source_config_fingerprint=4114c72d9c02794f087526dafdcb2ea4974b3b687637b2d866a3885914751459/gold_source=bts/gold_source_version=13/gold_source_config_fingerprint=d55edb03f8425c705ac1a3bb1ed0e831b0ac53ecbef4f64301257c3dbb5d6d90/adsb_source=opensky/adsb_parquet_version=4/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json",
+        "opensky_evaluation": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=opensky-nn/test_source_version=1/test_source_config_fingerprint=12e48d99a1e1d76eb59557e1c47c67995e55c61b5249a0b6cedc68b81cd59502/gold_source=bts/gold_source_version=13/gold_source_config_fingerprint=d55edb03f8425c705ac1a3bb1ed0e831b0ac53ecbef4f64301257c3dbb5d6d90/adsb_source=none/adsb_parquet_version=none/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json",
+        "reference_flights": "/Volumes/T2-SSD/planequery/data/flights/source=bts/version=13/year=2026/month=03/day=01/data.parquet"
+      }
+    },
+    "sfdps": {
+      "version": 12,
+      "reference_flights": 26001,
+      "algorithm_matched_flights": 23972,
+      "opensky_matched_flights": 23609,
+      "standard_cohort": {
+        "flights": 23021,
+        "endpoints": {
+          "takeoff": {
+            "algorithm": {
+              "median_absolute_seconds": 30.673000000000002,
+              "mean_absolute_seconds": 68.9766874592763,
+              "p90_absolute_seconds": 122.995,
+              "p95_absolute_seconds": 235.46,
+              "median_signed_seconds": 29.352,
+              "mean_signed_seconds": 55.944307371530336,
+              "earlier_pct": 16.254723947699926,
+              "later_pct": 83.74093219234612,
+              "within_60_seconds_pct": 76.64306502758352,
+              "within_300_seconds_pct": 96.2773120194605,
+              "over_600_seconds_pct": 1.4595369445289084
+            },
+            "opensky": {
+              "median_absolute_seconds": 43.0,
+              "mean_absolute_seconds": 129.4531514703966,
+              "p90_absolute_seconds": 304.0,
+              "p95_absolute_seconds": 542.0,
+              "median_signed_seconds": 43.0,
+              "mean_signed_seconds": 120.48881456061856,
+              "earlier_pct": 6.967551366143955,
+              "later_pct": 91.69019590808392,
+              "within_60_seconds_pct": 61.14851657182573,
+              "within_300_seconds_pct": 89.75283436861996,
+              "over_600_seconds_pct": 4.252638894922027
+            },
+            "algorithm_closer_count": 16520,
+            "algorithm_closer_pct": 71.76056643933799,
+            "opensky_closer_count": 6482,
+            "opensky_closer_pct": 28.15690022153686,
+            "equal_error_count": 19,
+            "equal_error_pct": 0.0825333391251466,
+            "algorithm_closer_by_over_60s_pct": 17.987924069328002,
+            "opensky_closer_by_over_60s_pct": 0.3127579166847661,
+            "errors_within_60s_of_each_other_pct": 81.69931801398724,
+            "median_paired_absolute_error_difference_seconds": 7.283999999999999,
+            "mean_paired_absolute_error_difference_seconds": 60.476464011120285
+          },
+          "landing": {
+            "algorithm": {
+              "median_absolute_seconds": 120.83500000000001,
+              "mean_absolute_seconds": 162.68561813127144,
+              "p90_absolute_seconds": 286.512,
+              "p95_absolute_seconds": 499.736,
+              "median_signed_seconds": -108.96600000000001,
+              "mean_signed_seconds": -105.68168024846878,
+              "earlier_pct": 82.56809000477826,
+              "later_pct": 17.431909995221755,
+              "within_60_seconds_pct": 21.623734850788413,
+              "within_300_seconds_pct": 90.6476695191347,
+              "over_600_seconds_pct": 3.509838842795708
+            },
+            "opensky": {
+              "median_absolute_seconds": 164.0,
+              "mean_absolute_seconds": 251.67768559141652,
+              "p90_absolute_seconds": 541.0,
+              "p95_absolute_seconds": 828.0,
+              "median_signed_seconds": -162.0,
+              "mean_signed_seconds": -238.4310846618305,
+              "earlier_pct": 95.89939620346641,
+              "later_pct": 4.0875722166717345,
+              "within_60_seconds_pct": 9.56952347856305,
+              "within_300_seconds_pct": 81.0651144607098,
+              "over_600_seconds_pct": 8.805004126666956
+            },
+            "algorithm_closer_count": 20857,
+            "algorithm_closer_pct": 90.59988705964119,
+            "opensky_closer_count": 2160,
+            "opensky_closer_pct": 9.382737500542984,
+            "equal_error_count": 4,
+            "equal_error_pct": 0.017375439815820338,
+            "algorithm_closer_by_over_60s_pct": 37.1660657660397,
+            "opensky_closer_by_over_60s_pct": 4.426393293080231,
+            "errors_within_60s_of_each_other_pct": 58.40754094088007,
+            "median_paired_absolute_error_difference_seconds": 31.849000000000004,
+            "mean_paired_absolute_error_difference_seconds": 88.99206746014508
+          }
+        },
+        "combined_endpoints": {
+          "algorithm_mean_absolute_seconds": 115.83115279527388,
+          "opensky_mean_absolute_seconds": 190.56541853090656
+        }
+      },
+      "both_sources_within_15_minutes": {
+        "flights": 21467,
+        "endpoints": {
+          "takeoff": {
+            "algorithm": {
+              "median_absolute_seconds": 29.781000000000002,
+              "mean_absolute_seconds": 53.15493860343783,
+              "p90_absolute_seconds": 108.5186,
+              "p95_absolute_seconds": 190.36530000000005,
+              "median_signed_seconds": 28.435000000000002,
+              "mean_signed_seconds": 47.36881730097358,
+              "earlier_pct": 16.49974379279825,
+              "later_pct": 83.49559789444262,
+              "within_60_seconds_pct": 78.25965435319327,
+              "within_300_seconds_pct": 97.54041086318536,
+              "over_600_seconds_pct": 0.41458983556155965
+            },
+            "opensky": {
+              "median_absolute_seconds": 41.0,
+              "mean_absolute_seconds": 92.81306190897656,
+              "p90_absolute_seconds": 250.0,
+              "p95_absolute_seconds": 407.7000000000007,
+              "median_signed_seconds": 41.0,
+              "mean_signed_seconds": 89.58783248707319,
+              "earlier_pct": 7.113243583174174,
+              "later_pct": 91.47994596357199,
+              "within_60_seconds_pct": 63.05492150743001,
+              "within_300_seconds_pct": 92.00167699259329,
+              "over_600_seconds_pct": 1.9471747333115945
+            },
+            "algorithm_closer_count": 15255,
+            "algorithm_closer_pct": 71.06256114035496,
+            "opensky_closer_count": 6194,
+            "opensky_closer_pct": 28.8535892299809,
+            "equal_error_count": 18,
+            "equal_error_pct": 0.08384962966413566,
+            "algorithm_closer_by_over_60s_pct": 16.0385708296455,
+            "opensky_closer_by_over_60s_pct": 0.16769925932827132,
+            "errors_within_60s_of_each_other_pct": 83.79372991102623,
+            "median_paired_absolute_error_difference_seconds": 6.542999999999999,
+            "mean_paired_absolute_error_difference_seconds": 39.65812330553874
+          },
+          "landing": {
+            "algorithm": {
+              "median_absolute_seconds": 118.61,
+              "mean_absolute_seconds": 140.42866264499,
+              "p90_absolute_seconds": 253.10840000000002,
+              "p95_absolute_seconds": 385.2029000000002,
+              "median_signed_seconds": -107.452,
+              "mean_signed_seconds": -95.68031224670426,
+              "earlier_pct": 82.52201052778683,
+              "later_pct": 17.477989472213164,
+              "within_60_seconds_pct": 22.229468486514183,
+              "within_300_seconds_pct": 92.74234872129314,
+              "over_600_seconds_pct": 1.742208971910374
+            },
+            "opensky": {
+              "median_absolute_seconds": 160.0,
+              "mean_absolute_seconds": 203.21013648856385,
+              "p90_absolute_seconds": 391.0,
+              "p95_absolute_seconds": 584.7000000000007,
+              "median_signed_seconds": -159.0,
+              "mean_signed_seconds": -194.55620254343876,
+              "earlier_pct": 95.92397633577119,
+              "later_pct": 4.06204872595146,
+              "within_60_seconds_pct": 10.080588810732753,
+              "within_300_seconds_pct": 84.66949270974054,
+              "over_600_seconds_pct": 4.807378767410444
+            },
+            "algorithm_closer_count": 19466,
+            "algorithm_closer_pct": 90.67871616900358,
+            "opensky_closer_count": 1997,
+            "opensky_closer_pct": 9.302650579959938,
+            "equal_error_count": 4,
+            "equal_error_pct": 0.01863325103647459,
+            "algorithm_closer_by_over_60s_pct": 34.78362137233894,
+            "opensky_closer_by_over_60s_pct": 4.136581730097358,
+            "errors_within_60s_of_each_other_pct": 61.079796897563696,
+            "median_paired_absolute_error_difference_seconds": 29.081999999999994,
+            "mean_paired_absolute_error_difference_seconds": 62.78147384357385
+          }
+        },
+        "combined_endpoints": {
+          "algorithm_mean_absolute_seconds": 96.79180062421392,
+          "opensky_mean_absolute_seconds": 148.0115991987702
+        }
+      },
+      "inputs": {
+        "algorithm_evaluation": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=algorithm-nn/test_source_version=6/test_source_config_fingerprint=4114c72d9c02794f087526dafdcb2ea4974b3b687637b2d866a3885914751459/gold_source=sfdps/gold_source_version=12/gold_source_config_fingerprint=04ee278cd89de3b12634bee1cc7f92adff5d70c557054e2f9c08c507185b26c6/adsb_source=opensky/adsb_parquet_version=4/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json",
+        "opensky_evaluation": "/Volumes/T2-SSD/planequery/data/cache/evaluation/cache_version=8/test_source=opensky-nn/test_source_version=1/test_source_config_fingerprint=12e48d99a1e1d76eb59557e1c47c67995e55c61b5249a0b6cedc68b81cd59502/gold_source=sfdps/gold_source_version=12/gold_source_config_fingerprint=04ee278cd89de3b12634bee1cc7f92adff5d70c557054e2f9c08c507185b26c6/adsb_source=none/adsb_parquet_version=none/airport_catalog_fingerprint=1f5eadc28dd11a340fcc45baf5b376e0af9cd6c054a2b2c24d3f216a5f9cfc84/test_date=2026-03-01/manifest.json",
+        "reference_flights": "/Volumes/T2-SSD/planequery/data/flights/source=sfdps/version=12/year=2026/month=03/day=01/data.parquet"
+      }
+    }
+  },
+  "cross_reference_same_source_segment_pairs": {
+    "flights": 15698,
+    "takeoff": {
+      "median_sfdps_minus_bts_seconds": 0.0,
+      "mean_sfdps_minus_bts_seconds": 9.478914511402726,
+      "p10_sfdps_minus_bts_seconds": 0.0,
+      "p90_sfdps_minus_bts_seconds": 60.0,
+      "sfdps_later_pct": 18.868645687348707,
+      "within_60_seconds_pct": 98.78965473308702,
+      "same_airport_pct": 99.98725952350618
+    },
+    "landing": {
+      "median_sfdps_minus_bts_seconds": 180.0,
+      "mean_sfdps_minus_bts_seconds": 142.32131481717417,
+      "p10_sfdps_minus_bts_seconds": 60.0,
+      "p90_sfdps_minus_bts_seconds": 180.0,
+      "sfdps_later_pct": 92.7315581602752,
+      "within_60_seconds_pct": 19.734998088928528,
+      "same_airport_pct": 99.97451904701235
+    }
+  }
+}

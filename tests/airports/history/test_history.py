@@ -183,6 +183,34 @@ def _history_repository(tmp_path: Path) -> tuple[Path, list[str]]:
     return repository, commits
 
 
+@pytest.mark.parametrize("baseline", [date(2024, 1, 1), date(2021, 1, 1)])
+def test_dates_before_history_use_earliest_snapshot(tmp_path, baseline):
+    from airports.catalog import AirportCatalogView
+
+    repository, commits = _history_repository(tmp_path)
+    paths = HistoryPaths(history_dir=tmp_path / "derived", repository=repository)
+    build_history(paths, baseline_date=baseline)
+    history = AirportHistory(paths)
+    early = date(2021, 2, 1)
+    first = date(2023, 12, 31)
+
+    assert history.source_commit_sha(early) == commits[0]
+    assert history.as_of(early).equals(history.as_of(first))
+    assert history.aliases_as_of(early).equals(history.aliases_as_of(first))
+    assert history.aliases_through(early, date(2021, 3, 1)).equals(
+        history.aliases_as_of(first)
+    )
+    view = AirportCatalogView.from_history(
+        history, flight_date=early, catalog_available_date=date(2024, 2, 1)
+    )
+    assert view.get_airport_by_ident("KOLD") is not None
+    assert view.get_airport_by_ident("KNEW") is None
+    assert view.provenance.flight_date == early
+    assert view.provenance.observed_commit_sha == commits[0]
+    assert view.provenance.knowledge_commit_sha == commits[0]
+    assert history.source_commit_sha(date(2024, 1, 3)) == commits[1]
+
+
 def test_builds_change_only_temporal_catalog(tmp_path):
     repository, commits = _history_repository(tmp_path)
     paths = HistoryPaths(

@@ -4,11 +4,16 @@ from datetime import date
 import polars as pl
 
 from airports.catalog import AirportCatalogView
+from data_engineering.adsb.canonical import ADSBSource, coerce_adsb_source
 from data_engineering.eurocontrol.preprocess import prepare_eurocontrol_month_parquet
-from data_engineering.openairframes.read import get_openairframes_snapshot
+from data_engineering.openairframes.read import (
+    ICAO_INFO_COLUMNS,
+    get_openairframes_snapshot,
+)
 from flights.airport_reference import resolve_flight_airport_codes
 from flights.flight_source import NonADSBFlightSource
 from flights.flight_type import with_flight_schema_columns
+from flights.providers.eurocontrol_callsigns import enrich_eurocontrol_callsigns
 
 
 EUROCONTROL_AIRPORT_CODE_PRIORITY = (
@@ -23,6 +28,8 @@ EUROCONTROL_AIRPORT_CODE_PRIORITY = (
 def create_eurocontrol_flights(
     target_date: date,
     airport_catalog: AirportCatalogView,
+    *,
+    callsign_source: ADSBSource = ADSBSource.ADSBLOL,
 ) -> pl.DataFrame:
     df = (
         pl.scan_parquet(prepare_eurocontrol_month_parquet(target_date))
@@ -31,7 +38,7 @@ def create_eurocontrol_flights(
     )
     df_openairframes = (
         get_openairframes_snapshot(at_date=target_date)
-        .select("registration", "icao")
+        .select("icao", *ICAO_INFO_COLUMNS)
         .with_columns(
             pl.col("registration")
             .str.strip_chars()
@@ -41,9 +48,9 @@ def create_eurocontrol_flights(
         )
         .with_columns(pl.len().over("registration_norm").alias("_match_count"))
         .filter(pl.col("_match_count") == 1)
-        .drop("_match_count")
+        .drop("registration", "_match_count")
     )
-    df = df.join(
+    df = df.drop("aircraft_type", "owner").join(
         df_openairframes,
         left_on="registration",
         right_on="registration_norm",
@@ -69,20 +76,29 @@ def create_eurocontrol_flights(
         "takeoff_airport_ident",
         "landing_airport_id",
         "landing_airport_ident",
-        "aircraft_type",
-        "owner",
+        *[column for column in ICAO_INFO_COLUMNS if column != "registration"],
     )
-    return with_flight_schema_columns(df)
+    df = with_flight_schema_columns(df)
+    return enrich_eurocontrol_callsigns(df, callsign_source)
 
 
 @dataclass(frozen=True)
 class EurocontrolFlightSource(NonADSBFlightSource):
     name: str = "eurocontrol"
-    version: int = 4
+    version: int = 7
+    callsign_source: ADSBSource = ADSBSource.ADSBLOL
+
+    def __post_init__(self) -> None:
+        coerce_adsb_source(self.callsign_source)
+
+    def enrichment_adsb_source(self) -> ADSBSource:
+        return self.callsign_source
 
     def create_flights_for_day(
         self,
         dt: date,
         airport_catalog: AirportCatalogView,
     ) -> pl.DataFrame:
-        return create_eurocontrol_flights(dt, airport_catalog)
+        return create_eurocontrol_flights(
+            dt, airport_catalog, callsign_source=self.callsign_source
+        )

@@ -211,6 +211,9 @@ def test_cache_reads_new_hour_layout_and_prunes_icao_buckets(
     assert len(list((processed_day / "icao_bucket=0").glob("*.parquet"))) == 1
     assert len(list((processed_day / "icao_bucket=7").glob("*.parquet"))) == 1
     assert not (processed_day / "_normalized").exists()
+    for path in processed_day.glob("icao_bucket=*/*.parquet"):
+        keys = pl.read_parquet(path).select("icao", "time")
+        assert keys.equals(keys.sort(["icao", "time"]))
     assert all(
         pq.read_schema(path).equals(PARQUET_SCHEMA)
         for path in processed_day.glob("icao_bucket=*/*.parquet")
