@@ -38,6 +38,10 @@ NOTE = (
     "accuracy in percentage points, calculated separately for each method and "
     "endpoint; a negative drop means higher nontraining accuracy."
 )
+PAPER_NOTE = (
+    "Some airports in Eurocontrol are also present in the training data such as "
+    "London Heathrow (EGLL)"
+)
 
 
 def exposure_key(row: dict[str, Any]) -> tuple[str, ...]:
@@ -139,7 +143,7 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
     lines = [r"% Requires \usepackage{booktabs,longtable,multirow}.", r"\begingroup",
              r"\footnotesize", r"\setlength{\tabcolsep}{3pt}",
              r"\begin{longtable}{@{}lrrrrr@{}}",
-             r"\caption{Eurocontrol airport accuracy on training and nontraining airports (" + latex_escape(day) + ")}",
+             r"\caption{Eurocontrol algorithm airport accuracy on training and nontraining airports (" + latex_escape(day) + ")}",
              r"\label{tab:" + prefix.replace("_", "-") + r"-training-vs-non-training}\\",
              r"\toprule", heading, r"\midrule"]
     group_rows = sorted(comparisons.values(), key=reference_sort_key)
@@ -178,15 +182,9 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
                  for endpoint in ENDPOINTS]
         cells.append(" / ".join("---" if drop is None else f"{drop:.{decimals}f}" for drop in drops))
         lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
-    note = NOTE
-    if len(providers) == 1:
-        provider = next(iter(providers))
-        note += f" {labels.get(provider, provider)} ADS-B."
-    windows = {row["target_day_adsb"] for row in rows}
-    if len(windows) == 1:
-        note += f" Target-day-only ADS-B input: {next(iter(windows))}."
-    lines += [r"\bottomrule", r"\end{longtable}", r"% \noindent\begin{minipage}{\linewidth}\footnotesize " +
-              latex_escape(note) + r"\end{minipage}\par", r"\endgroup", ""]
+    lines += [r"\bottomrule", r"\end{longtable}",
+              r"\noindent\begin{minipage}{\linewidth}\footnotesize ",
+              latex_escape(PAPER_NOTE), r"\end{minipage}\par", r"\endgroup", ""]
     return "\n".join(lines)
 
 
@@ -267,8 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_rows(rows, methods, args.gold_source, args.require_complete)
         rows = add_accuracy_drops(rows)
         rows.sort(key=lambda row: (*reference_sort_key(row), GROUPS.index(row["airport_group"]), ENDPOINTS.index(row["endpoint"])))
-        dates = sorted({row["test_date"] for row in rows})
-        prefix = args.prefix or "airport_training_" + (dates[0] if len(dates) == 1 else dates[0] + "_to_" + dates[-1])
+        prefix = args.prefix or "feb_mar_june_2026"
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", prefix):
             raise ValueError("--prefix must contain only letters, numbers, underscores, and hyphens.")
         latex = render_latex(rows, prefix, args.decimals)

@@ -106,6 +106,8 @@ def test_opensky_shared_cells_keep_airport_metrics_separate():
     metrics = tuple(metric for metric in TABLES["reference_summary"].metrics
                     if metric.key in {"test_flight_count", "precision", "takeoff_airport_id_match_pct"})
     latex = summary_latex(rows, metrics, "table_0", 2)
+    assert r"\caption{Flight evaluation by reference dataset}" in latex
+    assert r"\noindent\begin{minipage}" not in latex
     assert r"\multirow{3}{*}{10}" in latex
     assert r"\multirow{3}{*}{80.00}" in latex
     assert "OpenSky & \\multirow{3}{*}{10} & \\multirow{3}{*}{80.00} & 50.00" in latex

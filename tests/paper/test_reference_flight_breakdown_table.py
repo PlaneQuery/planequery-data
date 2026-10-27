@@ -54,6 +54,7 @@ def test_render_contains_dates_examples_and_zero_categories():
         sample = flights.with_columns(pl.lit(datetime.fromisoformat(day)).alias("takeoff_time"))
         rows.extend(table.summarize(sample, airports, source, day))
     aircraft = table.render_latex(rows, "test", "aircraft", 2)
+    assert r"\caption{Aircraft categories of gold reference flights}" in aircraft
     assert "Boeing 737" in aircraft
     assert "B0--D2: Other reported categories & 50.00 & 50.00 & 50.00" in aircraft
     assert "verified" not in aircraft.lower()
@@ -61,6 +62,7 @@ def test_render_contains_dates_examples_and_zero_categories():
     assert all(f"\n{code}: " not in aircraft for code in ("B0", "B1", "D2"))
     assert "A1: Light (e.g., Cessna 172) & 0.00 & 0.00 & 0.00" in aircraft
     airport = table.render_latex(rows, "test", "airports", 2)
+    assert r"\caption{Airport characteristics of gold reference flights}" in airport
     assert "No IATA or ICAO & 16.67 / 16.67" in airport
     assert all(f"\n{label} &" not in airport for label in
                ("Heliport", "Seaplane base", "Balloonport", "Closed",

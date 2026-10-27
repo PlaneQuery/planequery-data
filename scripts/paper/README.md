@@ -321,8 +321,7 @@ From the repository root, using the same `OUTPUT_DIR` as evaluation:
   --adsb-source opensky \
   --gold-source eurocontrol \
   --reference-date eurocontrol=2024-06-01 \
-  --require-complete \
-  --prefix table_1
+  --require-complete
 ```
 
 By default, it reads current-version cached comparisons and uses `training.json`
@@ -368,8 +367,9 @@ Accuracy is the existing `airport_accuracy`: correct airport IDs divided by
 matched endpoints with known gold IDs, with null predictions counted incorrect.
 Membership is based on eligible positive NN training labels, combining takeoff
 and landing labels; validation labels and unknown gold IDs are excluded.
-The same training-airport set is applied to both methods. One ADS-B provider is
-named once in the note; multiple providers are named beside each method.
+The same training-airport set is applied to both methods. Multiple providers are
+named beside each method. The paper note calls out Heathrow as an example of an
+airport shared with the training data.
 
 Outputs are under `$OUTPUT_DIR/paper/tables/<prefix>/`:
 
@@ -381,11 +381,12 @@ Outputs are under `$OUTPUT_DIR/paper/tables/<prefix>/`:
 - `<prefix>_training_vs_non_training_manifest.json`: input/cache provenance,
   training manifest hash, filters, dates, and metric definitions.
 
-Include with `\usepackage{booktabs,longtable,multirow}` and
-`\input{tables/table_1/table_1_training_vs_non_training.tex}` after copying the
+The default prefix is `feb_mar_june_2026`, matching the paper filename and
+caption label. Include with `\usepackage{booktabs,longtable,multirow}` and
+`\input{tables/feb_mar_june_2026/feb_mar_june_2026_training_vs_non_training.tex}` after copying the
 folder into the paper project. Use a single-column/full-width area, without a
 surrounding `table` float. Reference with
-`Table~\ref{tab:table-1-training-vs-non-training}`.
+`Table~\ref{tab:feb-mar-june-2026-training-vs-non-training}`.
 
 ## Overall evaluation table
 
@@ -479,6 +480,9 @@ above, the folder is `$OUTPUT_DIR/paper/tables/table_0/`:
 
 Rerunning replaces the same named outputs. Previously generated detailed tables
 are left in place; use the new `_reference_summary.tex` file in the paper.
+Summary notes are omitted by default to match the current paper table. Pass
+`--include-note` when reproducing a paper version that retains the commented
+explanatory note, such as the 2025-08-01 reference summary.
 
 ## What appears in the table
 

@@ -121,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Missing denominator counts; supply full evaluation CSVs.")
         latex = summary_latex(rows, METRICS, args.prefix, args.decimals,
                               caption="Algorithm comparison using OpenSky ADS-B",
-                              note=NOTE, label_suffix="", method_labels=METHOD_LABELS)
+                              note=NOTE, include_note=True, label_suffix="",
+                              method_labels=METHOD_LABELS)
         provenance.update(
             cache_entries=[{"path": str(entry.path.resolve()),
                             "created_at": entry.created_at.isoformat(), "key": entry.key.to_dict(),

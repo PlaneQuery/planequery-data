@@ -52,6 +52,9 @@ def test_export_excludes_openap(tmp_path):
         exported = list(csv.DictReader(stream))
     assert len(exported) == 9
     assert {row["test_src"] for row in exported} == {"sun", "plane-notify", "traffic"}
-    assert "openap" not in (folder / "algorithm_comparison.tex").read_text().lower()
+    latex = (folder / "algorithm_comparison.tex").read_text()
+    assert "openap" not in latex.lower()
+    assert r"\caption{Algorithm comparison using OpenSky ADS-B}" in latex
+    assert r"% \noindent\begin{minipage}" in latex
     manifest = json.loads((folder / "algorithm_comparison_manifest.json").read_text())
     assert "openap" not in manifest["method_labels"]
