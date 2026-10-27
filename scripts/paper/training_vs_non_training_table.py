@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import date
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -36,7 +37,8 @@ NOTE = (
     "missing data or an undefined accuracy when n is zero. CSV counts are exact "
     "and percentages are unrounded. Drop (pp) is training minus nontraining "
     "accuracy in percentage points, calculated separately for each method and "
-    "endpoint; a negative drop means higher nontraining accuracy."
+    "endpoint; a negative drop means higher nontraining accuracy. Displayed drops "
+    "subtract the displayed, rounded accuracies; CSV drops use unrounded rates."
 )
 PAPER_NOTE = (
     "Some airports in Eurocontrol are also present in the training data such as "
@@ -167,6 +169,7 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
         if len(providers) > 1:
             method += " / " + labels.get(row["adsb_src"], row["adsb_src"])
         cells = [latex_escape(method)]
+        displayed_accuracies = {}
         for airport_group in GROUPS:
             values = [lookup.get((*row_key(row), airport_group, endpoint), {}) for endpoint in ENDPOINTS]
             count_cell = " / ".join("---" if value.get("matched_endpoint_count") is None
@@ -176,10 +179,14 @@ def render_latex(rows: list[dict], prefix: str, decimals: int) -> str:
             elif airport_group in shared_ends.get(index, set()):
                 count_cell = ""
             cells.append(count_cell)
-            cells.append(" / ".join("---" if value.get("airport_accuracy") is None
-                                     else f"{100 * value['airport_accuracy']:.{decimals}f}" for value in values))
-        drops = [lookup.get((*row_key(row), "training", endpoint), {}).get("accuracy_drop_pp")
-                 for endpoint in ENDPOINTS]
+            accuracies = [None if value.get("airport_accuracy") is None
+                          else f"{100 * value['airport_accuracy']:.{decimals}f}" for value in values]
+            displayed_accuracies[airport_group] = accuracies
+            cells.append(" / ".join(value if value is not None else "---" for value in accuracies))
+        drops = [None if training is None or nontraining is None
+                 else Decimal(training) - Decimal(nontraining)
+                 for training, nontraining in zip(displayed_accuracies["training"],
+                                                  displayed_accuracies["nontraining"])]
         cells.append(" / ".join("---" if drop is None else f"{drop:.{decimals}f}" for drop in drops))
         lines.append(" & ".join(cells) + (r" \\*" if index in shared_starts else r" \\"))
     lines += [r"\bottomrule", r"\end{longtable}",
