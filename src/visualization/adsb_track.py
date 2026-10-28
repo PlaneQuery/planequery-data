@@ -64,7 +64,7 @@ def plot_track(
     basemap: bool = False, map_zoom: int = 11,
     map_events_only: bool = False, nearby_airport_limit: int = 8,
     map_below: bool = False, include_airports: tuple[str, ...] = (),
-    compress_gaps: bool = False,
+    compress_gaps: bool = False, compressed_gap_minutes: float = 12,
 ):
     """Return a Matplotlib figure without writing files.
 
@@ -74,6 +74,8 @@ def plot_track(
     """
     if gap_seconds <= 0:
         raise ValueError("gap_seconds must be positive")
+    if not 0 < compressed_gap_minutes <= 30:
+        raise ValueError("compressed_gap_minutes must be between 0 and 30")
     d = prepare_observations(observations, icao, day)
     if show_geometric and 'geom_altitude_ft' not in d.columns:
         raise ValueError('Geometric overlay requires geom_altitude_ft in observations')
@@ -182,7 +184,7 @@ def plot_track(
             # original UTC coordinates, including flight event annotations.
             long_gaps = np.flatnonzero(np.diff(t) * 86400 > 30 * 60)
             intervals = [(t[i], t[i + 1]) for i in long_gaps]
-            retained = 12 / 1440  # Leave visible separation between flights.
+            retained = compressed_gap_minutes / 1440
 
             def forward(values):
                 values = np.asarray(values)
