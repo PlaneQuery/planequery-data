@@ -12,6 +12,38 @@ the manifests and the commented source.
 All table exporters exclude verified flight sources, including from CSV inputs.
 Use base reference names (`bts`, `sfdps`, `eurocontrol`) in source filters.
 
+## Aircraft-category performance comparison
+
+`category_performance_table.py` splits the exact runs recorded in Table 0's
+manifest into **A1, A2, A3, A4, and Other**, comparing OpenSky, OpenSky-Nearest,
+OpenSky-NN, Nearest (`algorithm-nearest`), and NN (`algorithm-nn`). It preserves
+Table 0's columns and reference dates: BTS/SFDPS on 2026-03-01 and Eurocontrol
+on 2024-06-01. Both algorithm methods use OpenSky observations.
+
+```bash
+.venv/bin/python scripts/paper/category_performance_table.py
+```
+
+Outputs go to `paper/tables/category_performance/` in this repository:
+`category_performance.tex`, `category_performance.csv`, and
+`category_performance_manifest.json`. Include the table with
+`\input{tables/category_performance/category_performance.tex}` and load
+`booktabs,longtable,multirow`. The label is `tab:category-performance`.
+Use `--output-dir` to change the destination. `--table-manifest` and
+`--category-manifest` select alternative compatible evaluation and gold-cache
+manifests; defaults are Table 0 and `reference_flight_breakdown` respectively.
+
+The generator reads pinned local caches without running evaluations or changing
+the source data. The drive containing their recorded paths must be mounted.
+Reference categories are normalized for case/whitespace and assigned once per
+ICAO/day; conflicting categories cause an error. Other includes all remaining
+codes, nulls and blanks. Unmatched test flights use their ICAO's reference
+category, retaining false positives in the correct cohort. Gold ICAOs and zero
+flight coverage use full-day inputs, while flight metrics use the cached scoring
+window. Airport accuracy/null rates and timing use matched flights; airport
+accuracy is a dash when no flights match. Category count sums must reproduce
+Table 0 exactly. Source hashes and definitions are recorded in the manifest.
+
 ## Airport-NN training curve
 
 `airport_nn_training_curve.py` plots neural-network validation accuracy versus

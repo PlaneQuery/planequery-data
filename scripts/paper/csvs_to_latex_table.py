@@ -435,8 +435,8 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
     ]
     windows = {row["target_day_adsb"] for row in rows}
     has_shared_cells = False
-    for context, group in groupby(rows, key=lambda row: (row["gold_src"], row["test_date"], row["target_day_adsb"])):
-        source, day, window = context
+    for context, group in groupby(rows, key=lambda row: (row["gold_src"], row["test_date"], row["target_day_adsb"], row.get("category_group"))):
+        source, day, window, category = context
         group_rows = list(group)
         icao_counts = {row.get("gold_icao_count") for row in group_rows}
         if len(icao_counts) != 1:
@@ -444,6 +444,8 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         total = next(iter(icao_counts))
         total_text = "unavailable" if total is None else f"{int(total):,}"
         title = f"{REFERENCE_LABELS.get(source, source)} | {day} | Gold ICAOs: {total_text}"
+        if category is not None:
+            title = f"{REFERENCE_LABELS.get(source, source)} | {day} | {category} | Gold ICAOs: {total_text}"
         title += " | " + gold_flights_heading(group_rows, f"{source} on {day} (target-day ADS-B: {window})")
         if len(windows) > 1:
             title += f" | Target-day ADS-B: {window}"
@@ -451,6 +453,9 @@ def summary_latex(rows: list[dict[str, Any]], metrics: tuple[Metric, ...],
         shared_starts: dict[tuple[int, int], int] = {}
         shared_continuations: set[tuple[int, int]] = set()
         keep_with_next: set[int] = set()
+        if category is not None:
+            # Keep each small category block with its heading across pages.
+            keep_with_next.update(range(len(group_rows) - 1))
         for column_index, (_, keys) in enumerate(columns):
             if not set(keys) <= SHARED_FLIGHT_METRICS:
                 continue

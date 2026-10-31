@@ -1,5 +1,5 @@
 """Reproduce the a96262_20260401_adsbx_map layout using native OpenSky values."""
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 import sys
 import json
@@ -12,6 +12,7 @@ sys.path.insert(0,str(ROOT/'src'))
 os.environ.setdefault('MPLCONFIGDIR',str(ROOT/'outputs/opensky-a65c29-native-2026-03-01/mpl-cache'))
 import polars as pl
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.ticker import FixedLocator
 from visualization.adsb_track import plot_track
 from visualization.basemap import project
@@ -19,10 +20,12 @@ from visualization.basemap import project
 DATA=ROOT/'outputs/opensky-a65c29-native-2026-03-01'
 OUT=ROOT/'paper/figures'
 parser=argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--horizontal',action='store_true',help='Place features left and map right; preserve the vertical outputs.')
+layout=parser.add_mutually_exclusive_group()
+layout.add_argument('--horizontal',action='store_true',help='Place features left and map right; preserve the vertical outputs.')
+layout.add_argument('--vertical',action='store_true',help='Stack features above the map, preserving horizontal styling in separate vertical outputs.')
 args=parser.parse_args()
-gap_minutes=30 if args.horizontal else 12
-STEM='a65c29_20260301_opensky_native_map'+('_horizontal' if args.horizontal else '')
+gap_minutes=30 if args.horizontal or args.vertical else 12
+STEM='a65c29_20260301_opensky_native_map'+('_horizontal' if args.horizontal else '_vertical' if args.vertical else '')
 raw=pl.read_parquet(DATA/'state_vectors_data4.parquet')
 # Compatibility adapter for the existing plotter, NOT a unit conversion or
 # canonical normalization. Values are native metres and metres per second.
@@ -46,7 +49,34 @@ fig=plot_track(observations,icao='a65c29',day=date(2026,3,1),flights=flights,
                airports=airports,nearby_airport_limit=0,compress_gaps=True,
                compressed_gap_minutes=gap_minutes)
 primary,secondary,map_ax,color_ax=fig.axes
-if args.horizontal:
+# Published flights_data4 row from the user's Trino query. The other two
+# rows lie outside this figure's 10:10--18:50 UTC observation window.
+opensky_flight={'firstseen':1772360347,'lastseen':1772390545,
+               'callsign':'JBU1603','estdepartureairport':'KJFK',
+               'estarrivalairport':'KJFK'}
+os_color='#7B3294'
+os_times=[datetime.fromtimestamp(opensky_flight[field],timezone.utc)
+          for field in ('firstseen','lastseen')]
+os_x=mdates.date2num(os_times)
+for field,x,when,align in zip(('firstseen','lastseen'),os_x,os_times,('left','right')):
+    primary.axvline(x,color=os_color,ls='--',lw=1.1,zorder=7)
+    primary.annotate(f'{field}\n{when:%H:%M:%S}',xy=(x,.89),
+                     xycoords=('data','axes fraction'),
+                     xytext=(5 if align=='left' else -5,0),textcoords='offset points',
+                     ha=align,va='top',fontsize=7,color=os_color,fontfamily='serif',
+                     bbox=dict(facecolor='white',edgecolor='none',pad=2),zorder=8)
+primary.plot(os_x,[.96,.96],color=os_color,lw=1.1,
+             transform=primary.get_xaxis_transform(),zorder=7)
+primary.text(.5,.965,'OpenSky JBU1603 · KJFK → KJFK',transform=primary.transAxes,
+             ha='center',va='bottom',fontsize=7,color=os_color,fontfamily='serif',
+             bbox=dict(facecolor='white',edgecolor='none',pad=2),zorder=8)
+for label in primary.texts:
+    if label.get_text().startswith(('Takeoff\n','Landing\n')):
+        label.set_text('BTS '+label.get_text().lower().split('\n')[0]+'\n'+'\n'.join(label.get_text().split('\n')[1:]))
+for label in list(secondary.texts):
+    if label.get_text().startswith('Dotted lines:'):
+        label.remove()
+if args.horizontal or args.vertical:
     for collection in map_ax.collections:
         if collection.get_gid() == 'observed-map-positions':
             collection.set_edgecolor('none')
@@ -91,6 +121,8 @@ manifest={'icao24':'a65c29','date':'2026-03-01','native_source':str(DATA/'state_
           'internal_adapter':'Existing plotter receives aliases for compatibility; displayed field names and units are native.',
           'display_interval':['2026-03-01T10:10:00Z','2026-03-01T18:50:00Z'],
           'event_source':'BTS v16 cached comparison; SFDPS v14 confirms two flights',
+          'opensky_flight_boundaries':opensky_flight,
+          'opensky_boundary_source':'User-provided flights_data4 Trino query screenshot; day=1772323200, icao24=a65c29',
           'compression':f'Snapshot-free gaps >30 minutes occupy {gap_minutes} minutes of axis width, marked //; actual UTC retained.',
           'basemap':'OpenStreetMap tiles z4; current geography; cached locally',
           'map_rendering':'Native points only: no connecting lines, preserving the isolated raw position at 18:22:44 without implying a physical excursion.',
@@ -103,10 +135,16 @@ latex=r'''\begin{figure*}[t]
   \label{fig:a65c29-opensky-native-map}
 \end{figure*}
 '''
-if args.horizontal:
+if args.horizontal or args.vertical:
     latex=latex.replace('are compressed and marked //','are displayed with 30 minutes of axis width and marked //')
+if args.vertical:
+    latex=latex.replace('figures/a65c29_20260301_opensky_native_map.pdf',f'figures/{STEM}.pdf').replace(
+        'fig:a65c29-opensky-native-map','fig:a65c29-opensky-native-map-vertical')
+if args.horizontal:
     latex=latex.replace('width=0.72\\textwidth','width=\\textwidth').replace(
         'figures/a65c29_20260301_opensky_native_map.pdf',f'figures/{STEM}.pdf').replace(
         'The upper panel','The left panel').replace(
         'fig:a65c29-opensky-native-map','fig:a65c29-opensky-native-map-horizontal')
+latex=latex.replace('OpenSky instead reports one merged 10:19:07--18:42:25 flight.',
+                    r'Purple dashed lines mark OpenSky \texttt{firstseen} (10:19:07) and \texttt{lastseen} (18:42:25), joined to show the single reported JBU1603 KJFK--KJFK flight.')
 (OUT/f'{STEM}.tex').write_text(latex)
