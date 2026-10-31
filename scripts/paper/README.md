@@ -17,8 +17,11 @@ Use base reference names (`bts`, `sfdps`, `eurocontrol`) in source filters.
 `category_performance_table.py` splits the exact runs recorded in Table 0's
 manifest into **A1, A2, A3, A4, and Other**, comparing OpenSky, OpenSky-Nearest,
 OpenSky-NN, Nearest (`algorithm-nearest`), and NN (`algorithm-nn`). It preserves
-Table 0's columns and reference dates: BTS/SFDPS on 2026-03-01 and Eurocontrol
+Table 0's metrics and reference dates: BTS/SFDPS on 2026-03-01 and Eurocontrol
 on 2024-06-01. Both algorithm methods use OpenSky observations.
+The compact layout shows each dataset heading once and places category ICAO/flight
+counts in a shared column. It retains every metric at two decimal places, using
+7pt type and tight spacing to fit the three datasets on one A4 page at 12mm margins.
 
 ```bash
 .venv/bin/python scripts/paper/category_performance_table.py

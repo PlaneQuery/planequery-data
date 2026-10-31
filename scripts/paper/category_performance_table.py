@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from csvs_to_latex_table import (
     TABLES, RATE_COLUMNS, csv_column, prepare_rows, reference_sort_key,
-    summary_latex, validate_opensky_segmentation,
+    summary_latex, validate_opensky_segmentation, SUMMARY_COLUMNS,
+    SHARED_FLIGHT_METRICS, REFERENCE_LABELS, format_metric, latex_escape,
 )
 
 CATEGORIES = ("A1", "A2", "A3", "A4", "Other")
@@ -88,6 +89,65 @@ def summarize(comparison, lookup, test_icaos, metadata):
                    target_day_adsb=str(row["target_day_adsb"]).lower())
         rows.append(row)
     return rows
+
+
+def compact_latex(rows):
+    """Keep every metric, sharing category counts and dataset headings."""
+    metrics = {m.key: m for m in TABLES["reference_summary"].metrics}
+    columns = [keys for _, _, keys in SUMMARY_COLUMNS]
+    labels = ("OpenSky", "OpenSky-Nearest", "OpenSky-NN", "Nearest", "NN")
+    heading = (r"\shortstack{Category\\I / G} & Method & T & "
+               r"\shortstack{Segmentation\\P/R/F1 (\%)} & "
+               r"\shortstack{Zero flights\\ICAOs (\%)} & "
+               r"\shortstack{Airport acc.\\TO/LD (\%)} & "
+               r"\shortstack{Airport null\\TO/LD (\%)} & "
+               r"\shortstack{Time bias\\TO/LD (min)} \\")
+    lines = [r"% Requires \usepackage{booktabs,longtable,multirow}.",
+             "% " + NOTE,
+             r"\begingroup", r"\fontsize{7}{8}\selectfont",
+             r"\setlength{\tabcolsep}{2pt}", r"\renewcommand{\arraystretch}{0.95}",
+             r"\begin{longtable}{@{}llrrrrrr@{}}",
+             r"\caption{Flight evaluation by aircraft category. I: gold ICAOs; G: gold flights; T: test flights.}",
+             r"\label{tab:category-performance}\\",
+             r"\toprule", heading, r"\midrule", r"\endfirsthead",
+             r"\multicolumn{8}{l}{Flight evaluation by aircraft category (continued)}\\",
+             r"\toprule", heading, r"\midrule", r"\endhead",
+             r"\midrule\multicolumn{8}{r}{Continued on next page}\\", r"\endfoot",
+             r"\bottomrule", r"\endlastfoot"]
+    contexts = list(dict.fromkeys((r["gold_src"], r["test_date"]) for r in rows))
+    for source, day in contexts:
+        lines += [r"\addlinespace[2pt]",
+                  r"\multicolumn{8}{@{}l}{\textbf{" + REFERENCE_LABELS.get(source, source)
+                  + " | " + day + r"}}\\*"]
+        for category in CATEGORIES:
+            group = [r for r in rows if (r["gold_src"], r["test_date"], r["category_group"])
+                     == (source, day, category)]
+            by_method = {r["test_src"]: r for r in group}
+            group = [by_method[method] for method in METHODS]
+            counts = {(r["gold_icao_count"], r["gold_flight_count"]) for r in group}
+            if len(counts) != 1:
+                raise ValueError(f"Category gold counts differ for {source}/{category}")
+            icaos, flights = counts.pop()
+            category_cell = (r"\multirow{5}{*}{\shortstack[l]{\textbf{" + category +
+                             r"}\\" + f"{icaos:,} / {flights:,}" + "}}")
+            for index, row in enumerate(group):
+                cells = [category_cell if index == 0 else "", latex_escape(labels[index])]
+                start, end = (0, 3) if index < 3 else (3, 5)
+                family = group[start:end]
+                for keys in columns:
+                    cell = "/".join(format_metric(row, metrics[key], 2) for key in keys)
+                    shared = (set(keys) <= SHARED_FLIGHT_METRICS and
+                              all(all(r.get(key) == family[0].get(key) for key in keys)
+                                  for r in family))
+                    if shared:
+                        cell = (r"\multirow{" + str(end-start) + r"}{*}{" + cell + "}"
+                                if index == start else "")
+                    cells.append(cell)
+                lines.append(" & ".join(cells) + (r" \\*" if index < 4 else r" \\"))
+            if category != CATEGORIES[-1]:
+                lines.append(r"\addlinespace[1.5pt]")
+    lines += [r"\end{longtable}", r"\endgroup", ""]
+    return "\n".join(lines)
 
 
 def main():
@@ -185,9 +245,7 @@ def main():
             for endpoint in ("takeoff", "landing"):
                 row[f"{endpoint}_airport_id_match_pct"] = None
     rows.sort(key=lambda r: (*reference_sort_key(r)[:4], CATEGORIES.index(r["category_group"]), *reference_sort_key(r)[4:]))
-    latex = summary_latex(rows, metrics, "category_performance", 2,
-                          caption="Flight evaluation by reference dataset and aircraft category",
-                          note=NOTE, label_suffix="")
+    latex = compact_latex(rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tex_path = args.output_dir / "category_performance.tex"
     tex_path.write_text(latex)
@@ -201,6 +259,7 @@ def main():
         table_manifest=str(args.table_manifest), table_manifest_sha256=sha256(args.table_manifest),
         category_manifest=str(args.category_manifest), category_manifest_sha256=sha256(args.category_manifest),
         reference_dates=manifest["reference_dates"], methods=METHODS, categories=CATEGORIES,
+        layout="Compact: one heading per dataset; shared category counts; 7pt type; all metrics at two decimals.",
         definitions=NOTE, rows=len(rows), inputs=provenance,
         csv_percent_scale="0-100 for columns ending in _percent; other rate columns retain evaluator fractions",
         validation="Category counts sum exactly to pinned Table 0 counts; whole-comparison floating-point stats agree within 1e-12.",
