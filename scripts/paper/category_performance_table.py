@@ -20,12 +20,21 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from csvs_to_latex_table import (
     TABLES, RATE_COLUMNS, csv_column, prepare_rows, reference_sort_key,
-    summary_latex, validate_opensky_segmentation, SUMMARY_COLUMNS,
-    SHARED_FLIGHT_METRICS, REFERENCE_LABELS, format_metric, latex_escape,
+    summary_latex, validate_opensky_segmentation, REFERENCE_LABELS, format_metric,
 )
 
 CATEGORIES = ("A1", "A2", "A3", "A4", "Other")
 METHODS = ("opensky", "opensky-nearest", "opensky-nn", "algorithm-nearest", "algorithm-nn")
+DEFAULT_REFERENCES = ("sfdps", "eurocontrol")
+AIRPORT_SIZES = {"small_airport": "Small", "medium_airport": "Medium", "large_airport": "Large"}
+AIRPORT_NOTE = (
+    "Airport-size rows use the reference airport's OurAirports type in the evaluation's "
+    "flight-date catalog. Takeoff and landing are grouped independently, each using "
+    "matched endpoints of that size as its denominator. Null predictions count as "
+    "incorrect. Other airport types and unresolved reference airports are omitted "
+    "from the displayed size rows but retained in the airport-size CSV. These rows "
+    "pool all aircraft categories; they are not a category-by-size cross-tabulation."
+)
 NOTE = (
     "Categories are the reference dataset's ADS-B emitter category, assigned once "
     "per ICAO and day using full-day gold flights. Conflicting categories are rejected. "
@@ -91,62 +100,83 @@ def summarize(comparison, lookup, test_icaos, metadata):
     return rows
 
 
-def compact_latex(rows):
-    """Keep every metric, sharing category counts and dataset headings."""
+def summarize_airport_sizes(comparison, airport_types, metadata):
+    """Score each endpoint against its gold airport size, retaining all denominators."""
+    matched = comparison.filter(pl.col("match_status") == "both")
+    rows = []
+    for endpoint in ("takeoff", "landing"):
+        frame = matched.with_columns(
+            pl.col(f"{endpoint}_airport_id_df1").replace_strict(
+                airport_types, default="unknown", return_dtype=pl.String
+            ).alias("airport_type")
+        )
+        for airport_type in sorted(set(AIRPORT_SIZES) | set(frame["airport_type"])):
+            subset = frame.filter(pl.col("airport_type") == airport_type)
+            count = subset.height
+            correct = int(subset[f"same_{endpoint}_airport_id"].sum() or 0)
+            rows.append(dict(**metadata, airport_type=airport_type, endpoint=endpoint,
+                             matched_endpoint_count=count, correct_endpoint_count=correct,
+                             null_prediction_count=subset[f"{endpoint}_airport_id"].null_count(),
+                             accuracy_percent=100 * correct / count if count else None))
+        endpoint_rows = [r for r in rows if r["endpoint"] == endpoint]
+        if sum(r["matched_endpoint_count"] for r in endpoint_rows) != matched.height:
+            raise ValueError("Airport-size denominators do not reconcile")
+        if sum(r["correct_endpoint_count"] for r in endpoint_rows) != matched[f"same_{endpoint}_airport_id"].sum():
+            raise ValueError("Airport-size correct counts do not reconcile")
+    return rows
+
+
+def compact_latex(rows, airport_rows=()):
+    """Airport accuracy only: categories as rows, methods as columns."""
     metrics = {m.key: m for m in TABLES["reference_summary"].metrics}
-    columns = [keys for _, _, keys in SUMMARY_COLUMNS]
-    labels = ("OpenSky", "OpenSky-Nearest", "OpenSky-NN", "Nearest", "NN")
-    heading = (r"\shortstack{Category\\I / G} & Method & T & "
-               r"\shortstack{Segmentation\\P/R/F1 (\%)} & "
-               r"\shortstack{Zero flights\\ICAOs (\%)} & "
-               r"\shortstack{Airport acc.\\TO/LD (\%)} & "
-               r"\shortstack{Airport null\\TO/LD (\%)} & "
-               r"\shortstack{Time bias\\TO/LD (min)} \\")
-    lines = [r"% Requires \usepackage{booktabs,longtable,multirow}.",
-             "% " + NOTE,
-             r"\begingroup", r"\fontsize{7}{8}\selectfont",
-             r"\setlength{\tabcolsep}{2pt}", r"\renewcommand{\arraystretch}{0.95}",
-             r"\begin{longtable}{@{}llrrrrrr@{}}",
-             r"\caption{Flight evaluation by aircraft category. I: gold ICAOs; G: gold flights; T: test flights.}",
+    headings = [r" & \multicolumn{3}{c}{OpenSky} & \multicolumn{2}{c}{Algorithm} \\",
+                r"\cmidrule(lr){2-4}\cmidrule(l){5-6}",
+                r"Category & Default & Nearest & NN & Nearest & NN \\"]
+    lines = [r"% Requires \usepackage{booktabs,longtable}.",
+             "% " + NOTE, "% " + AIRPORT_NOTE,
+             r"\begingroup", r"\footnotesize",
+             r"\setlength{\tabcolsep}{4pt}",
+             r"\begin{longtable}{@{}lrrrrr@{}}",
+             r"\caption{Airport accuracy by aircraft category and airport size: takeoff/landing (\%).}",
              r"\label{tab:category-performance}\\",
-             r"\toprule", heading, r"\midrule", r"\endfirsthead",
-             r"\multicolumn{8}{l}{Flight evaluation by aircraft category (continued)}\\",
-             r"\toprule", heading, r"\midrule", r"\endhead",
-             r"\midrule\multicolumn{8}{r}{Continued on next page}\\", r"\endfoot",
+             r"\toprule", *headings, r"\midrule", r"\endfirsthead",
+             r"\multicolumn{6}{l}{Airport accuracy by category and size (continued)}\\",
+             r"\toprule", *headings, r"\midrule", r"\endhead",
+             r"\midrule\multicolumn{6}{r}{Continued on next page}\\", r"\endfoot",
              r"\bottomrule", r"\endlastfoot"]
     contexts = list(dict.fromkeys((r["gold_src"], r["test_date"]) for r in rows))
     for source, day in contexts:
-        lines += [r"\addlinespace[2pt]",
-                  r"\multicolumn{8}{@{}l}{\textbf{" + REFERENCE_LABELS.get(source, source)
+        lines += [r"\addlinespace[3pt]",
+                  r"\multicolumn{6}{@{}l}{\textbf{" + REFERENCE_LABELS.get(source, source)
                   + " | " + day + r"}}\\*"]
+        lines.append(r"\multicolumn{6}{@{}l}{\textit{Aircraft category}}\\*")
         for category in CATEGORIES:
             group = [r for r in rows if (r["gold_src"], r["test_date"], r["category_group"])
                      == (source, day, category)]
             by_method = {r["test_src"]: r for r in group}
-            group = [by_method[method] for method in METHODS]
-            counts = {(r["gold_icao_count"], r["gold_flight_count"]) for r in group}
-            if len(counts) != 1:
-                raise ValueError(f"Category gold counts differ for {source}/{category}")
-            icaos, flights = counts.pop()
-            category_cell = (r"\multirow{5}{*}{\shortstack[l]{\textbf{" + category +
-                             r"}\\" + f"{icaos:,} / {flights:,}" + "}}")
-            for index, row in enumerate(group):
-                cells = [category_cell if index == 0 else "", latex_escape(labels[index])]
-                start, end = (0, 3) if index < 3 else (3, 5)
-                family = group[start:end]
-                for keys in columns:
-                    cell = "/".join(format_metric(row, metrics[key], 2) for key in keys)
-                    shared = (set(keys) <= SHARED_FLIGHT_METRICS and
-                              all(all(r.get(key) == family[0].get(key) for key in keys)
-                                  for r in family))
-                    if shared:
-                        cell = (r"\multirow{" + str(end-start) + r"}{*}{" + cell + "}"
-                                if index == start else "")
-                    cells.append(cell)
-                lines.append(" & ".join(cells) + (r" \\*" if index < 4 else r" \\"))
-            if category != CATEGORIES[-1]:
-                lines.append(r"\addlinespace[1.5pt]")
-    lines += [r"\end{longtable}", r"\endgroup", ""]
+            if len(group) != len(METHODS) or set(by_method) != set(METHODS):
+                raise ValueError(f"Expected five methods for {source}/{category}")
+            cells = [category]
+            for method in METHODS:
+                cells.append("/".join(
+                    format_metric(by_method[method], metrics[f"{endpoint}_airport_id_match_pct"], 2)
+                    for endpoint in ("takeoff", "landing")))
+            lines.append(" & ".join(cells) + (r" \\*" if category != CATEGORIES[-1] else r" \\") )
+        if airport_rows:
+            lines += [r"\addlinespace[2pt]", r"\multicolumn{6}{@{}l}{\textit{Airport size}}\\*"]
+            lookup = {(r["test_src"], r["airport_type"], r["endpoint"]): r
+                      for r in airport_rows if (r["gold_src"], r["test_date"]) == (source, day)}
+            for airport_type, label in AIRPORT_SIZES.items():
+                cells = [label]
+                for method in METHODS:
+                    values = [lookup[method, airport_type, endpoint]["accuracy_percent"]
+                              for endpoint in ("takeoff", "landing")]
+                    cells.append("/".join("---" if v is None else f"{v:.2f}" for v in values))
+                lines.append(" & ".join(cells) + (r" \\" if airport_type == "large_airport" else r" \\*"))
+    lines += [r"\end{longtable}",
+              r"% Accuracy is conditional on matched flights; null airports count as incorrect.",
+              r"% Other includes all categories outside A1--A4, including missing values.",
+              r"\endgroup", ""]
     return "\n".join(lines)
 
 
@@ -155,18 +185,34 @@ def main():
     parser.add_argument("--table-manifest", type=Path, default=ROOT / "paper/tables/table_0/table_0_manifest.json")
     parser.add_argument("--category-manifest", type=Path, default=ROOT / "paper/tables/reference_flight_breakdown/reference_flight_breakdown_manifest.json")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "paper/tables/category_performance")
+    parser.add_argument("--gold-source", nargs="+", choices=("bts", *DEFAULT_REFERENCES),
+                        default=list(DEFAULT_REFERENCES), help="Reference datasets (default: sfdps eurocontrol).")
     args = parser.parse_args()
     from flights.evaluation.models import EvaluationStats
     from data_engineering.adsb.read_adsb import ADSBSource
+    from airports.catalog import AirportCatalogView
+    from airports.history import AirportHistory
+    from airports.history.schema import HistoryPaths
+    from flights.evaluation.cache import AirportCatalogFingerprint
 
     manifest = json.loads(args.table_manifest.read_text())
     category_manifest = json.loads(args.category_manifest.read_text())
-    gold_inputs = {e["source"]: e for e in category_manifest["inputs"] if "path" in e}
-    entries = manifest["cache_entries"]
-    expected = {(source, method) for source in manifest["reference_dates"] for method in METHODS}
+    references = set(args.gold_source)
+    gold_inputs = {e["source"]: e for e in category_manifest["inputs"]
+                   if "path" in e and e["source"] in references}
+    if references - gold_inputs.keys():
+        raise ValueError(f"Missing gold-category inputs: {sorted(references - gold_inputs.keys())}")
+    entries = [e for e in manifest["cache_entries"] if e["key"]["gold_source"]["name"] in references]
+    expected = {(source, method) for source in references for method in METHODS}
     if {(e["key"]["gold_source"]["name"], e["key"]["test_source"]["name"]) for e in entries} != expected or len(entries) != len(expected):
         raise ValueError("Expected exactly five methods per reference dataset")
     lookups, provenance, coverage_inputs = {}, [], {}
+    data_root = Path(manifest["cache_root"]).parent.parent.parent
+    airport_root = data_root / "data/raw/ourairports"
+    history = AirportHistory(HistoryPaths(airport_root / "history", airport_root / "repository"))
+    for path in history.paths.required_files:
+        provenance.append(dict(role="airport_history", path=str(path), sha256=sha256(path)))
+    catalogs = {}
     for source, entry in gold_inputs.items():
         path = Path(entry["path"])
         if sha256(path) != entry["sha256"]:
@@ -174,7 +220,7 @@ def main():
         lookups[source] = category_lookup(pl.read_parquet(path, columns=["icao", "category"]))
         provenance.append(dict(role="gold_categories", path=str(path), sha256=entry["sha256"]))
 
-    rows = []
+    rows, airport_rows = [], []
     for entry in entries:
         key = entry["key"]
         source, method = key["gold_source"]["name"], key["test_source"]["name"]
@@ -190,6 +236,18 @@ def main():
         if cached.target_day_adsb:
             raise ValueError("Expected Table 0's target_day_adsb=false runs")
         comparison = pl.read_parquet(path / "result.parquet")
+        if source not in catalogs:
+            catalog = AirportCatalogView.from_history(
+                history, date.fromisoformat(day),
+                date.fromisoformat(gold_inputs[source]["airport_catalog"]["catalog_available_date"]))
+            catalogs[source] = (AirportCatalogFingerprint.from_catalog(catalog, date.fromisoformat(day)).to_dict(),
+                                {airport_id: str(airport.type) for airport_id, airport in catalog.id_index.items()})
+        catalog_fingerprint, airport_types = catalogs[source]
+        if catalog_fingerprint != key["airport_catalog"]:
+            raise ValueError(f"Airport-size catalog differs from evaluation for {source}/{method}")
+        airport_rows.extend(summarize_airport_sizes(comparison, airport_types, dict(
+            gold_src=source, test_src=method, test_date=day,
+            adsb_src=cached.adsb_source.value if cached.adsb_source else "")))
         # Airport variants preserve their base method's flight identities. Use
         # those full-day inputs for pre-window aircraft coverage, verifying both
         # retained flight identities and cached full-day coverage counts below.
@@ -245,7 +303,7 @@ def main():
             for endpoint in ("takeoff", "landing"):
                 row[f"{endpoint}_airport_id_match_pct"] = None
     rows.sort(key=lambda r: (*reference_sort_key(r)[:4], CATEGORIES.index(r["category_group"]), *reference_sort_key(r)[4:]))
-    latex = compact_latex(rows)
+    latex = compact_latex(rows, airport_rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tex_path = args.output_dir / "category_performance.tex"
     tex_path.write_text(latex)
@@ -255,15 +313,22 @@ def main():
         writer.writeheader()
         writer.writerows({csv_column(k): (100*v if k in RATE_COLUMNS and v is not None else v)
                          for k, v in row.items()} for row in rows)
+    airport_csv_path = args.output_dir / "category_performance_airport_sizes.csv"
+    with airport_csv_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(airport_rows[0]))
+        writer.writeheader()
+        writer.writerows(airport_rows)
     (args.output_dir / "category_performance_manifest.json").write_text(json.dumps(dict(
         table_manifest=str(args.table_manifest), table_manifest_sha256=sha256(args.table_manifest),
         category_manifest=str(args.category_manifest), category_manifest_sha256=sha256(args.category_manifest),
-        reference_dates=manifest["reference_dates"], methods=METHODS, categories=CATEGORIES,
-        layout="Compact: one heading per dataset; shared category counts; 7pt type; all metrics at two decimals.",
+        reference_dates={s: d for s, d in manifest["reference_dates"].items() if s in references},
+        methods=METHODS, categories=CATEGORIES,
+        layout="Airport accuracy only: aircraft category and airport size rows; five method columns grouped by pipeline; takeoff/landing percentages at two decimals.",
+        airport_size_definitions=AIRPORT_NOTE, airport_size_rows=len(airport_rows),
         definitions=NOTE, rows=len(rows), inputs=provenance,
         csv_percent_scale="0-100 for columns ending in _percent; other rate columns retain evaluator fractions",
         validation="Category counts sum exactly to pinned Table 0 counts; whole-comparison floating-point stats agree within 1e-12.",
-        outputs=[str(tex_path), str(csv_path)],
+        outputs=[str(tex_path), str(csv_path), str(airport_csv_path)],
     ), indent=2) + "\n")
     print(tex_path)
     print(csv_path)

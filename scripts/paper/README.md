@@ -16,22 +16,34 @@ Use base reference names (`bts`, `sfdps`, `eurocontrol`) in source filters.
 
 `category_performance_table.py` splits the exact runs recorded in Table 0's
 manifest into **A1, A2, A3, A4, and Other**, comparing OpenSky, OpenSky-Nearest,
-OpenSky-NN, Nearest (`algorithm-nearest`), and NN (`algorithm-nn`). It preserves
-Table 0's metrics and reference dates: BTS/SFDPS on 2026-03-01 and Eurocontrol
+OpenSky-NN, Nearest (`algorithm-nearest`), and NN (`algorithm-nn`). The table shows
+only airport accuracy, using Table 0's reference dates: SFDPS on 2026-03-01 and Eurocontrol
 on 2024-06-01. Both algorithm methods use OpenSky observations.
-The compact layout shows each dataset heading once and places category ICAO/flight
-counts in a shared column. It retains every metric at two decimal places, using
-7pt type and tight spacing to fit the three datasets on one A4 page at 12mm margins.
+The compact layout has five aircraft-category rows and three airport-size rows
+(Small, Medium, Large) per dataset and five method columns,
+grouped under OpenSky (Default, Nearest, NN) and Algorithm (Nearest, NN).
+Each cell gives takeoff/landing accuracy percentages at two decimal places.
+Counts, segmentation, null rates and timing are omitted from the LaTeX table;
+the CSV retains the full metrics and denominators for auditing.
+Airport size is the reference endpoint's OurAirports type from the same dated
+catalog as the evaluation, checked against its catalog fingerprint. Takeoff and
+landing are grouped independently, so their denominators can differ. Accuracy
+uses matched endpoints of that size, including null predictions as incorrect;
+size rows pool all aircraft categories. Other airport types and unresolved gold
+airports are omitted from the table but retained in the airport-size CSV.
+SFDPS and Eurocontrol are the defaults; use `--gold-source` to select
+datasets explicitly (for example, `--gold-source bts sfdps eurocontrol`).
 
 ```bash
 .venv/bin/python scripts/paper/category_performance_table.py
 ```
 
 Outputs go to `paper/tables/category_performance/` in this repository:
-`category_performance.tex`, `category_performance.csv`, and
+`category_performance.tex`, `category_performance.csv`,
+`category_performance_airport_sizes.csv` (endpoint counts and accuracy), and
 `category_performance_manifest.json`. Include the table with
 `\input{tables/category_performance/category_performance.tex}` and load
-`booktabs,longtable,multirow`. The label is `tab:category-performance`.
+`booktabs,longtable`. The label is `tab:category-performance`.
 Use `--output-dir` to change the destination. `--table-manifest` and
 `--category-manifest` select alternative compatible evaluation and gold-cache
 manifests; defaults are Table 0 and `reference_flight_breakdown` respectively.
