@@ -229,3 +229,4 @@ tmp/
 logs/
 outputs/
 reports/
+*.ipynb
